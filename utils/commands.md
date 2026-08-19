@@ -1,0 +1,3 @@
+> Spawn the agrobot URDF in a world:
+¨¨ gz service -s /world/empty/create --reqtype gz.msgs.EntityFactory --reptype gz.msgs.Boolean --timeout 1000 --req 'sdf_filename: "/models/agrobot/agrobot.urdf", name: "urdf_agrobot"' ¨¨
+¨¨ gz service -s /world/empty/create --reqtype gz.msgs.EntityFactory --reptype gz.msgs.Boolean --timeout 1000 --req 'sdf_filename: "/models/agrobot/agrobot.urdf.xacro", name: "urdf_agrobot_xacro"' ¨¨
