@@ -1,0 +1,328 @@
+<?xml version="1.0"?>
+
+<robot name="agrobot">
+
+  <material name="aluminium">
+    <color rgba="0.55 0.55 0.55 1"/>
+  </material>
+
+  <material name="black">
+    <color rgba="0.02 0.02 0.02 1"/>
+  </material>
+
+  <material name="white">
+    <color rgba="0.85 0.85 0.85 1"/>
+  </material>
+
+  <!-- CHASSIS REAL DO CAD -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="-0.5 -0.25 0.05" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file:///home/fabio/husky_ws/src/agrobot_description/meshes/chassis.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminium"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0.20"/>
+      <geometry>
+        <box size="1.2 0.8 0.35"/>
+      </geometry>
+    </collision>
+
+    <!-- Massa do chassis + estrutura. Total com rodas ≈ 46 kg -->
+    <inertial>
+      <mass value="37.2"/>
+      <origin xyz="0 0 0.20"/>
+      <inertia ixx="2" iyy="2" izz="2" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+
+  <!-- MACRO VISUAL REPETIDA MANUALMENTE: RODA AGRÍCOLA -->
+
+  <!-- RODA FRENTE ESQUERDA -->
+  <link name="front_left_wheel">
+
+    <!-- pneu principal -->
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="0.22" length="0.14"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+
+    <!-- jante branca -->
+    <visual>
+      <origin xyz="0 0.075 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="0.12" length="0.02"/>
+      </geometry>
+      <material name="white"/>
+    </visual>
+
+    <!-- cubo central -->
+    <visual>
+      <origin xyz="0 0.09 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="0.045" length="0.035"/>
+      </geometry>
+      <material name="aluminium"/>
+    </visual>
+
+    <!-- garras agrícolas -->
+    <visual><origin xyz="0.23 0 0" rpy="0 0 0.40"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.199 0 0.115" rpy="0 0 0.92"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.115 0 0.199" rpy="0 0 1.45"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 0 0.23" rpy="0 0 1.97"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.115 0 0.199" rpy="0 0 2.50"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.199 0 0.115" rpy="0 0 3.02"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.23 0 0" rpy="0 0 3.54"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.199 0 -0.115" rpy="0 0 4.07"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.115 0 -0.199" rpy="0 0 4.59"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 0 -0.23" rpy="0 0 5.12"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.115 0 -0.199" rpy="0 0 5.64"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.199 0 -0.115" rpy="0 0 6.16"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="0.22" length="0.14"/>
+      </geometry>
+    </collision>
+
+    <inertial>
+      <mass value="2.2"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="0.04" iyy="0.04" izz="0.04" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <joint name="front_left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="front_left_wheel"/>
+    <origin xyz="0.35 0.48 -0.02" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="100" velocity="20"/>
+  </joint>
+
+
+  <!-- RODA FRENTE DIREITA -->
+  <link name="front_right_wheel">
+    <visual><origin xyz="0 0 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.22" length="0.14"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 -0.075 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.12" length="0.02"/></geometry><material name="white"/></visual>
+    <visual><origin xyz="0 -0.09 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.045" length="0.035"/></geometry><material name="aluminium"/></visual>
+
+    <visual><origin xyz="0.23 0 0" rpy="0 0 0.40"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.199 0 0.115" rpy="0 0 0.92"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.115 0 0.199" rpy="0 0 1.45"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 0 0.23" rpy="0 0 1.97"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.115 0 0.199" rpy="0 0 2.50"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.199 0 0.115" rpy="0 0 3.02"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.23 0 0" rpy="0 0 3.54"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.199 0 -0.115" rpy="0 0 4.07"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.115 0 -0.199" rpy="0 0 4.59"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 0 -0.23" rpy="0 0 5.12"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.115 0 -0.199" rpy="0 0 5.64"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.199 0 -0.115" rpy="0 0 6.16"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+
+    <collision><origin xyz="0 0 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.22" length="0.14"/></geometry></collision>
+    <inertial><mass value="2.2"/><origin xyz="0 0 0"/><inertia ixx="0.04" iyy="0.04" izz="0.04" ixy="0" ixz="0" iyz="0"/></inertial>
+  </link>
+
+  <joint name="front_right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="front_right_wheel"/>
+    <origin xyz="0.35 -0.48 -0.02" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="100" velocity="20"/>
+  </joint>
+
+
+  <!-- RODA TRÁS ESQUERDA -->
+  <link name="rear_left_wheel">
+    <visual><origin xyz="0 0 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.22" length="0.14"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 0.075 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.12" length="0.02"/></geometry><material name="white"/></visual>
+    <visual><origin xyz="0 0.09 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.045" length="0.035"/></geometry><material name="aluminium"/></visual>
+
+    <visual><origin xyz="0.23 0 0" rpy="0 0 0.40"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.199 0 0.115" rpy="0 0 0.92"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.115 0 0.199" rpy="0 0 1.45"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 0 0.23" rpy="0 0 1.97"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.115 0 0.199" rpy="0 0 2.50"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.199 0 0.115" rpy="0 0 3.02"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.23 0 0" rpy="0 0 3.54"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.199 0 -0.115" rpy="0 0 4.07"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.115 0 -0.199" rpy="0 0 4.59"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 0 -0.23" rpy="0 0 5.12"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.115 0 -0.199" rpy="0 0 5.64"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.199 0 -0.115" rpy="0 0 6.16"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+
+    <collision><origin xyz="0 0 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.22" length="0.14"/></geometry></collision>
+    <inertial><mass value="2.2"/><origin xyz="0 0 0"/><inertia ixx="0.04" iyy="0.04" izz="0.04" ixy="0" ixz="0" iyz="0"/></inertial>
+  </link>
+
+  <joint name="rear_left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_left_wheel"/>
+    <origin xyz="-0.35 0.48 -0.02" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="100" velocity="20"/>
+  </joint>
+
+
+  <!-- RODA TRÁS DIREITA -->
+  <link name="rear_right_wheel">
+    <visual><origin xyz="0 0 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.22" length="0.14"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 -0.075 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.12" length="0.02"/></geometry><material name="white"/></visual>
+    <visual><origin xyz="0 -0.09 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.045" length="0.035"/></geometry><material name="aluminium"/></visual>
+
+    <visual><origin xyz="0.23 0 0" rpy="0 0 0.40"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.199 0 0.115" rpy="0 0 0.92"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.115 0 0.199" rpy="0 0 1.45"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 0 0.23" rpy="0 0 1.97"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.115 0 0.199" rpy="0 0 2.50"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.199 0 0.115" rpy="0 0 3.02"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.23 0 0" rpy="0 0 3.54"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.199 0 -0.115" rpy="0 0 4.07"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="-0.115 0 -0.199" rpy="0 0 4.59"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0 0 -0.23" rpy="0 0 5.12"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.115 0 -0.199" rpy="0 0 5.64"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+    <visual><origin xyz="0.199 0 -0.115" rpy="0 0 6.16"/><geometry><box size="0.08 0.18 0.045"/></geometry><material name="black"/></visual>
+
+    <collision><origin xyz="0 0 0" rpy="1.5708 0 0"/><geometry><cylinder radius="0.22" length="0.14"/></geometry></collision>
+    <inertial><mass value="2.2"/><origin xyz="0 0 0"/><inertia ixx="0.04" iyy="0.04" izz="0.04" ixy="0" ixz="0" iyz="0"/></inertial>
+  </link>
+
+  <joint name="rear_right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_right_wheel"/>
+    <origin xyz="-0.35 -0.48 -0.02" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="100" velocity="20"/>
+  </joint>
+
+
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system"
+            name="gz::sim::systems::DiffDrive">
+
+      <left_joint>front_left_wheel_joint</left_joint>
+      <left_joint>rear_left_wheel_joint</left_joint>
+
+      <right_joint>front_right_wheel_joint</right_joint>
+      <right_joint>rear_right_wheel_joint</right_joint>
+
+      <wheel_separation>0.96</wheel_separation>
+      <wheel_radius>0.22</wheel_radius>
+
+      <topic>/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_link</child_frame_id>
+
+    </plugin>
+  </gazebo>
+
+    <!-- SENSOR: IMU -->
+  <link name="imu_link">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="0.08 0.05 0.03"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0.35" rpy="0 0 0"/>
+  </joint>
+
+
+  <!-- SENSOR: GPS -->
+  <link name="gps_link">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.04" length="0.03"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+  </link>
+
+  <joint name="gps_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="gps_link"/>
+    <origin xyz="-0.25 0 0.40" rpy="0 0 0"/>
+  </joint>
+
+
+  <!-- SENSOR: LIDAR -->
+  <link name="lidar_link">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.07" length="0.06"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+  <parent link="base_link"/>
+  <child link="lidar_link"/>
+  <origin xyz="0.20 0 0.28" rpy="0 0 0"/>
+  </joint>
+
+  <!-- SENSOR: CAMERA RGB -->
+  <link name="camera_link">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="0.10 0.04 0.05"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.45 0 0.38" rpy="0 0 0"/>
+  </joint>
+
+<gazebo reference="lidar_link">
+  <sensor name="agrobot_lidar" type="gpu_lidar">
+    <topic>/scan</topic>
+    <update_rate>10</update_rate>
+
+    <lidar>
+      <scan>
+        <horizontal>
+          <samples>360</samples>
+          <resolution>1</resolution>
+          <min_angle>-3.1416</min_angle>
+          <max_angle>3.1416</max_angle>
+        </horizontal>
+      </scan>
+
+      <range>
+        <min>0.12</min>
+        <max>12.0</max>
+        <resolution>0.01</resolution>
+      </range>
+    </lidar>
+
+    <always_on>true</always_on>
+    <visualize>true</visualize>
+  </sensor>
+</gazebo>
+
+
+</robot>
