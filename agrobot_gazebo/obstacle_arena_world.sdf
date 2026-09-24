@@ -1,0 +1,232 @@
+<?xml version="1.0" ?>
+<sdf version="1.10">
+  <world name="obstacle_arena_world">
+
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+
+    <light type="directional" name="sun">
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <direction>-0.4 0.2 -1</direction>
+    </light>
+
+    <!-- chão tipo cimento -->
+    <model name="concrete_ground">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>14 10 0.1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>14 10 0.1</size></box></geometry>
+          <material>
+            <ambient>0.28 0.28 0.28 1</ambient>
+            <diffuse>0.35 0.35 0.35 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- paredes exteriores -->
+    <model name="wall_front">
+      <static>true</static>
+      <pose>7 0 0.45 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.25 10 0.9</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.25 10 0.9</size></box></geometry>
+          <material><ambient>0.45 0.45 0.45 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_back">
+      <static>true</static>
+      <pose>-7 0 0.45 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.25 10 0.9</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.25 10 0.9</size></box></geometry>
+          <material><ambient>0.45 0.45 0.45 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_left">
+      <static>true</static>
+      <pose>0 5 0.45 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>14 0.25 0.9</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>14 0.25 0.9</size></box></geometry>
+          <material><ambient>0.45 0.45 0.45 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_right">
+      <static>true</static>
+      <pose>0 -5 0.45 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>14 0.25 0.9</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>14 0.25 0.9</size></box></geometry>
+          <material><ambient>0.45 0.45 0.45 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- barreiras internas -->
+    <model name="barrier_1">
+      <static>true</static>
+      <pose>-2.0 1.2 0.35 0 0 0.35</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>3.0 0.25 0.7</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>3.0 0.25 0.7</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <model name="barrier_2">
+      <static>true</static>
+      <pose>2.2 -0.8 0.35 0 0 -0.45</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>3.0 0.25 0.7</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>3.0 0.25 0.7</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <!-- contentores verdes -->
+    <model name="dumpster_1">
+      <static>true</static>
+      <pose>-4.8 3.2 0.35 0 0 0.3</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.2 0.8 0.7</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.2 0.8 0.7</size></box></geometry>
+          <material><ambient>0.02 0.25 0.12 1</ambient><diffuse>0.02 0.35 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="dumpster_2">
+      <static>true</static>
+      <pose>5.0 -3.2 0.35 0 0 -0.4</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1.2 0.8 0.7</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1.2 0.8 0.7</size></box></geometry>
+          <material><ambient>0.02 0.25 0.12 1</ambient><diffuse>0.02 0.35 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- cones: cilindros laranja com faixa branca -->
+    <model name="cone_group_1">
+      <static>true</static>
+      <pose>4 3 0 0 0 0</pose>
+
+      <link name="cone1">
+        <pose>0 0 0.25 0 0 0</pose>
+        <collision name="collision"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry></collision>
+        <visual name="orange"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>1 0.35 0 1</ambient><diffuse>1 0.45 0 1</diffuse></material>
+        </visual>
+        <visual name="white_band"><pose>0 0 0.08 0 0 0</pose><geometry><cylinder><radius>0.185</radius><length>0.08</length></cylinder></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+        </visual>
+      </link>
+
+      <link name="cone2">
+        <pose>0.45 0 0.25 0 0 0</pose>
+        <collision name="collision"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry></collision>
+        <visual name="orange"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>1 0.35 0 1</ambient><diffuse>1 0.45 0 1</diffuse></material>
+        </visual>
+        <visual name="white_band"><pose>0 0 0.08 0 0 0</pose><geometry><cylinder><radius>0.185</radius><length>0.08</length></cylinder></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+        </visual>
+      </link>
+
+      <link name="cone3">
+        <pose>0.9 0 0.25 0 0 0</pose>
+        <collision name="collision"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry></collision>
+        <visual name="orange"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>1 0.35 0 1</ambient><diffuse>1 0.45 0 1</diffuse></material>
+        </visual>
+        <visual name="white_band"><pose>0 0 0.08 0 0 0</pose><geometry><cylinder><radius>0.185</radius><length>0.08</length></cylinder></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- cones soltos -->
+    <model name="single_cone_1">
+      <static>true</static>
+      <pose>-3 -2.8 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>1 0.35 0 1</ambient><diffuse>1 0.45 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="single_cone_2">
+      <static>true</static>
+      <pose>1.2 -3.2 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.18</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>1 0.35 0 1</ambient><diffuse>1 0.45 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- hidrantes vermelhos simples -->
+    <model name="hydrant_1">
+      <static>true</static>
+      <pose>-4.5 1.6 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.12</radius><length>0.6</length></cylinder></geometry></collision>
+        <visual name="body"><geometry><cylinder><radius>0.12</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.8 0 0 1</ambient><diffuse>1 0 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="hydrant_2">
+      <static>true</static>
+      <pose>3.8 1.6 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.12</radius><length>0.6</length></cylinder></geometry></collision>
+        <visual name="body"><geometry><cylinder><radius>0.12</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.8 0 0 1</ambient><diffuse>1 0 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- destino -->
+    <model name="goal_marker">
+      <static>true</static>
+      <pose>5.2 3.8 0.03 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><cylinder><radius>0.3</radius><length>0.03</length></cylinder></geometry>
+          <material><ambient>0 1 0 1</ambient><diffuse>0 1 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

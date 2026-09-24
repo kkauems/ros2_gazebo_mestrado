@@ -227,7 +227,7 @@
     </plugin>
   </gazebo>
 
-    <!-- SENSOR: IMU -->
+  <!-- SENSOR: IMU -->
   <link name="imu_link">
     <visual>
       <origin xyz="0 0 0"/>
@@ -236,6 +236,24 @@
       </geometry>
       <material name="black"/>
     </visual>
+
+    <collision>
+      <geometry>
+        <box size="0.08 0.05 0.03"/>
+      </geometry>
+    </collision>
+
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0"/>
+      <inertia
+        ixx="0.00002"
+        iyy="0.00003"
+        izz="0.00004"
+        ixy="0"
+        ixz="0"
+        iyz="0"/>
+    </inertial>
   </link>
 
   <joint name="imu_joint" type="fixed">
@@ -243,6 +261,15 @@
     <child link="imu_link"/>
     <origin xyz="0 0 0.35" rpy="0 0 0"/>
   </joint>
+
+  <gazebo reference="imu_link">
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>50</update_rate>
+      <visualize>false</visualize>
+      <topic>/imu</topic>
+    </sensor>
+  </gazebo>
 
 
   <!-- SENSOR: GPS -->

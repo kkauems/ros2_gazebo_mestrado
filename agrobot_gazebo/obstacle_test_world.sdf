@@ -1,0 +1,101 @@
+<?xml version="1.0" ?>
+<sdf version="1.10">
+  <world name="obstacle_test_world">
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+
+    <light type="directional" name="sun">
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <direction>-0.5 0.2 -1</direction>
+    </light>
+
+    <!-- chão plano -->
+    <model name="ground">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>12 8 0.1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>12 8 0.1</size></box></geometry>
+          <material>
+            <ambient>0.45 0.35 0.22 1</ambient>
+            <diffuse>0.55 0.42 0.25 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- paredes limites -->
+    <model name="wall_front">
+      <static>true</static>
+      <pose>6 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.2 8 1</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.2 8 1</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <model name="wall_back">
+      <static>true</static>
+      <pose>-6 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.2 8 1</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.2 8 1</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <model name="wall_left">
+      <static>true</static>
+      <pose>0 4 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>12 0.2 1</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>12 0.2 1</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <model name="wall_right">
+      <static>true</static>
+      <pose>0 -4 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>12 0.2 1</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>12 0.2 1</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <!-- obstáculos -->
+    <model name="obstacle_1">
+      <static>true</static>
+      <pose>1.5 0 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 1.8 0.7</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 1.8 0.7</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <model name="obstacle_2">
+      <static>true</static>
+      <pose>3 -1.5 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 1.5 0.7</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 1.5 0.7</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <!-- marca visual do destino -->
+    <model name="goal_marker">
+      <static>true</static>
+      <pose>4.8 2.5 0.03 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><cylinder><radius>0.25</radius><length>0.03</length></cylinder></geometry>
+          <material><ambient>1 0 0 1</ambient><diffuse>1 0 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

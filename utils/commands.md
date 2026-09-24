@@ -1,3 +1,18 @@
-> Spawn the agrobot URDF in a world:
-¨¨ gz service -s /world/empty/create --reqtype gz.msgs.EntityFactory --reptype gz.msgs.Boolean --timeout 1000 --req 'sdf_filename: "/models/agrobot/agrobot.urdf", name: "urdf_agrobot"' ¨¨
-¨¨ gz service -s /world/empty/create --reqtype gz.msgs.EntityFactory --reptype gz.msgs.Boolean --timeout 1000 --req 'sdf_filename: "/models/agrobot/agrobot.urdf.xacro", name: "urdf_agrobot_xacro"' ¨¨
+> Run colcon build sequential
+colcon build --event-handlers desktop_notification- status- --executor sequential
+
+> Open vineyard world
+cd ros2_gazebo_mestrado/
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch agrobot_gazebo simulation.launch.py
+
+
+>> new terminal
+cd ros2_gazebo_mestrado/
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch agrobot_description spawn_agrobot.launch.py
+
+
+$env:IPAddress = "YOUR_IP"
