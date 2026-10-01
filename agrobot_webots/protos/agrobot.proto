@@ -1,0 +1,985 @@
+#VRML_SIM R2025a utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# This is a proto file for Webots for the agrobot
+# Extracted from: /home/kkauesm/projects/ros2_gazebo_mestrado/agrobot_description/urdf/agrobot.urdf
+
+PROTO agrobot [
+  field  SFVec3f     translation     0 0 0
+  field  SFRotation  rotation        0 0 1 0
+  field  SFString    name            "agrobot"  # Is `Robot.name`.
+  field  SFString    controller      "void"     # Is `Robot.controller`.
+  field  MFString    controllerArgs  []         # Is `Robot.controllerArgs`.
+  field  SFString    customData      ""         # Is `Robot.customData`.
+  field  SFBool      supervisor      FALSE      # Is `Robot.supervisor`.
+  field  SFBool      synchronization TRUE       # Is `Robot.synchronization`.
+  field  SFBool      selfCollision   FALSE      # Is `Robot.selfCollision`.
+]
+{
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    controller IS controller
+    controllerArgs IS controllerArgs
+    customData IS customData
+    supervisor IS supervisor
+    synchronization IS synchronization
+    selfCollision IS selfCollision
+    children [
+      Transform {
+        translation -0.500000 -0.250000 0.050000
+        scale 0.001000 0.001000 0.001000
+        children [
+          Shape {
+            appearance DEF aluminium PBRAppearance {
+              baseColor 0.500000 0.500000 0.500000
+              roughness 1.000000
+              metalness 0
+            }
+            geometry DEF chassis Mesh {
+                  url "../meshes/chassis.stl"
+            }
+          }
+        ]
+      }
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor 0.350000 0.480000 -0.020000
+        }
+        device [
+          RotationalMotor {
+            name "front_left_wheel_joint"
+            maxVelocity 20.0
+            maxTorque 100.0
+          }
+          PositionSensor {
+            name "front_left_wheel_joint_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation 0.350000 0.480000 -0.020000
+          children [
+            Pose {
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance DEF black PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry Cylinder {
+                    radius 0.22
+                    height 0.14
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.075000 0.000000
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance DEF white PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry Cylinder {
+                    radius 0.12
+                    height 0.02
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.090000 0.000000
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE aluminium
+                  geometry Cylinder {
+                    radius 0.045
+                    height 0.035
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.230000 0.000000 0.000000
+              rotation 0.000000 0.000000 1.000000 0.400000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.199000 0.000000 0.115000
+              rotation 0.000000 0.000000 1.000000 0.920000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.115000 0.000000 0.199000
+              rotation 0.000000 0.000000 1.000000 1.450000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.000000 0.230000
+              rotation 0.000000 0.000000 1.000000 1.970000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.115000 0.000000 0.199000
+              rotation 0.000000 0.000000 1.000000 2.500000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.199000 0.000000 0.115000
+              rotation 0.000000 0.000000 1.000000 3.020000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.230000 0.000000 0.000000
+              rotation -0.000000 0.000000 1.000000 3.540000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.199000 0.000000 -0.115000
+              rotation -0.000000 0.000000 1.000000 4.070000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.115000 0.000000 -0.199000
+              rotation -0.000000 0.000000 1.000000 4.590000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.000000 -0.230000
+              rotation -0.000000 0.000000 1.000000 5.120000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.115000 0.000000 -0.199000
+              rotation -0.000000 0.000000 1.000000 5.640000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.199000 0.000000 -0.115000
+              rotation -0.000000 0.000000 1.000000 6.160000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+          ]
+          name "front_left_wheel"
+          boundingObject Pose {
+            rotation 1.000000 0.000000 0.000000 1.570800
+            children [
+              Cylinder {
+                radius 0.22
+                height 0.14
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 2.200000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              4.000000e-02 4.000000e-02 4.000000e-02
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor 0.350000 -0.480000 -0.020000
+        }
+        device [
+          RotationalMotor {
+            name "front_right_wheel_joint"
+            maxVelocity 20.0
+            maxTorque 100.0
+          }
+          PositionSensor {
+            name "front_right_wheel_joint_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation 0.350000 -0.480000 -0.020000
+          children [
+            Pose {
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Cylinder {
+                    radius 0.22
+                    height 0.14
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 -0.075000 0.000000
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE white
+                  geometry Cylinder {
+                    radius 0.12
+                    height 0.02
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 -0.090000 0.000000
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE aluminium
+                  geometry Cylinder {
+                    radius 0.045
+                    height 0.035
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.230000 0.000000 0.000000
+              rotation 0.000000 0.000000 1.000000 0.400000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.199000 0.000000 0.115000
+              rotation 0.000000 0.000000 1.000000 0.920000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.115000 0.000000 0.199000
+              rotation 0.000000 0.000000 1.000000 1.450000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.000000 0.230000
+              rotation 0.000000 0.000000 1.000000 1.970000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.115000 0.000000 0.199000
+              rotation 0.000000 0.000000 1.000000 2.500000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.199000 0.000000 0.115000
+              rotation 0.000000 0.000000 1.000000 3.020000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.230000 0.000000 0.000000
+              rotation -0.000000 0.000000 1.000000 3.540000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.199000 0.000000 -0.115000
+              rotation -0.000000 0.000000 1.000000 4.070000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.115000 0.000000 -0.199000
+              rotation -0.000000 0.000000 1.000000 4.590000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.000000 -0.230000
+              rotation -0.000000 0.000000 1.000000 5.120000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.115000 0.000000 -0.199000
+              rotation -0.000000 0.000000 1.000000 5.640000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.199000 0.000000 -0.115000
+              rotation -0.000000 0.000000 1.000000 6.160000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+          ]
+          name "front_right_wheel"
+          boundingObject Pose {
+            rotation 1.000000 0.000000 0.000000 1.570800
+            children [
+              Cylinder {
+                radius 0.22
+                height 0.14
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 2.200000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              4.000000e-02 4.000000e-02 4.000000e-02
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor -0.350000 0.480000 -0.020000
+        }
+        device [
+          RotationalMotor {
+            name "rear_left_wheel_joint"
+            maxVelocity 20.0
+            maxTorque 100.0
+          }
+          PositionSensor {
+            name "rear_left_wheel_joint_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation -0.350000 0.480000 -0.020000
+          children [
+            Pose {
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Cylinder {
+                    radius 0.22
+                    height 0.14
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.075000 0.000000
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE white
+                  geometry Cylinder {
+                    radius 0.12
+                    height 0.02
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.090000 0.000000
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE aluminium
+                  geometry Cylinder {
+                    radius 0.045
+                    height 0.035
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.230000 0.000000 0.000000
+              rotation 0.000000 0.000000 1.000000 0.400000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.199000 0.000000 0.115000
+              rotation 0.000000 0.000000 1.000000 0.920000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.115000 0.000000 0.199000
+              rotation 0.000000 0.000000 1.000000 1.450000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.000000 0.230000
+              rotation 0.000000 0.000000 1.000000 1.970000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.115000 0.000000 0.199000
+              rotation 0.000000 0.000000 1.000000 2.500000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.199000 0.000000 0.115000
+              rotation 0.000000 0.000000 1.000000 3.020000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.230000 0.000000 0.000000
+              rotation -0.000000 0.000000 1.000000 3.540000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.199000 0.000000 -0.115000
+              rotation -0.000000 0.000000 1.000000 4.070000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.115000 0.000000 -0.199000
+              rotation -0.000000 0.000000 1.000000 4.590000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.000000 -0.230000
+              rotation -0.000000 0.000000 1.000000 5.120000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.115000 0.000000 -0.199000
+              rotation -0.000000 0.000000 1.000000 5.640000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.199000 0.000000 -0.115000
+              rotation -0.000000 0.000000 1.000000 6.160000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+          ]
+          name "rear_left_wheel"
+          boundingObject Pose {
+            rotation 1.000000 0.000000 0.000000 1.570800
+            children [
+              Cylinder {
+                radius 0.22
+                height 0.14
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 2.200000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              4.000000e-02 4.000000e-02 4.000000e-02
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor -0.350000 -0.480000 -0.020000
+        }
+        device [
+          RotationalMotor {
+            name "rear_right_wheel_joint"
+            maxVelocity 20.0
+            maxTorque 100.0
+          }
+          PositionSensor {
+            name "rear_right_wheel_joint_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation -0.350000 -0.480000 -0.020000
+          children [
+            Pose {
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Cylinder {
+                    radius 0.22
+                    height 0.14
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 -0.075000 0.000000
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE white
+                  geometry Cylinder {
+                    radius 0.12
+                    height 0.02
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 -0.090000 0.000000
+              rotation 1.000000 0.000000 0.000000 1.570800
+              children [
+                Shape {
+                  appearance USE aluminium
+                  geometry Cylinder {
+                    radius 0.045
+                    height 0.035
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.230000 0.000000 0.000000
+              rotation 0.000000 0.000000 1.000000 0.400000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.199000 0.000000 0.115000
+              rotation 0.000000 0.000000 1.000000 0.920000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.115000 0.000000 0.199000
+              rotation 0.000000 0.000000 1.000000 1.450000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.000000 0.230000
+              rotation 0.000000 0.000000 1.000000 1.970000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.115000 0.000000 0.199000
+              rotation 0.000000 0.000000 1.000000 2.500000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.199000 0.000000 0.115000
+              rotation 0.000000 0.000000 1.000000 3.020000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.230000 0.000000 0.000000
+              rotation -0.000000 0.000000 1.000000 3.540000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.199000 0.000000 -0.115000
+              rotation -0.000000 0.000000 1.000000 4.070000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation -0.115000 0.000000 -0.199000
+              rotation -0.000000 0.000000 1.000000 4.590000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.000000 0.000000 -0.230000
+              rotation -0.000000 0.000000 1.000000 5.120000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.115000 0.000000 -0.199000
+              rotation -0.000000 0.000000 1.000000 5.640000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.199000 0.000000 -0.115000
+              rotation -0.000000 0.000000 1.000000 6.160000
+              children [
+                Shape {
+                  appearance USE black
+                  geometry Box {
+                     size 0.080000 0.180000 0.045000
+                  }
+                }
+              ]
+            }
+          ]
+          name "rear_right_wheel"
+          boundingObject Pose {
+            rotation 1.000000 0.000000 0.000000 1.570800
+            children [
+              Cylinder {
+                radius 0.22
+                height 0.14
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 2.200000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              4.000000e-02 4.000000e-02 4.000000e-02
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+      Solid {
+        translation 0.000000 0.000000 0.350000
+        children [
+          Shape {
+            appearance USE black
+            geometry Box {
+               size 0.080000 0.050000 0.030000
+            }
+          }
+        ]
+        name "imu_link"
+        boundingObject Box {
+           size 0.080000 0.050000 0.030000
+        }
+        physics Physics {
+          density -1
+          mass 0.050000
+          centerOfMass [ 0.000000 0.000000 0.000000 ]
+          inertiaMatrix [
+            2.000000e-05 3.000000e-05 4.000000e-05
+            0.000000e+00 0.000000e+00 0.000000e+00
+          ]
+        }
+      }
+    ]
+    name IS name
+    boundingObject Pose {
+      translation 0.000000 0.000000 0.200000
+      children [
+        Box {
+           size 1.200000 0.800000 0.350000
+        }
+      ]
+    }
+    physics Physics {
+      density -1
+      mass 37.200000
+      centerOfMass [ 0.000000 0.000000 0.200000 ]
+      inertiaMatrix [
+        2.000000e+00 2.000000e+00 2.000000e+00
+        0.000000e+00 0.000000e+00 0.000000e+00
+      ]
+    }
+  }
+}

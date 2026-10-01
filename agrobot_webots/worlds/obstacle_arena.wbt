@@ -1,0 +1,82 @@
+#VRML_SIM R2023a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/factory/containers/protos/CardboardBox.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/factory/containers/protos/PlasticCrate.proto"
+EXTERNPROTO "../protos/agrobot.proto"
+
+WorldInfo {
+}
+Viewpoint {
+  orientation -0.35931757111828905 0.12123147206245813 0.9253074155475157 2.536390464376995
+  position 11.15670120911193 -8.735526566212677 12.876151426442181
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+DEF ARENA Solid {
+  name "arena_floor"
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.28 0.32 0.22
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 5 5 0.1
+      }
+    }
+  ]
+  boundingObject Box {
+    size 5 5 0.1
+  }
+}
+PlasticCrate {
+  translation 1.4 2.17 0
+  size 0.3 0.3 0.3
+}
+PlasticCrate {
+  translation -1.42 0.92 0
+  name "plastic crate(3)"
+  size 0.3 0.3 0.3
+}
+PlasticCrate {
+  translation 0.19 0.37 0
+  rotation 0 1 0 0
+  name "plastic crate(4)"
+  size 0.3 0.3 0.3
+}
+PlasticCrate {
+  translation 0.81 -1.98 0
+  rotation 0 1 0 0
+  name "plastic crate(2)"
+  size 0.3 0.3 0.3
+}
+CardboardBox {
+  translation -0.77 -2.108939998874866 0.0996076
+  rotation 0.9999999999956263 1.1389423098996899e-06 2.729471406054675e-06 1.1258272538607984e-11
+  size 0.2 0.2 0.2
+  mass 1
+}
+CardboardBox {
+  translation 1.96 -0.6389419988748654 0.0996076
+  rotation 0.9999999999968451 -7.544497352006049e-07 2.395970448577697e-06 1.1258217116276997e-11
+  name "cardboard box(2)"
+  size 0.2 0.2 0.2
+  mass 1
+}
+CardboardBox {
+  translation -2.03 -1.0889399988748651 0.0996076
+  rotation 0.9999999999986638 7.602706918858503e-07 1.447262886545246e-06 1.1258183010203155e-11
+  name "cardboard box(1)"
+  size 0.2 0.2 0.2
+  mass 1
+}
+DEF AGROBOT agrobot {
+  translation 0 0 0.3
+  name "agrobot"
+  controller "<extern>"
+}

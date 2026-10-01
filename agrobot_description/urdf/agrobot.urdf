@@ -2,6 +2,10 @@
 
 <robot name="agrobot">
 
+  <webots>
+    <plugin type="agrobot_webots.agrobot_driver.AgrobotDriver" />
+  </webots>
+
   <material name="aluminium">
     <color rgba="0.55 0.55 0.55 1"/>
   </material>
