@@ -325,3 +325,31 @@ simulador. O que foi feito:
   vez de achar outro caminho. Para isso existe o modo Nav2.
 - A posição é só odometria (rodas + yaw do IMU); os desvios de ~0,3 m por objetivo citados
   acima valem aqui também, e a memória de pontos herda esse erro.
+
+### 2026-10-06 — Malha do chassi não encontrada pelo Webots com `--symlink-install`
+
+**Sintoma.** Com `colcon build --symlink-install`, o Webots avisava
+`Unable to find resource at '//wsl.localhost/.../agrobot_webots/meshes/chassis.stl'` e o
+robô aparecia sem o chassi.
+
+**Causa.** O `agrobot.proto` aponta para `../meshes/chassis.stl`, relativo à pasta do PROTO.
+O `setup.py` copiava a malha de `agrobot_description/meshes/` para
+`install/.../share/agrobot_webots/meshes/`. Com `--symlink-install`, porém, o PROTO
+instalado é um link para `agrobot_webots/protos/agrobot.proto` no código-fonte. O Webots
+(no Windows, lendo o WSL) segue o link e procura a malha em `agrobot_webots/meshes/` do
+código-fonte, que não existia. Sem `--symlink-install` funcionava, porque o PROTO é
+copiado para junto da malha instalada.
+
+**O que mudou**
+- `agrobot_webots/meshes/chassis.stl` (novo): cópia de `agrobot_description/meshes/chassis.stl`
+  (440 KB), para o caminho relativo do PROTO valer tanto no código-fonte quanto no
+  `install/`. Um link simbólico não foi usado porque o Webots no Windows não segue links do
+  WSL de forma confiável.
+- `agrobot_webots/setup.py`: instala `meshes/*.stl` do próprio pacote.
+
+**Atenção.** Se a malha do chassi mudar em `agrobot_description`, copie-a também para
+`agrobot_webots/meshes/`.
+
+**Validação.** O ambiente de nuvem não tem ROS 2 nem Webots. Foi conferido que o PROTO só
+referencia `../meshes/chassis.stl` e que o arquivo agora existe nesse caminho relativo à
+pasta `protos/`.
