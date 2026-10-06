@@ -183,3 +183,33 @@ In Webots, end to end:
   `lifecycle_manager` deactivates the next run's nodes. Run `pkill -9 -f nav2_` before
   relaunching.
 - The work is **uncommitted**. Only the deletion of the old controller is staged.
+
+## Registro de alterações
+
+### 2026-10-06 — Remoção do `agrobot.urdf.xacro` antigo
+
+**O que mudou**
+- Apagado `agrobot_description/urdf/agrobot.urdf.xacro`.
+- `README.md`: a linha do layout do repositório deixou de citar o `.xacro`.
+
+**Por quê.** Havia a suspeita de que o plugin de tração diferencial usava medidas de roda
+erradas (raio 0,22 m e separação 0,96 m contra 0,165 m e 0,86 m "do modelo"). A conferência
+mostrou que o plugin está certo:
+- Todos os launches (`spawn_agrobot`, `agrobot_gazebo/simulation`,
+  `stability_simulation`, `agrobot_webots/simulation`) carregam `agrobot.urdf`.
+- Em `agrobot.urdf` as rodas têm raio 0,22 m e as juntas ficam em y = ±0,48 m
+  (separação 0,96 m). O plugin `gz-sim-diff-drive-system`, o `<plugin>` do Webots e o
+  `agrobot.proto` usam esses mesmos valores.
+- Os valores 0,165 m e 0,86 m (y = ±0,43 m) só existiam no `.xacro`, um modelo antigo e
+  simplificado, sem plugin, que nenhum launch carrega.
+
+O `.xacro` foi removido para não gerar esse diagnóstico errado de novo. Nenhum parâmetro de
+roda foi alterado. O `agrobot.urdf.backup` foi mantido.
+
+**Se o `/odom` do Gazebo divergir na prática**, a causa provável é o skid-steer: o
+`DiffDrive` calcula o giro pelas rodas, que deslizam lateralmente nas curvas. No Webots isso
+já foi resolvido com o yaw do IMU e o `wheelSeparationScale` (seção 1).
+
+**Validação.** O `CMakeLists.txt` instala o diretório `urdf/` inteiro, então nada depende
+do arquivo pelo nome; `grep` no repositório não encontra outra referência ao `.xacro`.
+O `colcon build` não foi executado porque o ambiente de nuvem não tem ROS 2 instalado.
