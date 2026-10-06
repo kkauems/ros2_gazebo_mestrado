@@ -3,7 +3,17 @@
 <robot name="agrobot">
 
   <webots>
-    <plugin type="agrobot_webots.agrobot_driver.AgrobotDriver" />
+    <!-- /scan é publicado pelo AgrobotDriver (stamps em tempo de simulação) -->
+    <device reference="front_lidar" type="Lidar">
+      <ros>
+        <enabled>false</enabled>
+      </ros>
+    </device>
+    <plugin type="agrobot_webots.agrobot_driver.AgrobotDriver">
+      <wheelRadius>0.22</wheelRadius>
+      <wheelSeparation>0.96</wheelSeparation>
+      <wheelSeparationScale>1.33</wheelSeparationScale>
+    </plugin>
   </webots>
 
   <material name="aluminium">
@@ -326,6 +336,23 @@
     <parent link="base_link"/>
     <child link="camera_link"/>
     <origin xyz="0.45 0 0.38" rpy="0 0 0"/>
+  </joint>
+
+  <!-- SENSOR: LIDAR FRONTAL BAIXO (Webots/Nav2: vê caixas de 0.2 m) -->
+  <link name="front_lidar_link">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.04" length="0.04"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+  </link>
+
+  <joint name="front_lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="front_lidar_link"/>
+    <origin xyz="0.65 0 -0.15" rpy="0 0 0"/>
   </joint>
 
 <gazebo reference="lidar_link">
