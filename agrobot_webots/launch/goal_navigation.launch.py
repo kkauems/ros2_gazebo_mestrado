@@ -11,7 +11,11 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -21,11 +25,16 @@ from launch_ros.actions import Node
 def generate_launch_description():
     webots_share = get_package_share_directory('agrobot_webots')
 
-    simulation = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(webots_share, 'launch', 'simulation.launch.py')),
-        launch_arguments={'nav': 'false', 'rviz': 'false'}.items(),
-    )
+    # O GroupAction isola os argumentos passados ao include. Sem ele, o
+    # rviz:=false do simulation.launch.py vaza para este arquivo e desliga
+    # também o RViz daqui.
+    simulation = GroupAction([
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(webots_share, 'launch', 'simulation.launch.py')),
+            launch_arguments={'nav': 'false', 'rviz': 'false'}.items(),
+        ),
+    ])
 
     rviz = Node(
         package='rviz2',

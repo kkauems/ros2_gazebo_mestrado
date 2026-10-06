@@ -353,3 +353,26 @@ copiado para junto da malha instalada.
 **Validação.** O ambiente de nuvem não tem ROS 2 nem Webots. Foi conferido que o PROTO só
 referencia `../meshes/chassis.stl` e que o arquivo agora existe nesse caminho relativo à
 pasta `protos/`.
+
+### 2026-10-06 — RViz não abria no `goal_navigation.launch.py`
+
+**Sintoma.** `ros2 launch agrobot_webots goal_navigation.launch.py` abria o Webots, mas não
+o RViz.
+
+**Causa.** O launch inclui o `simulation.launch.py` com `rviz:=false`, para não abrir o
+`nav.rviz` do Nav2. No `launch` do ROS 2, os argumentos de um `IncludeLaunchDescription`
+viram configurações do contexto inteiro e continuam valendo depois do include. Assim, o
+`rviz` do próprio `goal_navigation.launch.py` também passava a valer `false`, e o RViz com
+`goal.rviz` não era iniciado.
+
+**O que mudou**
+- `agrobot_webots/launch/goal_navigation.launch.py`: o include fica dentro de um
+  `GroupAction` (que por padrão é `scoped=True`). Os argumentos passados ao include valem
+  só dentro do grupo, e o `rviz` deste launch volta ao valor dele (`true`, ou o que for
+  passado na linha de comando).
+
+**Validação.** Reproduzido com o pacote `launch` do ROS 2 Jazzy (código do branch `jazzy`
+de `ros2/launch`) num launch mínimo com a mesma estrutura: sem o `GroupAction`, a ação
+condicionada a `rviz` do arquivo pai não rodava; com ele, rodava, e a do arquivo incluído
+continuava desligada. No mesmo teste, o `OnProcessExit` → `Shutdown` registrado dentro do
+include (o que fecha tudo quando o Webots fecha) continuou funcionando dentro do grupo.
