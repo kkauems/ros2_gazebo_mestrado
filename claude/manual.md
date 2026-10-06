@@ -241,3 +241,87 @@ não altera nada. Depois, o prompt refinado pode ser executado na mesma sessão.
 **Validação.** Frontmatter YAML conferido (`name`, `description`, `tools`, `model`). Os
 caminhos citados no agente e no exemplo existem no repositório. Nenhum código ROS foi
 alterado.
+
+### 2026-10-06 — Objetivo pelo RViz sem Nav2 (`goal_navigator`, Webots)
+
+**Pedido.** Iniciar a simulação já com o RViz e o robô, marcar um objetivo no RViz e o
+robô ir até ele, sem reconhecimento do mundo (sem mapa nem costmaps do Nav2), apenas
+desviando de objetos diretamente à frente.
+
+**Como usar**
+```bash
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots goal_navigation.launch.py      # rviz:=false para não abrir o RViz
+```
+No RViz, ferramenta **2D Goal Pose** → clicar e arrastar no grid (a seta dá a orientação
+final). O Fixed Frame é `odom`, ou seja, as coordenadas são relativas ao ponto onde o robô
+nasceu, como no Nav2. O log do `goal_navigator` mostra cada decisão: objetivo novo,
+obstáculo no caminho, lado do desvio, caminho livre de novo e chegada.
+
+**O que mudou, arquivo por arquivo**
+- `agrobot_webots/agrobot_webots/goal_navigator.py` (novo). Nó que assina `/goal_pose`,
+  `/odom` e `/scan` e publica `/cmd_vel` a 10 Hz:
+  - **Direto ao objetivo** quando a faixa da largura do robô (0,56 m + 0,10 m de margem para
+    cada lado), saindo do centro dele na direção do objetivo, está livre por
+    `stop_distance` = 0,6 m à frente da carroceria (ou até o objetivo, se estiver mais
+    perto). Gira parado se o erro de direção passa de 0,6 rad; senão anda com
+    v = min(0,3; 0,5·dist)·cos(erro) e w = 1,5·erro.
+  - **Desvio** quando essa faixa está bloqueada: procura, de 5° em 5° dentro do campo de
+    visão do LiDAR, a direção livre por `clear_distance` = 1,0 m mais próxima da do
+    objetivo, com uma penalidade para trocar de lado. O rumo escolhido é guardado (no frame
+    `odom`) enquanto continuar livre, para o robô não ficar virando de um lado para o
+    outro. Quando o caminho direto abre de novo, ele volta a mirar o objetivo. Se nenhuma
+    direção estiver livre, gira para o lado mais livre até abrir uma.
+  - **Memória curta de pontos.** O LiDAR do Webots fica na frente (0,65 m à frente do
+    `base_link`) e vê só 3,0 rad (~172°), então não enxerga a lateral nem a traseira. O nó
+    guarda os pontos que o LiDAR viu a até 2 m (grade de 5 cm, no frame `odom`) e os
+    descarta quando o robô se afasta mais de 3 m deles (ou depois de 5 min). Dentro do campo de visão vale só o
+    scan atual. Isso não é um mapa: serve para lembrar o que acabou de passar ao lado do
+    robô.
+  - **Checagem da carroceria.** Antes de girar parado, o nó simula um giro de 0,25 rad e
+    vê se algum ponto cairia dentro do retângulo do robô (1,2 × 1,12 m + margem). Se cair,
+    tenta avançar um pouco, recuar um pouco (até 0,8 m sem progresso) ou girar para o
+    outro lado. Andando, se a curva levaria a lateral para cima de um ponto, segue reto.
+  - **Desistência.** Para e avisa no log se não chega 0,1 m mais perto do objetivo em
+    40 s, ou se fica 5 s sem conseguir girar nem andar.
+  - **Chegada.** Dentro de 0,25 m gira até a orientação pedida (±0,15 rad). Se não houver
+    espaço para girar, para ali e avisa.
+  - Todos os números acima são parâmetros ROS (`ros2 param list /goal_navigator`).
+- `agrobot_webots/launch/goal_navigation.launch.py` (novo): inclui o `simulation.launch.py`
+  com `nav:=false rviz:=false` (Webots, driver e `robot_state_publisher`, sem Nav2) e
+  acrescenta o RViz com `rviz/goal.rviz` e o `goal_navigator` com `use_sim_time`.
+- `agrobot_webots/rviz/goal.rviz` (novo): Fixed Frame `odom`, vista de cima, RobotModel,
+  LaserScan (`/scan`, Best Effort), Odometry, Pose do objetivo e a ferramenta 2D Goal
+  Pose publicando em `/goal_pose`. Sem os costmaps nem o caminho do Nav2.
+- `agrobot_webots/setup.py`: entry point `goal_navigator`.
+- `agrobot_webots/package.xml`: `sensor_msgs` como dependência de execução (o driver já o
+  usava e faltava, conforme a seção 8).
+- `README.md`: tabela de estado, layout e seção de uso.
+
+**Por que não reaproveitar o Nav2.** O `simulation.launch.py` com Nav2 já aceita o mesmo
+2D Goal Pose (o `bt_navigator` também escuta `/goal_pose`), mas ele monta costmaps do
+ambiente e planeja um caminho, que é o "reconhecimento do mundo" que o pedido excluiu. O
+modo novo não substitui o Nav2: os dois continuam disponíveis, em launches separados.
+
+**Validação.** O ambiente de nuvem não tem ROS 2 nem Webots, então nada foi rodado no
+simulador. O que foi feito:
+- `flake8` sem erros no nó e no launch; YAML do RViz conferido com parser.
+- O nó foi rodado numa simulação 2D em Python que reproduz a arena do Webots: robô
+  diferencial nascendo em (-1,0; -0,3), LiDAR a 0,65 m à frente com 300 raios em 3,0 rad e
+  alcance de 8 m, paredes em ±2,5 m, as 4 caixas plásticas (0,3 m) e as 3 de papelão
+  (0,2 m), e a carroceria como retângulo de 1,2 × 1,12 m.
+- 64 objetivos aleatórios dentro da arena, saindo do ponto inicial: **56 alcançados sem
+  encostar em nada**, 7 em que o robô parou com o aviso de "sem chegar mais perto" e 1 em
+  que a lateral encostou numa caixa ao contornar. Os 7 casos sem chegada são quase todos
+  objetivos ao norte do ponto inicial, atrás do vão entre a caixa 3 e a caixa 4. Esse vão
+  tem ~1,3 m, menos que a largura do robô com a margem.
+- As primeiras versões mostraram por que a memória e a checagem da carroceria são
+  necessárias: sem elas, o robô batia a lateral ou a traseira nas caixas que já tinham
+  saído do campo de visão em quase todos os objetivos.
+
+**Limites conhecidos**
+- É um desvio reativo, sem planejamento: em becos ou vãos estreitos ele para e avisa em
+  vez de achar outro caminho. Para isso existe o modo Nav2.
+- A posição é só odometria (rodas + yaw do IMU); os desvios de ~0,3 m por objetivo citados
+  acima valem aqui também, e a memória de pontos herda esse erro.

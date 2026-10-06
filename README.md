@@ -17,6 +17,7 @@ reactive obstacle avoidance and stability tests).
 | Wheel + IMU odometry (`/odom`, TF `odom → base_link`) | Webots | Works |
 | Low front lidar (`/scan`) that sees the crates and boxes | Webots | Works |
 | Nav2: click a goal in RViz and the robot drives there around obstacles | Webots | Works, tested on 2026-10-02 |
+| Goal from RViz without Nav2 or map: odometry only, avoids what is in front (`goal_navigator`) | Webots | New on 2026-10-06, tested only in a 2D Python simulation |
 | Mapping / SLAM / AMCL / GPS | — | Not done. Navigation happens in the `odom` frame |
 | `cmd_vel` / `odom` / `scan` bridge | Gazebo | Works (from the earlier commits) |
 | Reactive obstacle avoidance node | Gazebo | Code exists, but see [Known issues](#known-issues) |
@@ -36,8 +37,11 @@ agrobot_webots/          Webots simulation + Nav2 (ament_python)
   worlds/obstacle_arena.wbt  5 x 5 m arena, walls, 4 crates, 3 boxes
   launch/simulation.launch.py  Webots + driver + robot_state_publisher + Nav2 + RViz
   launch/navigation.launch.py  only the Nav2 servers (no map server, no AMCL)
+  launch/goal_navigation.launch.py  Webots + driver + RViz + goal_navigator (no Nav2)
+  agrobot_webots/goal_navigator.py  goes to the RViz goal, avoids obstacles in front
   config/nav2_params.yaml  Nav2 parameters (map-free, odom frame)
   rviz/nav.rviz            RViz config with the "Nav2 Goal" tool
+  rviz/goal.rviz           RViz config for goal_navigator ("2D Goal Pose" tool)
 agrobot_gazebo/          Gazebo Harmonic worlds (.sdf) and launch files (ament_cmake)
 agrobot_control/         Gazebo-era nodes: obstacle_avoidance.py, stability_monitor.py
 vineyard_gazebo_world/   Third-party vineyard worlds for Gazebo (git-ignored)
@@ -110,6 +114,22 @@ Goal coordinates are in `odom`. **`odom` = where the robot spawned** (world posi
 `(-1.0, -0.3)`, facing +x), not the center of the arena. The walls are at world ±2.5 m, so
 in `odom` the free space runs roughly from x = -1.5 to 3.5 and y = -2.2 to 2.8, minus the
 robot's half-width (~0.56 m).
+
+### Goal without Nav2 (`goal_navigator`)
+
+```bash
+ros2 launch agrobot_webots goal_navigation.launch.py     # rviz:=false to skip RViz
+```
+
+Same Webots world and driver, but no Nav2 and no costmaps. In RViz (Fixed Frame `odom`),
+pick **2D Goal Pose** and click-drag on the grid. The `goal_navigator` node drives
+towards the goal using only `/odom`. The lidar is only used to check whether the strip in
+front of the robot (its width plus a margin) is free. If the way to the goal is blocked, it
+takes the free direction closest to the goal and heads for the goal again once that way
+opens. It keeps the lidar points it saw near the robot for a while, because the front lidar
+can't see the sides of the body, and checks them before every turn so the body doesn't
+hit anything. It stops with a log message when it can't get closer to the goal for 40 s.
+Details and parameters: [claude/manual.md](claude/manual.md).
 
 ### Manual driving
 

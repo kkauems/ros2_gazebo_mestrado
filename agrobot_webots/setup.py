@@ -34,6 +34,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'goal_navigator = agrobot_webots.goal_navigator:main',
         ],
     },
 )
