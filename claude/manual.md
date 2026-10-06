@@ -241,3 +241,21 @@ não altera nada. Depois, o prompt refinado pode ser executado na mesma sessão.
 **Validação.** Frontmatter YAML conferido (`name`, `description`, `tools`, `model`). Os
 caminhos citados no agente e no exemplo existem no repositório. Nenhum código ROS foi
 alterado.
+
+### 2026-10-06 — `prompt-refiner`: Webots como alvo padrão, Gazebo como legado
+
+**O que mudou** (`.claude/agents/prompt-refiner.md`)
+- O contexto fixo agora diz que o **Webots (`agrobot_webots`) é o simulador oficial**: todo
+  pedido mira o Agrobot do Webots, mesmo sem citar o simulador, e é concluído lá.
+- `agrobot_gazebo` e `agrobot_control` passaram a ser descritos como **legado**: o agente não
+  os propõe como alvo nem como exemplo, a menos que o pedido cite o Gazebo pelo nome.
+- O agente só lê os pacotes do Gazebo quando o pedido citar o Gazebo.
+- O exemplo do agente foi reescrito: o desvio reativo de obstáculos agora mira o Webots
+  (nó novo em `agrobot_webots`, `/scan` do plugin, launch com `nav:=false`).
+
+**Por quê.** O Kauê usa Windows; o Gazebo era uma versão antiga que não está mais em uso.
+A primeira versão do agente tratava o Gazebo como opção atual e usava um exemplo no Gazebo,
+o que levaria outros agentes a trabalhar no simulador errado.
+
+**Validação.** Frontmatter YAML conferido; os caminhos citados no exemplo existem.
+Nenhum código ROS foi alterado.
