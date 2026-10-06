@@ -28,7 +28,7 @@ The Webots + Nav2 work is **not committed yet** (see `git status`).
 
 ```
 agrobot_description/     URDF, meshes. Shared by Gazebo and Webots
-  urdf/agrobot.urdf        the URDF actually used (agrobot.urdf.xacro / .backup are older)
+  urdf/agrobot.urdf        the URDF actually used (agrobot.urdf.backup is older)
   launch/spawn_agrobot.launch.py   spawns the robot into an already running Gazebo
 agrobot_webots/          Webots simulation + Nav2 (ament_python)
   agrobot_webots/agrobot_driver.py   webots_ros2 plugin: motors, odom, TF, scan, joint_states
