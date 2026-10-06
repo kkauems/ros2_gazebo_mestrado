@@ -45,10 +45,11 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
 
+    # Sem use_sim_time: nada publica /clock nesta simulação, e o nó não
+    # precisa do tempo simulado (o controle roda no relógio do sistema).
     goal_navigator = Node(
         package='agrobot_webots',
         executable='goal_navigator',
-        parameters=[{'use_sim_time': True}],
         output='screen',
     )
 

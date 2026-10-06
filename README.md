@@ -176,8 +176,11 @@ Nav2:  bt_navigator → planner_server (NavFn) → controller_server (Regulated 
 | `/joint_states` | `sensor_msgs/JointState` | AgrobotDriver | 4 wheel positions |
 | `/tf` | | AgrobotDriver, robot_state_publisher | `odom → base_link` is dynamic, the rest is static |
 
-All messages are stamped with **Webots simulation time** (`robot.getTime()`), and every
-node runs with `use_sim_time: true`.
+All messages are stamped with **Webots simulation time** (`robot.getTime()`), and the
+nodes run with `use_sim_time: true`, except `goal_navigator`. Note that nothing publishes
+`/clock` in this setup (`WebotsLauncher` runs without `ros2_supervisor`), so a node's ROS
+clock stays at 0 and timers on it never fire. `goal_navigator` runs its control loop on
+the system clock for that reason.
 
 ### Robot parameters
 

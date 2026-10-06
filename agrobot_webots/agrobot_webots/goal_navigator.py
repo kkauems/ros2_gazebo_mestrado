@@ -25,8 +25,10 @@ import math
 import rclpy
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import LaserScan
 
 IDLE = 'IDLE'
@@ -153,7 +155,12 @@ class GoalNavigator(Node):
             Odometry, '/odom', self.odom_callback, 10)
         self.create_subscription(
             LaserScan, '/scan', self.scan_callback, qos_profile_sensor_data)
-        self.create_timer(0.1, self.control_loop)
+        # O laço de controle usa o relógio do sistema. Com use_sim_time, um
+        # timer no relógio do ROS só anda se alguém publicar /clock, e a
+        # simulação do Webots daqui não publica (não usa o Ros2Supervisor):
+        # o timer nunca dispararia e o robô não andaria.
+        self.create_timer(0.1, self.control_loop,
+                          clock=Clock(clock_type=ClockType.STEADY_TIME))
 
         self.get_logger().info(
             'Aguardando objetivo do RViz (2D Goal Pose em /goal_pose, '
@@ -500,7 +507,11 @@ class GoalNavigator(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    # Sem os tratadores de sinal do rclpy, o Ctrl+C chega como
+    # KeyboardInterrupt com o contexto ainda válido, e dá para mandar o robô
+    # parar antes de desligar. Com eles (o padrão), o contexto já estaria
+    # fechado e o publish do finally falharia.
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = GoalNavigator()
     try:
         rclpy.spin(node)
@@ -509,7 +520,7 @@ def main(args=None):
     finally:
         node.cmd_pub.publish(Twist())
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

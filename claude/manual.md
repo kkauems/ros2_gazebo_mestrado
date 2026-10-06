@@ -290,7 +290,8 @@ obstáculo no caminho, lado do desvio, caminho livre de novo e chegada.
   - Todos os números acima são parâmetros ROS (`ros2 param list /goal_navigator`).
 - `agrobot_webots/launch/goal_navigation.launch.py` (novo): inclui o `simulation.launch.py`
   com `nav:=false rviz:=false` (Webots, driver e `robot_state_publisher`, sem Nav2) e
-  acrescenta o RViz com `rviz/goal.rviz` e o `goal_navigator` com `use_sim_time`.
+  acrescenta o RViz com `rviz/goal.rviz` e o `goal_navigator` (sem `use_sim_time`; veja
+  a entrada "Robô não andava até o objetivo").
 - `agrobot_webots/rviz/goal.rviz` (novo): Fixed Frame `odom`, vista de cima, RobotModel,
   LaserScan (`/scan`, Best Effort), Odometry, Pose do objetivo e a ferramenta 2D Goal
   Pose publicando em `/goal_pose`. Sem os costmaps nem o caminho do Nav2.
@@ -376,3 +377,37 @@ de `ros2/launch`) num launch mínimo com a mesma estrutura: sem o `GroupAction`,
 condicionada a `rviz` do arquivo pai não rodava; com ele, rodava, e a do arquivo incluído
 continuava desligada. No mesmo teste, o `OnProcessExit` → `Shutdown` registrado dentro do
 include (o que fecha tudo quando o Webots fecha) continuou funcionando dentro do grupo.
+
+### 2026-10-06 — Robô não andava até o objetivo (`goal_navigator`)
+
+**Sintoma.** O RViz publicava o objetivo (`Setting goal pose: Frame:odom, ...`), mas o
+robô ficava parado.
+
+**Causa.** O `goal_navigator` rodava com `use_sim_time: true`, e o laço de controle era
+um timer de 10 Hz no relógio do ROS. Com `use_sim_time`, esse relógio fica parado em 0 até
+alguém publicar `/clock`, e nesta simulação ninguém publica: no `webots_ros2_driver`
+2025.0.0, o `/clock` sai do nó `Ros2Supervisor`, que só existe com
+`WebotsLauncher(..., ros2_supervisor=True)`, e o `simulation.launch.py` não usa essa opção
+(conferido em `webots_ros2_driver/webots_launcher.py` e `ros2_supervisor.py` da tag
+2025.0.0). O objetivo chegava ao nó, mas o timer nunca disparava e nada era publicado em
+`/cmd_vel`. A revisão automática do PR chegou à mesma causa de forma independente.
+
+**O que mudou**
+- `goal_navigator.py`: o timer do laço de controle usa o relógio do sistema
+  (`Clock(clock_type=ClockType.STEADY_TIME)`), então roda com ou sem `use_sim_time`.
+- `goal_navigation.launch.py`: o `goal_navigator` sobe sem `use_sim_time`. O nó não usa o
+  tempo do ROS para nada; a memória de pontos usa o carimbo do próprio `/scan`, que é o
+  tempo do Webots.
+- `goal_navigator.py`, `main()`: o `rclpy.init` passa a ser feito sem os tratadores de
+  sinal do rclpy (`SignalHandlerOptions.NO`). No Jazzy, com eles, o Ctrl+C fecha o contexto
+  antes do `finally`, o `publish` da parada falha com erro e o último comando de
+  velocidade fica valendo no Webots. Agora o Ctrl+C manda velocidade zero antes de sair.
+- `README.md`: a nota sobre `use_sim_time` diz que nada publica `/clock` nesta simulação.
+
+**Observação.** Os outros nós (`robot_state_publisher`, Nav2, RViz) também rodam com
+`use_sim_time` sem `/clock`. Isso não foi alterado: o modo Nav2 foi testado e funciona
+assim, e as mensagens são carimbadas com o tempo do Webots pelo driver.
+
+**Validação.** Assinatura de `Node.create_timer(..., clock=...)`, `Clock(clock_type=...)`,
+`rclpy.init(..., signal_handler_options=...)` e `rclpy.try_shutdown` conferidas no código do
+`rclpy` branch `jazzy`. `flake8` sem erros. Não foi possível rodar no Webots daqui.
