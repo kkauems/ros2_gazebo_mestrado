@@ -343,8 +343,8 @@ copiado para junto da malha instalada.
 **O que mudou**
 - `agrobot_webots/meshes/chassis.stl` (novo): cópia de `agrobot_description/meshes/chassis.stl`
   (440 KB), para o caminho relativo do PROTO valer tanto no código-fonte quanto no
-  `install/`. Um link simbólico não foi usado porque o Webots no Windows não segue links do
-  WSL de forma confiável.
+  `install/`. Preferi a cópia a um link simbólico para não depender de como o Webots, no
+  Windows, resolve links do WSL.
 - `agrobot_webots/setup.py`: instala `meshes/*.stl` do próprio pacote.
 
 **Atenção.** Se a malha do chassi mudar em `agrobot_description`, copie-a também para
