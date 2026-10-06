@@ -146,6 +146,7 @@ class GoalNavigator(Node):
         self.escape_direction = 0
         self.escape_travel = 0.0
         self.blocked_steps = 0
+        self.turn_sign = 0        # lado de giro travado (ver rotate)
         self.stopped = True
 
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -193,6 +194,7 @@ class GoalNavigator(Node):
         self.escape_direction = 0
         self.escape_travel = 0.0
         self.blocked_steps = 0
+        self.turn_sign = 0
         self.state = GO_TO_GOAL
         self.get_logger().info(
             f'Novo objetivo: x={x:.2f} y={y:.2f} '
@@ -328,10 +330,13 @@ class GoalNavigator(Node):
             linear = min(self.max_linear, self.k_linear * distance)
             linear *= math.cos(direction)
             # Andando e virando ao mesmo tempo, a lateral pode encostar em
-            # algo que já saiu do campo de visão. Se encostaria, segue reto.
-            if self.footprint_hits(linear * MOTION_LOOKAHEAD,
-                                   angular * MOTION_LOOKAHEAD):
+            # algo que já saiu do campo de visão. Se encostaria, segue reto;
+            # se reto também encostaria, não anda e só gira (se der).
+            if self.motion_hits(linear, angular):
+                if self.motion_hits(linear, 0.0):
+                    return self.rotate(angular)
                 angular = 0.0
+            self.turn_sign = 0
             return linear, angular
 
         if self.state == ALIGN:
@@ -450,14 +455,31 @@ class GoalNavigator(Node):
                 return True
         return False
 
+    def motion_hits(self, linear, angular):
+        """True se andar com (v, w) por MOTION_LOOKAHEAD fizer encostar.
+
+        Confere também posições intermediárias: numa curva, um canto da
+        carroceria pode passar por cima de um ponto e sair do outro lado
+        antes do fim do trecho.
+        """
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            t = fraction * MOTION_LOOKAHEAD
+            if self.footprint_hits(linear * t, angular * t):
+                return True
+        return False
+
     def rotate(self, angular):
         """Gira parado, desde que a carroceria não vá encostar em nada.
 
         Se o giro bater, tenta, nesta ordem: avançar um pouco, recuar um
         pouco (no máximo max_escape_distance), girar para o outro lado.
         Mantém o sentido de fuga até o giro ficar livre, para não ficar
-        indo e voltando.
+        indo e voltando. Depois de trocar o lado do giro, continua nele
+        até voltar a andar: senão, no passo seguinte o controle pediria o
+        lado de antes e o robô ficaria tremendo entre os dois.
         """
+        if self.turn_sign:
+            angular = math.copysign(angular, self.turn_sign)
         turn = math.copysign(ROTATION_LOOKAHEAD, angular)
         if not self.footprint_hits(0.0, turn):
             self.escape_direction = 0
@@ -480,13 +502,15 @@ class GoalNavigator(Node):
                 return direction * self.escape_speed, 0.0
 
         self.escape_direction = 0
-        if not self.footprint_hits(0.0, -turn):
+        if not self.turn_sign and not self.footprint_hits(0.0, -turn):
+            self.turn_sign = -1 if angular > 0 else 1
             return 0.0, -angular
 
         self.blocked_steps += 1
         if self.blocked_steps > 50:
             self.get_logger().error(
-                'Robô cercado: não consegue girar nem sair do lugar. Parando.')
+                'Robô cercado: não consegue continuar girando nem manobrar '
+                'para liberar o giro. Parando; marque outro objetivo.')
             self.state = IDLE
         return 0.0, 0.0
 

@@ -266,7 +266,7 @@ obstáculo no caminho, lado do desvio, caminho livre de novo e chegada.
     cada lado), saindo do centro dele na direção do objetivo, está livre por
     `stop_distance` = 0,6 m à frente da carroceria (ou até o objetivo, se estiver mais
     perto). Gira parado se o erro de direção passa de 0,6 rad; senão anda com
-    v = min(0,3; 0,5·dist)·cos(erro) e w = 1,5·erro.
+    v = min(0,3; 0,5·dist)·cos(erro) e w = 1,5·erro (limitado a 0,8 rad/s).
   - **Desvio** quando essa faixa está bloqueada: procura, de 5° em 5° dentro do campo de
     visão do LiDAR, a direção livre por `clear_distance` = 1,0 m mais próxima da do
     objetivo, com uma penalidade para trocar de lado. O rumo escolhido é guardado (no frame
@@ -287,7 +287,14 @@ obstáculo no caminho, lado do desvio, caminho livre de novo e chegada.
     40 s, ou se fica 5 s sem conseguir girar nem andar.
   - **Chegada.** Dentro de 0,25 m gira até a orientação pedida (±0,15 rad). Se não houver
     espaço para girar, para ali e avisa.
-  - Todos os números acima são parâmetros ROS (`ros2 param list /goal_navigator`).
+  - Velocidades, ganhos, tolerâncias, dimensões do robô, `stop_distance`,
+    `clear_distance`, os 40 s de desistência, os 0,8 m de recuo e a memória (2 m, 5 min)
+    são parâmetros ROS (`ros2 param list /goal_navigator`). O passo de 5°, o giro simulado
+    de 0,25 rad, a grade de 5 cm, o descarte a 1 m além do raio da memória, os 5 s sem
+    conseguir girar e os 10 Hz são constantes no código. Os parâmetros são lidos só quando o nó inicia: `ros2 param
+    set` com ele rodando não muda nada. Para mudar, ponha-os em `parameters=[{...}]` do
+    `goal_navigator` no `goal_navigation.launch.py`, sempre com ponto decimal (`60.0`, não
+    `60`: com um inteiro o nó não inicia).
 - `agrobot_webots/launch/goal_navigation.launch.py` (novo): inclui o `simulation.launch.py`
   com `nav:=false rviz:=false` (Webots, driver e `robot_state_publisher`, sem Nav2) e
   acrescenta o RViz com `rviz/goal.rviz` e o `goal_navigator` (sem `use_sim_time`; veja
@@ -411,3 +418,66 @@ assim, e as mensagens são carimbadas com o tempo do Webots pelo driver.
 **Validação.** Assinatura de `Node.create_timer(..., clock=...)`, `Clock(clock_type=...)`,
 `rclpy.init(..., signal_handler_options=...)` e `rclpy.try_shutdown` conferidas no código do
 `rclpy` branch `jazzy`. `flake8` sem erros. Não foi possível rodar no Webots daqui.
+
+### 2026-10-06 — Desvio do `goal_navigator`: colisões em curva e robô tremendo
+
+Correções de uma revisão do PR. A revisão rodou o nó em sequências de objetivos, em que cada
+objetivo começa de onde o anterior terminou e a memória de pontos se acumula. Os testes
+anteriores partiam sempre do ponto inicial.
+
+**Problemas encontrados**
+- **Colisão ao seguir reto.** Andando, se a curva levaria a lateral para cima de um ponto,
+  o nó zerava o giro e seguia reto sem conferir se reto também batia. Quando batia, o robô
+  entrava na caixa.
+- **Colisão no meio da curva.** A checagem da curva olhava só a posição final do trecho
+  simulado (0,5 s à frente). Numa curva fechada, o canto traseiro passava por cima de uma
+  caixa no meio do trecho e saía do outro lado, e a checagem não via.
+- **Robô tremendo.** O giro para o lado do objetivo batia e não dava para avançar nem
+  recuar. O nó então girava um passo (0,1 s) para o outro lado. No passo seguinte o
+  controle pedia de novo o lado do objetivo, ainda bloqueado. O robô ficava alternando
+  ±0,8 rad/s no mesmo lugar até a desistência de 40 s. O aviso de "Robô cercado" (5 s)
+  nunca disparava.
+- **Manual.** A entrada "Objetivo pelo RViz sem Nav2" dizia que todos os números eram
+  parâmetros ROS e omitia o limite de 0,8 rad/s em w.
+
+**O que mudou**
+- `agrobot_webots/agrobot_webots/goal_navigator.py`
+  - `motion_hits()` (novo): confere a carroceria em 1/4, 1/2, 3/4 e no fim do trecho de
+    0,5 s, e não só no fim.
+  - Andando: se a curva bate, confere o movimento reto. Se reto também bate, o robô não
+    anda e passa a girar parado, com a checagem de giro de antes.
+  - `rotate()`: ao trocar para o outro lado do giro, o lado fica travado (`turn_sign`) até
+    o robô voltar a andar. Se esse lado também bloquear e não houver como avançar ou
+    recuar, o nó conta os 5 s e para com "Robô cercado". A trava é zerada a cada objetivo
+    novo.
+  - A mensagem de "Robô cercado" agora diz que ele não consegue continuar girando nem
+    manobrar para liberar o giro, e pede outro objetivo.
+- `claude/manual.md`: a entrada "Objetivo pelo RViz sem Nav2" foi corrigida. Ela agora diz
+  que w é limitado a 0,8 rad/s, separa os parâmetros ROS das constantes do código e explica
+  como mudar os parâmetros.
+- `README.md`: a seção do `goal_navigator` cita a parada por "Robô cercado".
+
+**Validação.** Sem ROS 2 nem Webots na nuvem, tudo foi testado na simulação 2D da arena em
+Python, a mesma da entrada original.
+- **64 objetivos saindo do ponto inicial.**
+  - Antes: 56 alcançados, 7 paradas e 1 colisão.
+  - Agora: 56 alcançados, 8 paradas e 0 colisões.
+- **15 sequências de 5 objetivos (75 objetivos), sem erro de odometria.**
+  - Antes: 44 alcançados, 23 paradas e 8 colisões.
+  - Agora: 49 alcançados, 23 paradas e 3 colisões.
+  - As trocas de sentido de giro caíram de 6505 para 348 no total.
+  - Cada parada leva em média 21 s, em vez de 42 s.
+- **As mesmas sequências com erro de odometria simulado (escorregamento nas curvas).**
+  - Colisões caíram de 7 para 4.
+  - Alcançados caíram de 38 para 33. Parte dos alcançados de antes veio depois de uma
+    colisão: na simulação 2D a caixa não segura o robô, e ele atravessa e segue.
+- **As 3 colisões que sobraram.** Duas são pontos cegos do LiDAR. A face da caixa que fica
+  ao lado da carroceria nunca entrou no campo de visão, então não está na memória: numa,
+  o robô bate ao girar na chegada; na outra, numa curva. A terceira é o objetivo seguinte a
+  uma dessas, que já começa encostado. Pontos cegos só se resolvem com sensores laterais
+  ou traseiros.
+- **Onde estão as paradas.** Elas se concentram em lugares em que o robô fica entre duas
+  caixas, sem espaço para girar até o lado do objetivo. Em algumas sequências os objetivos
+  seguintes também param, porque ele continua no mesmo lugar apertado. Nesse caso, tire-o
+  dali com o teleop (seção "Manual driving" do README) e marque o objetivo de novo.
+- **Lint.** `flake8` sem erros.

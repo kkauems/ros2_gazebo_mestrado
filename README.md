@@ -128,7 +128,8 @@ front of the robot (its width plus a margin) is free. If the way to the goal is 
 takes the free direction closest to the goal and heads for the goal again once that way
 opens. It keeps the lidar points it saw near the robot for a while, because the front lidar
 can't see the sides of the body, and checks them before every turn so the body doesn't
-hit anything. It stops with a log message when it can't get closer to the goal for 40 s.
+hit anything. It stops with a log message when it can't get closer to the goal for 40 s,
+or when it is boxed in and can't turn or maneuver for 5 s ("Robô cercado").
 Details and parameters: [claude/manual.md](claude/manual.md).
 
 ### Manual driving
