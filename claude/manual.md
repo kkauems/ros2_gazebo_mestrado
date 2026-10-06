@@ -213,3 +213,31 @@ já foi resolvido com o yaw do IMU e o `wheelSeparationScale` (seção 1).
 **Validação.** O `CMakeLists.txt` instala o diretório `urdf/` inteiro, então nada depende
 do arquivo pelo nome; `grep` no repositório não encontra outra referência ao `.xacro`.
 O `colcon build` não foi executado porque o ambiente de nuvem não tem ROS 2 instalado.
+
+### 2026-10-06 — Agente de refinamento de prompts
+
+**O que mudou**
+- Novo arquivo `.claude/agents/prompt-refiner.md`: um subagente do Claude Code chamado
+  `prompt-refiner`.
+
+**O que ele faz.** Recebe um pedido bruto (curto, ambíguo ou com vários assuntos) e devolve
+um prompt refinado por assunto, com objetivo, contexto (caminhos reais do repositório),
+passos, restrições, critérios de pronto, suposições e perguntas abertas. Ele já embute o
+contexto fixo do projeto: ROS 2 Jazzy no WSL2, Webots + Nav2 sem mapa, Gazebo Harmonic, os
+pacotes `agrobot_*`, a falta de ROS 2 no ambiente de nuvem (o que validar na nuvem e o que
+testar localmente) e a regra de registrar toda alteração neste manual.
+
+**Por quê.** Pedidos curtos geram resultados que adivinham escopo e critério de pronto.
+Refinar o pedido antes de executar deixa explícitos os defaults escolhidos e como verificar
+o resultado.
+
+**Como usar.** No Claude Code, dentro do repositório:
+- Explícito: "use o agente prompt-refiner para refinar: <pedido>".
+- Ou `/agents` para ver e editar o agente.
+O Claude também pode chamá-lo sozinho quando o pedido for vago (critério na `description`
+do arquivo). O agente só tem as ferramentas `Read`, `Grep` e `Glob`: lê o repositório, mas
+não altera nada. Depois, o prompt refinado pode ser executado na mesma sessão.
+
+**Validação.** Frontmatter YAML conferido (`name`, `description`, `tools`, `model`). Os
+caminhos citados no agente e no exemplo existem no repositório. Nenhum código ROS foi
+alterado.
