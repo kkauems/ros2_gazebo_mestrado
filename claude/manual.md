@@ -242,6 +242,245 @@ não altera nada. Depois, o prompt refinado pode ser executado na mesma sessão.
 caminhos citados no agente e no exemplo existem no repositório. Nenhum código ROS foi
 alterado.
 
+### 2026-10-06 — Objetivo pelo RViz sem Nav2 (`goal_navigator`, Webots)
+
+**Pedido.** Iniciar a simulação já com o RViz e o robô, marcar um objetivo no RViz e o
+robô ir até ele, sem reconhecimento do mundo (sem mapa nem costmaps do Nav2), apenas
+desviando de objetos diretamente à frente.
+
+**Como usar**
+```bash
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots goal_navigation.launch.py      # rviz:=false para não abrir o RViz
+```
+No RViz, ferramenta **2D Goal Pose** → clicar e arrastar no grid (a seta dá a orientação
+final). O Fixed Frame é `odom`, ou seja, as coordenadas são relativas ao ponto onde o robô
+nasceu, como no Nav2. O log do `goal_navigator` mostra cada decisão: objetivo novo,
+obstáculo no caminho, lado do desvio, caminho livre de novo e chegada.
+
+**O que mudou, arquivo por arquivo**
+- `agrobot_webots/agrobot_webots/goal_navigator.py` (novo). Nó que assina `/goal_pose`,
+  `/odom` e `/scan` e publica `/cmd_vel` a 10 Hz:
+  - **Direto ao objetivo** quando a faixa da largura do robô (0,56 m + 0,10 m de margem para
+    cada lado), saindo do centro dele na direção do objetivo, está livre por
+    `stop_distance` = 0,6 m à frente da carroceria (ou até o objetivo, se estiver mais
+    perto). Gira parado se o erro de direção passa de 0,6 rad; senão anda com
+    v = min(0,3; 0,5·dist)·cos(erro) e w = 1,5·erro (limitado a 0,8 rad/s).
+  - **Desvio** quando essa faixa está bloqueada: procura, de 5° em 5° dentro do campo de
+    visão do LiDAR, a direção livre por `clear_distance` = 1,0 m mais próxima da do
+    objetivo, com uma penalidade para trocar de lado. O rumo escolhido é guardado (no frame
+    `odom`) enquanto continuar livre, para o robô não ficar virando de um lado para o
+    outro. Quando o caminho direto abre de novo, ele volta a mirar o objetivo. Se nenhuma
+    direção estiver livre, gira para o lado mais livre até abrir uma.
+  - **Memória curta de pontos.** O LiDAR do Webots fica na frente (0,65 m à frente do
+    `base_link`) e vê só 3,0 rad (~172°), então não enxerga a lateral nem a traseira. O nó
+    guarda os pontos que o LiDAR viu a até 2 m (grade de 5 cm, no frame `odom`) e os
+    descarta quando o robô se afasta mais de 3 m deles (ou depois de 5 min). Dentro do campo de visão vale só o
+    scan atual. Isso não é um mapa: serve para lembrar o que acabou de passar ao lado do
+    robô.
+  - **Checagem da carroceria.** Antes de girar parado, o nó simula um giro de 0,25 rad e
+    vê se algum ponto cairia dentro do retângulo do robô (1,2 × 1,12 m + margem). Se cair,
+    tenta avançar um pouco, recuar um pouco (até 0,8 m sem progresso) ou girar para o
+    outro lado. Andando, se a curva levaria a lateral para cima de um ponto, segue reto.
+  - **Desistência.** Para e avisa no log se não chega 0,1 m mais perto do objetivo em
+    40 s, ou se fica 5 s sem conseguir girar nem andar.
+  - **Chegada.** Dentro de 0,25 m gira até a orientação pedida (±0,15 rad). Se não houver
+    espaço para girar, para ali e avisa.
+  - Velocidades, ganhos, tolerâncias, dimensões do robô, `stop_distance`,
+    `clear_distance`, os 40 s de desistência, os 0,8 m de recuo e a memória (2 m, 5 min)
+    são parâmetros ROS (`ros2 param list /goal_navigator`). O passo de 5°, o giro simulado
+    de 0,25 rad, a grade de 5 cm, o descarte a 1 m além do raio da memória, os 5 s sem
+    conseguir girar e os 10 Hz são constantes no código. Os parâmetros são lidos só quando o nó inicia: `ros2 param
+    set` com ele rodando não muda nada. Para mudar, ponha-os em `parameters=[{...}]` do
+    `goal_navigator` no `goal_navigation.launch.py`, sempre com ponto decimal (`60.0`, não
+    `60`: com um inteiro o nó não inicia).
+- `agrobot_webots/launch/goal_navigation.launch.py` (novo): inclui o `simulation.launch.py`
+  com `nav:=false rviz:=false` (Webots, driver e `robot_state_publisher`, sem Nav2) e
+  acrescenta o RViz com `rviz/goal.rviz` e o `goal_navigator` (sem `use_sim_time`; veja
+  a entrada "Robô não andava até o objetivo").
+- `agrobot_webots/rviz/goal.rviz` (novo): Fixed Frame `odom`, vista de cima, RobotModel,
+  LaserScan (`/scan`, Best Effort), Odometry, Pose do objetivo e a ferramenta 2D Goal
+  Pose publicando em `/goal_pose`. Sem os costmaps nem o caminho do Nav2.
+- `agrobot_webots/setup.py`: entry point `goal_navigator`.
+- `agrobot_webots/package.xml`: `sensor_msgs` como dependência de execução (o driver já o
+  usava e faltava, conforme a seção 8).
+- `README.md`: tabela de estado, layout e seção de uso.
+
+**Por que não reaproveitar o Nav2.** O `simulation.launch.py` com Nav2 já aceita o mesmo
+2D Goal Pose (o `bt_navigator` também escuta `/goal_pose`), mas ele monta costmaps do
+ambiente e planeja um caminho, que é o "reconhecimento do mundo" que o pedido excluiu. O
+modo novo não substitui o Nav2: os dois continuam disponíveis, em launches separados.
+
+**Validação.** O ambiente de nuvem não tem ROS 2 nem Webots, então nada foi rodado no
+simulador. O que foi feito:
+- `flake8` sem erros no nó e no launch; YAML do RViz conferido com parser.
+- O nó foi rodado numa simulação 2D em Python que reproduz a arena do Webots: robô
+  diferencial nascendo em (-1,0; -0,3), LiDAR a 0,65 m à frente com 300 raios em 3,0 rad e
+  alcance de 8 m, paredes em ±2,5 m, as 4 caixas plásticas (0,3 m) e as 3 de papelão
+  (0,2 m), e a carroceria como retângulo de 1,2 × 1,12 m.
+- 64 objetivos aleatórios dentro da arena, saindo do ponto inicial: **56 alcançados sem
+  encostar em nada**, 7 em que o robô parou com o aviso de "sem chegar mais perto" e 1 em
+  que a lateral encostou numa caixa ao contornar. Os 7 casos sem chegada são quase todos
+  objetivos ao norte do ponto inicial, atrás do vão entre a caixa 3 e a caixa 4. Esse vão
+  tem ~1,3 m, menos que a largura do robô com a margem.
+- As primeiras versões mostraram por que a memória e a checagem da carroceria são
+  necessárias: sem elas, o robô batia a lateral ou a traseira nas caixas que já tinham
+  saído do campo de visão em quase todos os objetivos.
+
+**Limites conhecidos**
+- É um desvio reativo, sem planejamento: em becos ou vãos estreitos ele para e avisa em
+  vez de achar outro caminho. Para isso existe o modo Nav2.
+- A posição é só odometria (rodas + yaw do IMU); os desvios de ~0,3 m por objetivo citados
+  acima valem aqui também, e a memória de pontos herda esse erro.
+
+### 2026-10-06 — Malha do chassi não encontrada pelo Webots com `--symlink-install`
+
+**Sintoma.** Com `colcon build --symlink-install`, o Webots avisava
+`Unable to find resource at '//wsl.localhost/.../agrobot_webots/meshes/chassis.stl'` e o
+robô aparecia sem o chassi.
+
+**Causa.** O `agrobot.proto` aponta para `../meshes/chassis.stl`, relativo à pasta do PROTO.
+O `setup.py` copiava a malha de `agrobot_description/meshes/` para
+`install/.../share/agrobot_webots/meshes/`. Com `--symlink-install`, porém, o PROTO
+instalado é um link para `agrobot_webots/protos/agrobot.proto` no código-fonte. O Webots
+(no Windows, lendo o WSL) segue o link e procura a malha em `agrobot_webots/meshes/` do
+código-fonte, que não existia. Sem `--symlink-install` funcionava, porque o PROTO é
+copiado para junto da malha instalada.
+
+**O que mudou**
+- `agrobot_webots/meshes/chassis.stl` (novo): cópia de `agrobot_description/meshes/chassis.stl`
+  (440 KB), para o caminho relativo do PROTO valer tanto no código-fonte quanto no
+  `install/`. Preferi a cópia a um link simbólico para não depender de como o Webots, no
+  Windows, resolve links do WSL.
+- `agrobot_webots/setup.py`: instala `meshes/*.stl` do próprio pacote.
+
+**Atenção.** Se a malha do chassi mudar em `agrobot_description`, copie-a também para
+`agrobot_webots/meshes/`.
+
+**Validação.** O ambiente de nuvem não tem ROS 2 nem Webots. Foi conferido que o PROTO só
+referencia `../meshes/chassis.stl` e que o arquivo agora existe nesse caminho relativo à
+pasta `protos/`.
+
+### 2026-10-06 — RViz não abria no `goal_navigation.launch.py`
+
+**Sintoma.** `ros2 launch agrobot_webots goal_navigation.launch.py` abria o Webots, mas não
+o RViz.
+
+**Causa.** O launch inclui o `simulation.launch.py` com `rviz:=false`, para não abrir o
+`nav.rviz` do Nav2. No `launch` do ROS 2, os argumentos de um `IncludeLaunchDescription`
+viram configurações do contexto inteiro e continuam valendo depois do include. Assim, o
+`rviz` do próprio `goal_navigation.launch.py` também passava a valer `false`, e o RViz com
+`goal.rviz` não era iniciado.
+
+**O que mudou**
+- `agrobot_webots/launch/goal_navigation.launch.py`: o include fica dentro de um
+  `GroupAction` (que por padrão é `scoped=True`). Os argumentos passados ao include valem
+  só dentro do grupo, e o `rviz` deste launch volta ao valor dele (`true`, ou o que for
+  passado na linha de comando).
+
+**Validação.** Reproduzido com o pacote `launch` do ROS 2 Jazzy (código do branch `jazzy`
+de `ros2/launch`) num launch mínimo com a mesma estrutura: sem o `GroupAction`, a ação
+condicionada a `rviz` do arquivo pai não rodava; com ele, rodava, e a do arquivo incluído
+continuava desligada. No mesmo teste, o `OnProcessExit` → `Shutdown` registrado dentro do
+include (o que fecha tudo quando o Webots fecha) continuou funcionando dentro do grupo.
+
+### 2026-10-06 — Robô não andava até o objetivo (`goal_navigator`)
+
+**Sintoma.** O RViz publicava o objetivo (`Setting goal pose: Frame:odom, ...`), mas o
+robô ficava parado.
+
+**Causa.** O `goal_navigator` rodava com `use_sim_time: true`, e o laço de controle era
+um timer de 10 Hz no relógio do ROS. Com `use_sim_time`, esse relógio fica parado em 0 até
+alguém publicar `/clock`, e nesta simulação ninguém publica: no `webots_ros2_driver`
+2025.0.0, o `/clock` sai do nó `Ros2Supervisor`, que só existe com
+`WebotsLauncher(..., ros2_supervisor=True)`, e o `simulation.launch.py` não usa essa opção
+(conferido em `webots_ros2_driver/webots_launcher.py` e `ros2_supervisor.py` da tag
+2025.0.0). O objetivo chegava ao nó, mas o timer nunca disparava e nada era publicado em
+`/cmd_vel`. A revisão automática do PR chegou à mesma causa de forma independente.
+
+**O que mudou**
+- `goal_navigator.py`: o timer do laço de controle usa o relógio do sistema
+  (`Clock(clock_type=ClockType.STEADY_TIME)`), então roda com ou sem `use_sim_time`.
+- `goal_navigation.launch.py`: o `goal_navigator` sobe sem `use_sim_time`. O nó não usa o
+  tempo do ROS para nada; a memória de pontos usa o carimbo do próprio `/scan`, que é o
+  tempo do Webots.
+- `goal_navigator.py`, `main()`: o `rclpy.init` passa a ser feito sem os tratadores de
+  sinal do rclpy (`SignalHandlerOptions.NO`). No Jazzy, com eles, o Ctrl+C fecha o contexto
+  antes do `finally`, o `publish` da parada falha com erro e o último comando de
+  velocidade fica valendo no Webots. Agora o Ctrl+C manda velocidade zero antes de sair.
+- `README.md`: a nota sobre `use_sim_time` diz que nada publica `/clock` nesta simulação.
+
+**Observação.** Os outros nós (`robot_state_publisher`, Nav2, RViz) também rodam com
+`use_sim_time` sem `/clock`. Isso não foi alterado: o modo Nav2 foi testado e funciona
+assim, e as mensagens são carimbadas com o tempo do Webots pelo driver.
+
+**Validação.** Assinatura de `Node.create_timer(..., clock=...)`, `Clock(clock_type=...)`,
+`rclpy.init(..., signal_handler_options=...)` e `rclpy.try_shutdown` conferidas no código do
+`rclpy` branch `jazzy`. `flake8` sem erros. Não foi possível rodar no Webots daqui.
+
+### 2026-10-06 — Desvio do `goal_navigator`: colisões em curva e robô tremendo
+
+Correções de uma revisão do PR. A revisão rodou o nó em sequências de objetivos, em que cada
+objetivo começa de onde o anterior terminou e a memória de pontos se acumula. Os testes
+anteriores partiam sempre do ponto inicial.
+
+**Problemas encontrados**
+- **Colisão ao seguir reto.** Andando, se a curva levaria a lateral para cima de um ponto,
+  o nó zerava o giro e seguia reto sem conferir se reto também batia. Quando batia, o robô
+  entrava na caixa.
+- **Colisão no meio da curva.** A checagem da curva olhava só a posição final do trecho
+  simulado (0,5 s à frente). Numa curva fechada, o canto traseiro passava por cima de uma
+  caixa no meio do trecho e saía do outro lado, e a checagem não via.
+- **Robô tremendo.** O giro para o lado do objetivo batia e não dava para avançar nem
+  recuar. O nó então girava um passo (0,1 s) para o outro lado. No passo seguinte o
+  controle pedia de novo o lado do objetivo, ainda bloqueado. O robô ficava alternando
+  ±0,8 rad/s no mesmo lugar até a desistência de 40 s. O aviso de "Robô cercado" (5 s)
+  nunca disparava.
+- **Manual.** A entrada "Objetivo pelo RViz sem Nav2" dizia que todos os números eram
+  parâmetros ROS e omitia o limite de 0,8 rad/s em w.
+
+**O que mudou**
+- `agrobot_webots/agrobot_webots/goal_navigator.py`
+  - `motion_hits()` (novo): confere a carroceria em 1/4, 1/2, 3/4 e no fim do trecho de
+    0,5 s, e não só no fim.
+  - Andando: se a curva bate, confere o movimento reto. Se reto também bate, o robô não
+    anda e passa a girar parado, com a checagem de giro de antes.
+  - `rotate()`: ao trocar para o outro lado do giro, o lado fica travado (`turn_sign`) até
+    o robô voltar a andar. Se esse lado também bloquear e não houver como avançar ou
+    recuar, o nó conta os 5 s e para com "Robô cercado". A trava é zerada a cada objetivo
+    novo.
+  - A mensagem de "Robô cercado" agora diz que ele não consegue continuar girando nem
+    manobrar para liberar o giro, e pede outro objetivo.
+- `claude/manual.md`: a entrada "Objetivo pelo RViz sem Nav2" foi corrigida. Ela agora diz
+  que w é limitado a 0,8 rad/s, separa os parâmetros ROS das constantes do código e explica
+  como mudar os parâmetros.
+- `README.md`: a seção do `goal_navigator` cita a parada por "Robô cercado".
+
+**Validação.** Sem ROS 2 nem Webots na nuvem, tudo foi testado na simulação 2D da arena em
+Python, a mesma da entrada original.
+- **64 objetivos saindo do ponto inicial.**
+  - Antes: 56 alcançados, 7 paradas e 1 colisão.
+  - Agora: 56 alcançados, 8 paradas e 0 colisões.
+- **15 sequências de 5 objetivos (75 objetivos), sem erro de odometria.**
+  - Antes: 44 alcançados, 23 paradas e 8 colisões.
+  - Agora: 49 alcançados, 23 paradas e 3 colisões.
+  - As trocas de sentido de giro caíram de 6505 para 348 no total.
+  - Cada parada leva em média 21 s, em vez de 42 s.
+- **As mesmas sequências com erro de odometria simulado (escorregamento nas curvas).**
+  - Colisões caíram de 7 para 4.
+  - Alcançados caíram de 38 para 33. Parte dos alcançados de antes veio depois de uma
+    colisão: na simulação 2D a caixa não segura o robô, e ele atravessa e segue.
+- **As 3 colisões que sobraram.** Duas são pontos cegos do LiDAR. A face da caixa que fica
+  ao lado da carroceria nunca entrou no campo de visão, então não está na memória: numa,
+  o robô bate ao girar na chegada; na outra, numa curva. A terceira é o objetivo seguinte a
+  uma dessas, que já começa encostado. Pontos cegos só se resolvem com sensores laterais
+  ou traseiros.
+- **Onde estão as paradas.** Elas se concentram em lugares em que o robô fica entre duas
+  caixas, sem espaço para girar até o lado do objetivo. Em algumas sequências os objetivos
+  seguintes também param, porque ele continua no mesmo lugar apertado. Nesse caso, tire-o
+  dali com o teleop (seção "Manual driving" do README) e marque o objetivo de novo.
+- **Lint.** `flake8` sem erros.
 ### 2026-10-06 — `prompt-refiner`: Webots como alvo padrão, Gazebo como legado
 
 **O que mudou** (`.claude/agents/prompt-refiner.md`)
@@ -259,3 +498,52 @@ o que levaria outros agentes a trabalhar no simulador errado.
 
 **Validação.** Frontmatter YAML conferido; os caminhos citados no exemplo existem.
 Nenhum código ROS foi alterado.
+
+### 2026-10-07 — `colcon build` falhava com "File exists" em `meshes/chassis.stl`
+
+**Sintoma.** Depois de atualizar para o PR, `colcon build --symlink-install
+--packages-select agrobot_webots` falhava com
+`error: [Errno 17] File exists: '.../build/agrobot_webots/meshes/chassis.stl' ->
+'.../install/agrobot_webots/share/agrobot_webots/meshes/chassis.stl'`.
+
+**Causa.** É uma sobra do build antigo, não um erro do `setup.py` novo. No `main`, o
+`setup.py` instalava a malha a partir de `../agrobot_description/meshes/chassis.stl`. Com
+`--symlink-install`, o colcon deixou em `install/.../meshes/chassis.stl` um link para a malha
+do `agrobot_description`. O `setup.py` novo instala `agrobot_webots/meshes/chassis.stl`, que
+é outro arquivo (mesmo conteúdo, outro inode). O comando `symlink_data` do colcon-core (a
+partir da 0.16.0) chama `os.symlink`, e ele falha porque o destino já existe; o colcon não
+apaga links antigos nesse caso. Só acontece em workspaces compilados com
+`--symlink-install` antes da entrada "Malha do chassi não encontrada pelo Webots"; um
+clone novo compila sem erro.
+
+**Como resolver (uma vez por workspace)**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+rm install/agrobot_webots/share/agrobot_webots/meshes/chassis.stl
+colcon build --symlink-install --packages-select agrobot_webots
+source install/setup.bash
+```
+Se der outro erro, ou ao trocar de branch (por exemplo, voltar para o `main`) ou alternar
+entre build com e sem `--symlink-install`, limpe o pacote:
+`rm -rf build/agrobot_webots install/agrobot_webots` e compile de novo. O colcon não remove
+links de arquivos que saíram do pacote, e eles quebram o build seguinte.
+
+**Observação.** A malha é o último item de `data_files`. No build que falhava, o script
+`goal_navigator`, o `goal_navigation.launch.py` e o `goal.rviz` já tinham sido instalados
+antes do erro, e o link velho aponta para uma malha idêntica. Por isso os testes anteriores
+rodaram o código novo mesmo com o colcon mostrando `Failed`.
+
+**O que mudou**
+- `README.md`: item em "Known issues" com o erro e os dois comandos.
+- Nenhuma mudança de código. Voltar a instalar a malha de `../agrobot_description` traria
+  de volta o erro do Webots com `--symlink-install` e criaria o conflito inverso para quem
+  já compilou a versão nova. Renomear a malha evitaria o erro, mas deixaria um link órfão
+  em cada workspace existente, por um problema que acontece uma vez só.
+
+**Validação.** Reproduzido num workspace com o mesmo layout (pacotes na raiz), Python 3.12
+e setuptools 68.1.2 (versões do Ubuntu 24.04), com colcon-core 0.16.0, 0.18.4, 0.20.1 e
+0.21.3. Em todas: o build do `main` com `--symlink-install` seguido do build do PR deu o
+mesmo `[Errno 17]`, e tanto o `rm` do arquivo quanto o `rm -rf` do pacote resolveram. O
+build seguinte também passou, e o `meshes/chassis.stl` instalado passou a apontar para
+`agrobot_webots/meshes/chassis.stl`. A colcon-core 0.15.2 não tem `symlink_data` (copia os
+arquivos) e não dá o erro.

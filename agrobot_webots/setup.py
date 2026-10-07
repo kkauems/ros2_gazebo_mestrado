@@ -18,8 +18,7 @@ setup(
         (os.path.join('share', package_name, 'protos'), glob('protos/*')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
-        (os.path.join('share', package_name, 'meshes'),
-            ['../agrobot_description/meshes/chassis.stl']),
+        (os.path.join('share', package_name, 'meshes'), glob('meshes/*.stl')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -34,6 +33,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'goal_navigator = agrobot_webots.goal_navigator:main',
         ],
     },
 )
