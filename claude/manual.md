@@ -656,3 +656,27 @@ traz o plano em 6 passos e a comparação com ORB-SLAM3, Isaac ROS e slam_toolbo
 - `flake8` sem erros no driver e nos launches.
 - **Falta testar no Webots:** que o `Gyro` e o `Accelerometer` do PROTO aparecem, que o
   `/clock` não atrapalha o modo Nav2 antigo, e o EKF com o robô real do simulador.
+
+### 2026-10-07 — Círculos roxos no RViz com `ekf:=true`
+
+**Sintoma.** Com `simulation.launch.py ekf:=true`, o RViz (`nav.rviz`) desenhava círculos
+roxos enormes sobrepostos, que cobriam os costmaps e o LiDAR.
+
+**Causa.** São as elipses de covariância de posição do display **Odometry** (`/odom`). No
+`nav.rviz` a opção `Covariance` não estava definida, e o padrão do RViz é ligada, com uma
+elipse para cada uma das 50 setas guardadas (`Keep: 50`). Com a odometria do driver isso
+não aparecia, porque ele publica uma covariância fixa e pequena (0,01 m²). O EKF publica a
+covariância real: como ele só recebe velocidades das rodas e o yaw do IMU, sem nenhuma
+medida absoluta de posição, a incerteza de x e y cresce sem limite enquanto o robô anda.
+Isso é o comportamento correto do filtro (é a deriva que o VSLAM vai corrigir), não um erro.
+
+**O que mudou**
+- `agrobot_webots/rviz/nav.rviz`: `Covariance: Value: false` no display Odometry, como já
+  estava no `goal.rviz`. As setas da odometria continuam.
+
+**Para ver a covariância de novo**, marque `Odometry → Covariance` no painel do RViz. Para
+acompanhar o crescimento sem o RViz: `ros2 topic echo /odom --field pose.covariance --once`
+(índices 0 e 7 são as variâncias de x e y).
+
+**Validação.** YAML conferido com parser; o nome da propriedade (`Covariance`) conferido no
+`librviz_default_plugins.so` do Jazzy. Não foi possível abrir o RViz aqui.
