@@ -1,10 +1,12 @@
 import os
+import tempfile
 
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
     IncludeLaunchDescription,
+    OpaqueFunction,
     RegisterEventHandler,
 )
 from launch.conditions import IfCondition
@@ -16,6 +18,25 @@ from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 from webots_ros2_driver.webots_launcher import WebotsLauncher
 from webots_ros2_driver.webots_controller import WebotsController
+
+
+ODOM_FROM_DRIVER = '<publishOdom>true</publishOdom>'
+ODOM_FROM_EKF = '<publishOdom>false</publishOdom>'
+
+
+def driver_urdf(robot_description, ekf):
+    """Caminho do URDF para o driver; com ekf, o driver não publica /odom."""
+    if not ekf:
+        return robot_description
+    with open(robot_description) as urdf_file:
+        content = urdf_file.read()
+    if ODOM_FROM_DRIVER not in content:
+        raise RuntimeError(
+            f'{ODOM_FROM_DRIVER} não encontrado em {robot_description}')
+    path = os.path.join(tempfile.gettempdir(), 'agrobot_webots_ekf.urdf')
+    with open(path, 'w') as urdf_file:
+        urdf_file.write(content.replace(ODOM_FROM_DRIVER, ODOM_FROM_EKF))
+    return path
 
 
 def generate_launch_description():
@@ -40,13 +61,31 @@ def generate_launch_description():
     with open(robot_description) as urdf_file:
         robot_description_content = urdf_file.read()
 
-    agrobot_driver = WebotsController(
-        robot_name='agrobot',
+    def start_driver(context):
+        ekf = LaunchConfiguration('ekf').perform(context).lower() == 'true'
+        return [WebotsController(
+            robot_name='agrobot',
+            parameters=[
+                {'robot_description': driver_urdf(robot_description, ekf)},
+                {'use_sim_time': True},
+            ],
+            output='screen',
+        )]
+
+    agrobot_driver = OpaqueFunction(function=start_driver)
+
+    # Rodas + IMU -> /odom e TF odom -> base_link (no lugar do driver).
+    ekf_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
         parameters=[
-            {'robot_description': robot_description},
+            os.path.join(webots_share, 'config', 'ekf.yaml'),
             {'use_sim_time': True},
         ],
-        output='screen',
+        remappings=[('odometry/filtered', '/odom')],
+        condition=IfCondition(LaunchConfiguration('ekf')),
     )
 
     robot_state_publisher = Node(
@@ -84,9 +123,11 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('nav', default_value='true'),
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument('ekf', default_value='false'),
         webots,
         agrobot_driver,
         robot_state_publisher,
+        ekf_node,
         navigation,
         rviz,
         shutdown_on_webots_exit,

@@ -1,0 +1,52 @@
+# robot_localization (EKF) do Agrobot no Webots: rodas + IMU -> /odom e TF
+# odom -> base_link. Usado pelo simulation.launch.py com ekf:=true.
+#
+# Vetor de estado de cada *_config (15 valores):
+#   [x,  y,  z,
+#    roll, pitch, yaw,
+#    vx, vy, vz,
+#    vroll, vpitch, vyaw,
+#    ax, ay, az]
+
+ekf_filter_node:
+  ros__parameters:
+    use_sim_time: true
+    frequency: 30.0
+    sensor_timeout: 0.2
+    # Arena plana: ignora z, roll e pitch.
+    two_d_mode: true
+    publish_tf: true
+
+    # Sem mapa (REP-105): o EKF publica odom -> base_link. Quem um dia
+    # publicar map -> odom (VSLAM, SLAM, GPS) entra num segundo nó.
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # Rodas (/wheel/odom, do agrobot_driver): só as velocidades vx e vy.
+    # vy = 0 é a restrição de que o robô não anda de lado. O giro das
+    # rodas fica de fora: num skid-steer ele erra a cada curva.
+    odom0: /wheel/odom
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,
+                   false, false, false,
+                   false, false, false]
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_relative: false
+
+    # IMU (/imu/data): yaw e velocidade angular em z.
+    # imu0_relative zera o yaw na primeira leitura, como a odometria do
+    # driver fazia: odom nasce alinhado com a frente do robô.
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  false, false, true,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_queue_size: 10
+    imu0_differential: false
+    imu0_relative: true
+    imu0_remove_gravitational_acceleration: true
