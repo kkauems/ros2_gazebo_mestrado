@@ -26,8 +26,19 @@ PROTO agrobot [
     synchronization IS synchronization
     selfCollision IS selfCollision
     children [
+      # IMU no imu_link do URDF (0.35 m acima do base_link): orientação,
+      # giroscópio e acelerômetro, publicados juntos em /imu/data.
       InertialUnit {
+        translation 0 0 0.35
         name "imu"
+      }
+      Gyro {
+        translation 0 0 0.35
+        name "gyro"
+      }
+      Accelerometer {
+        translation 0 0 0.35
+        name "accelerometer"
       }
       Lidar {
         translation 0.650000 0.000000 -0.150000

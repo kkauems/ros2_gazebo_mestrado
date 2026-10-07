@@ -32,7 +32,11 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(webots_share, 'launch', 'simulation.launch.py')),
-            launch_arguments={'nav': 'false', 'rviz': 'false'}.items(),
+            launch_arguments={
+                'nav': 'false',
+                'rviz': 'false',
+                'ekf': LaunchConfiguration('ekf'),
+            }.items(),
         ),
     ])
 
@@ -55,6 +59,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument('ekf', default_value='false'),
         simulation,
         rviz,
         goal_navigator,

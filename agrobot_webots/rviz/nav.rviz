@@ -59,6 +59,10 @@ Visualization Manager:
     - Class: rviz_default_plugins/Odometry
       Name: Odometry
       Enabled: true
+      # Sem as elipses de covariância: com o EKF a incerteza de x/y cresce
+      # sem limite (não há referência absoluta) e elas cobrem o mapa.
+      Covariance:
+        Value: false
       Topic:
         Value: /odom
       Keep: 50

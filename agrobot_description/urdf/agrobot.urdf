@@ -13,6 +13,9 @@
       <wheelRadius>0.22</wheelRadius>
       <wheelSeparation>0.96</wheelSeparation>
       <wheelSeparationScale>1.33</wheelSeparationScale>
+      <!-- /odom + TF odom->base_link pelo driver; o simulation.launch.py
+           troca para false com ekf:=true (quem publica é o EKF) -->
+      <publishOdom>true</publishOdom>
     </plugin>
   </webots>
 

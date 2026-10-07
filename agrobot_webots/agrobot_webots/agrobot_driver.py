@@ -5,8 +5,15 @@ from builtin_interfaces.msg import Time
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import JointState, LaserScan
+from rosgraph_msgs.msg import Clock
+from sensor_msgs.msg import Imu, JointState, LaserScan
 from tf2_ros import TransformBroadcaster
+
+# Variâncias da /imu/data. O IMU do Webots não tem ruído; estes valores só
+# dizem ao EKF quanto confiar em cada medida.
+IMU_ORIENTATION_VARIANCE = 0.0004   # (0.02 rad)^2, ~1 grau
+IMU_GYRO_VARIANCE = 0.0001          # (0.01 rad/s)^2
+IMU_ACCEL_VARIANCE = 0.01           # (0.1 m/s^2)^2
 
 WHEEL_JOINTS = [
     'front_left_wheel_joint',
@@ -25,6 +32,10 @@ class AgrobotDriver:
         # Skid-steer escorrega nas curvas: a separação efetiva é maior.
         self.wheel_separation_scale = float(
             properties.get('wheelSeparationScale', 1.0))
+        # false quando o robot_localization (EKF) publica /odom e o TF
+        # odom -> base_link; o simulation.launch.py troca com ekf:=true.
+        self.publish_odom = properties.get(
+            'publishOdom', 'true').strip().lower() == 'true'
         self.linear_velocity = 0.0
         self.angular_velocity = 0.0
 
@@ -50,6 +61,12 @@ class AgrobotDriver:
         if self.imu is not None:
             self.imu.enable(self.time_step)
         self.imu_yaw_offset = None
+        self.gyro = self.robot.getDevice('gyro')
+        if self.gyro is not None:
+            self.gyro.enable(self.time_step)
+        self.accelerometer = self.robot.getDevice('accelerometer')
+        if self.accelerometer is not None:
+            self.accelerometer.enable(self.time_step)
 
         # O Ros2Lidar do webots_ros2_driver carimba o /scan com tempo 0
         # (o relógio do nó dele não avança), e o Nav2 descarta tudo.
@@ -63,6 +80,10 @@ class AgrobotDriver:
         self.x = 0.0
         self.y = 0.0
         self.yaw = 0.0
+        # Odometria só das rodas (yaw também das rodas), entrada do EKF.
+        self.wheel_x = 0.0
+        self.wheel_y = 0.0
+        self.wheel_yaw = 0.0
         self.last_left = None
         self.last_right = None
         self.last_time = None
@@ -75,8 +96,18 @@ class AgrobotDriver:
             self.cmd_vel_callback,
             10,
         )
-        self.odom_publisher = self.node.create_publisher(Odometry, '/odom', 10)
-        self.tf_broadcaster = TransformBroadcaster(self.node)
+        # Sem /clock, os nós com use_sim_time ficam com o tempo parado em 0
+        # (timers não disparam, e os publicadores do webots_ros2_driver,
+        # como câmera e range finder, carimbam tudo com 0).
+        self.clock_publisher = self.node.create_publisher(Clock, '/clock', 10)
+        if self.publish_odom:
+            self.odom_publisher = self.node.create_publisher(
+                Odometry, '/odom', 10)
+            self.tf_broadcaster = TransformBroadcaster(self.node)
+        self.wheel_odom_publisher = self.node.create_publisher(
+            Odometry, '/wheel/odom', 10)
+        self.imu_publisher = self.node.create_publisher(
+            Imu, '/imu/data', qos_profile_sensor_data)
         self.scan_publisher = self.node.create_publisher(
             LaserScan, '/scan', qos_profile_sensor_data)
         self.joint_state_publisher = self.node.create_publisher(
@@ -121,7 +152,9 @@ class AgrobotDriver:
         stamp = Time()
         stamp.sec = int(now)
         stamp.nanosec = int((now - int(now)) * 1e9)
+        self.clock_publisher.publish(Clock(clock=stamp))
         self.update_odometry(separation, now, stamp)
+        self.publish_imu(stamp)
         self.publish_joint_states(stamp)
         if now >= self.next_scan_time:
             self.next_scan_time = now + self.lidar_period / 1000.0
@@ -161,6 +194,46 @@ class AgrobotDriver:
         message.ranges = [float(r) for r in reversed(ranges)]
         self.scan_publisher.publish(message)
 
+    def publish_imu(self, stamp):
+        if self.imu is None:
+            return
+        q = self.imu.getQuaternion()
+        w = self.gyro.getValues() if self.gyro is not None else None
+        a = (self.accelerometer.getValues()
+             if self.accelerometer is not None else None)
+        # Como os encoders, os sensores podem dar NaN antes da 1a amostra.
+        if any(math.isnan(v) for v in [*q, *(w or []), *(a or [])]):
+            return
+        message = Imu()
+        message.header.stamp = stamp
+        message.header.frame_id = 'imu_link'
+        # O Webots devolve o quaternion como (x, y, z, w).
+        message.orientation.x = q[0]
+        message.orientation.y = q[1]
+        message.orientation.z = q[2]
+        message.orientation.w = q[3]
+        message.orientation_covariance[0] = IMU_ORIENTATION_VARIANCE
+        message.orientation_covariance[4] = IMU_ORIENTATION_VARIANCE
+        message.orientation_covariance[8] = IMU_ORIENTATION_VARIANCE
+        if w is not None:
+            message.angular_velocity.x = w[0]
+            message.angular_velocity.y = w[1]
+            message.angular_velocity.z = w[2]
+            for i in (0, 4, 8):
+                message.angular_velocity_covariance[i] = IMU_GYRO_VARIANCE
+        else:
+            # -1 no primeiro elemento: "este campo não existe".
+            message.angular_velocity_covariance[0] = -1.0
+        if a is not None:
+            message.linear_acceleration.x = a[0]
+            message.linear_acceleration.y = a[1]
+            message.linear_acceleration.z = a[2]
+            for i in (0, 4, 8):
+                message.linear_acceleration_covariance[i] = IMU_ACCEL_VARIANCE
+        else:
+            message.linear_acceleration_covariance[0] = -1.0
+        self.imu_publisher.publish(message)
+
     def read_imu_yaw(self):
         if self.imu is None:
             return None
@@ -194,6 +267,9 @@ class AgrobotDriver:
 
         d_center = (d_left + d_right) / 2.0
         d_yaw = (d_right - d_left) / separation
+        self.publish_wheel_odometry(d_center, d_yaw, dt, stamp)
+        if not self.publish_odom:
+            return
         imu_yaw = self.read_imu_yaw()
         if imu_yaw is not None:
             d_yaw = math.atan2(
@@ -234,3 +310,32 @@ class AgrobotDriver:
         transform.transform.rotation.z = qz
         transform.transform.rotation.w = qw
         self.tf_broadcaster.sendTransform(transform)
+
+    def publish_wheel_odometry(self, d_center, d_yaw, dt, stamp):
+        mid_yaw = self.wheel_yaw + d_yaw / 2.0
+        self.wheel_x += d_center * math.cos(mid_yaw)
+        self.wheel_y += d_center * math.sin(mid_yaw)
+        self.wheel_yaw = math.atan2(
+            math.sin(self.wheel_yaw + d_yaw), math.cos(self.wheel_yaw + d_yaw))
+
+        odom = Odometry()
+        odom.header.stamp = stamp
+        odom.header.frame_id = 'odom'
+        odom.child_frame_id = 'base_link'
+        odom.pose.pose.position.x = self.wheel_x
+        odom.pose.pose.position.y = self.wheel_y
+        odom.pose.pose.orientation.z = math.sin(self.wheel_yaw / 2.0)
+        odom.pose.pose.orientation.w = math.cos(self.wheel_yaw / 2.0)
+        if dt > 0.0:
+            odom.twist.twist.linear.x = d_center / dt
+            odom.twist.twist.angular.z = d_yaw / dt
+        # O EKF usa só vx e vy daqui. vy = 0 com variância pequena é a
+        # restrição de que o robô não anda de lado. O giro das rodas erra
+        # muito (skid-steer derrapa), por isso a variância alta em wz.
+        odom.pose.covariance[0] = 0.01
+        odom.pose.covariance[7] = 0.01
+        odom.pose.covariance[35] = 0.5
+        odom.twist.covariance[0] = 0.005
+        odom.twist.covariance[7] = 0.001
+        odom.twist.covariance[35] = 0.5
+        self.wheel_odom_publisher.publish(odom)

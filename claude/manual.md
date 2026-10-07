@@ -547,3 +547,136 @@ mesmo `[Errno 17]`, e tanto o `rm` do arquivo quanto o `rm -rf` do pacote resolv
 build seguinte também passou, e o `meshes/chassis.stl` instalado passou a apontar para
 `agrobot_webots/meshes/chassis.stl`. A colcon-core 0.15.2 não tem `symlink_data` (copia os
 arquivos) e não dá o erro.
+
+### 2026-10-07 — EKF do `robot_localization` (rodas + IMU), `/clock` e estudo de VSLAM
+
+**Pedido.** Usar o Nav2 para planejar a rota, com a odometria vinda do `robot_localization`
+(EKF com encoders das rodas e IMU, sugestão do orientador), e estudar o uso de VSLAM com a
+câmera RGB-D que o robô vai ter.
+
+**Ponto de partida.** O Nav2 já existia no Webots (`simulation.launch.py`, seções 4 a 6
+acima), sem mapa e com `odom` como frame global. A odometria era calculada dentro do driver
+(distância das rodas + yaw do IMU). O que faltava era o EKF e um relógio coerente.
+
+**Como usar**
+```bash
+sudo apt install ros-jazzy-robot-localization
+cd ~/projects/ros2_gazebo_mestrado
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots simulation.launch.py ekf:=true       # Nav2 + EKF
+ros2 launch agrobot_webots goal_navigation.launch.py ekf:=true  # goal_navigator + EKF
+```
+Sem `ekf:=true` tudo funciona como antes (o driver publica `/odom`). Conferir:
+`ros2 topic hz /clock`, `ros2 topic echo /imu/data --once`, `ros2 topic hz /odom` (~30 Hz
+com o EKF) e `ros2 run tf2_ros tf2_echo odom base_link`.
+
+**O que mudou, arquivo por arquivo**
+- `agrobot_webots/agrobot_webots/agrobot_driver.py`
+  - **`/clock`** com o tempo do Webots (`robot.getTime()`) a cada passo. *Por quê:* nada
+    publicava `/clock` (sem `Ros2Supervisor`), e os nós com `use_sim_time` ficavam com o
+    relógio parado em 0. O `ekf_node` nem começa assim: ele fica em
+    `Waiting for clock to start...` (visto no teste). Também era a causa do `/scan` com
+    carimbo 0 do `Ros2Lidar` (seção 1d) e afetaria a câmera RGB-D, que o
+    `webots_ros2_driver` publica com o relógio do nó dele.
+  - **`/imu/data`** (`sensor_msgs/Imu`, frame `imu_link`, QoS `sensor_data`): orientação do
+    `InertialUnit`, velocidade angular do `Gyro` e aceleração do `Accelerometer`, com
+    variâncias fixas (constantes no topo do arquivo). Mensagem pulada enquanto algum sensor
+    devolve NaN.
+  - **`/wheel/odom`**: odometria só das rodas, inclusive o yaw. É a entrada do EKF. vy = 0
+    com variância pequena (o robô não anda de lado) e variância alta em wz (skid-steer).
+  - **Propriedade `publishOdom`** (padrão `true`). Com `false`, o driver não publica `/odom`
+    nem o TF `odom → base_link`, porque quem publica é o EKF. Com `true`, o `/odom` é o de
+    antes (rodas + yaw do IMU).
+- `agrobot_webots/protos/agrobot.proto`: `Gyro` (`gyro`) e `Accelerometer`
+  (`accelerometer`) ao lado do `InertialUnit`. Os três passaram para (0, 0, 0,35), a posição
+  do `imu_link` do URDF. A leitura de orientação não muda com a posição.
+- `agrobot_description/urdf/agrobot.urdf`: `<publishOdom>true</publishOdom>` no bloco
+  `<webots><plugin>`. O Gazebo ignora esse bloco.
+- `agrobot_webots/config/ekf.yaml` (novo): `ekf_filter_node`, 30 Hz, `two_d_mode`,
+  `world_frame: odom`, publica o TF `odom → base_link`.
+  - Rodas (`/wheel/odom`): só vx e vy. O yaw das rodas fica de fora: no skid-steer ele erra
+    a cada curva (foi por isso que o driver passou a usar o IMU, seção 1c).
+  - IMU (`/imu/data`): yaw e velocidade angular em z. `imu0_relative: true` zera o yaw na
+    primeira leitura, como o driver fazia, então o `odom` continua nascendo alinhado com a
+    frente do robô e os objetivos valem igual.
+  - Aceleração linear fora: dupla integração de acelerômetro piora a posição mais do que
+    ajuda com rodas disponíveis.
+- `agrobot_webots/launch/simulation.launch.py`: argumento `ekf` (padrão `false`). Com
+  `true`, inicia o `ekf_node` (saída `odometry/filtered` remapeada para `/odom`) e entrega
+  ao driver uma cópia do URDF com `publishOdom` = `false`, gravada em
+  `/tmp/agrobot_webots_ekf.urdf`. O driver do Webots lê as propriedades do plugin do URDF,
+  e não de parâmetros ROS; por isso a cópia (um `OpaqueFunction` decide na hora do launch).
+  Como o EKF publica `/odom`, o Nav2 e o `goal_navigator` não precisaram de nenhuma mudança.
+- `agrobot_webots/launch/goal_navigation.launch.py`: repassa o mesmo argumento `ekf`.
+- `agrobot_webots/package.xml`: `robot_localization` e `rosgraph_msgs`.
+- `claude/estudo_vslam.md` (novo): estudo de VSLAM com RGB-D (resumo abaixo).
+- `README.md`: estado, dependências (`ros-jazzy-robot-localization`), argumento `ekf`,
+  tópicos novos, nota do `/clock`, próximos passos.
+
+**Por que `ekf:=false` continua o padrão.** O modo antigo foi testado no Webots e funciona;
+o novo só foi testado fora dele (veja Validação). Depois de testar, se der certo, vale trocar
+o padrão para `true`.
+
+**Por que sem `map → odom` agora.** Só rodas e IMU não dão referência global, então não há
+o que publicar em `map`. O Nav2 continua em `odom`. Quem vai publicar `map → odom` é o VSLAM
+(ou SLAM com o LiDAR, ou GPS), e aí o `global_costmap` e o `bt_navigator` passam para `map`.
+
+**Estudo de VSLAM (resumo de `claude/estudo_vslam.md`).** Viável. Recomendação: RTAB-Map
+(`ros-jazzy-rtabmap-ros`, tem pacote no Jazzy, roda em CPU) com a odometria do EKF como
+entrada, publicando `map → odom` e o `/map` 2D para o Nav2. Riscos: banda das imagens entre
+o Webots no Windows e o WSL (começar em 320 × 240 a 10 Hz e medir), arena sem textura (VSLAM
+precisa de features) e as condições de campo. O `/clock` deste PR é pré-requisito. O estudo
+traz o plano em 6 passos e a comparação com ORB-SLAM3, Isaac ROS e slam_toolbox.
+
+**Validação.** O ambiente de nuvem não tem Webots. O que foi feito:
+- ROS 2 Jazzy instalado via RoboStack (conda) com `robot_localization` 3.8.3 e Nav2
+  1.3.12, as mesmas séries do apt do Jazzy.
+- O **driver real** (`AgrobotDriver`) rodou contra um robô falso em Python que imita a API
+  do Webots: motores, encoders, `InertialUnit`, `Gyro`, `Accelerometer` e o LiDAR com
+  raios contra as paredes e caixas da arena. A cinemática tem escorregamento: o giro real
+  usa uma bitola efetiva maior que a do driver (1,45 contra 1,33) e o avanço real é 4% menor
+  que o das rodas. Junto rodaram `robot_state_publisher`, o EKF com `config/ekf.yaml` e o
+  `navigation.launch.py` com o `nav2_params.yaml` do repositório.
+- Resultado com `ekf:=true`: todos os nós ativos, sem erro de TF nem descarte de `/scan`.
+  Os objetivos (2,2; 1,2), (0; 0) e (3,0; -1,0) em `odom` deram **SUCCEEDED**. O erro
+  entre a pose verdadeira e o `/odom` ficou em 0,10 a 0,12 m nos pontos mais distantes e
+  quase 0 de volta à origem. É o escorregamento de 4% no avanço, que nem rodas nem IMU
+  enxergam.
+- Com `ekf:=false` na mesma simulação, os números foram praticamente iguais. Esperado: o
+  driver já usava o yaw do IMU, e o IMU simulado não tem ruído. O ganho do EKF é de
+  estrutura: pesa cada sensor pela covariância e aceita novas fontes (VSLAM, GPS) sem mexer
+  no driver.
+- Nos dois modos, o Nav2 reclamou de "collision ahead" perto das caixas e abortou objetivos
+  colados nas paredes. Isso é da sintonia do Nav2 (já existente) e da simulação simplificada,
+  não do EKF.
+- O `simulation.launch.py` e o `goal_navigation.launch.py` foram executados com o
+  `webots_ros2_driver` substituído por stubs: com `ekf:=true` o `ekf_node` sobe e o driver
+  recebe o URDF com `publishOdom` = `false`; com `ekf:=false`, o URDF original e nenhum EKF.
+- `flake8` sem erros no driver e nos launches.
+- **Falta testar no Webots:** que o `Gyro` e o `Accelerometer` do PROTO aparecem, que o
+  `/clock` não atrapalha o modo Nav2 antigo, e o EKF com o robô real do simulador.
+
+### 2026-10-07 — Círculos roxos no RViz com `ekf:=true`
+
+**Sintoma.** Com `simulation.launch.py ekf:=true`, o RViz (`nav.rviz`) desenhava círculos
+roxos enormes sobrepostos, que cobriam os costmaps e o LiDAR.
+
+**Causa.** São as elipses de covariância de posição do display **Odometry** (`/odom`). No
+`nav.rviz` a opção `Covariance` não estava definida, e o padrão do RViz é ligada, com uma
+elipse para cada uma das 50 setas guardadas (`Keep: 50`). Com a odometria do driver isso
+não aparecia, porque ele publica uma covariância fixa e pequena (0,01 m²). O EKF publica a
+covariância real: como ele só recebe velocidades das rodas e o yaw do IMU, sem nenhuma
+medida absoluta de posição, a incerteza de x e y cresce sem limite enquanto o robô anda.
+Isso é o comportamento correto do filtro (é a deriva que o VSLAM vai corrigir), não um erro.
+
+**O que mudou**
+- `agrobot_webots/rviz/nav.rviz`: `Covariance: Value: false` no display Odometry, como já
+  estava no `goal.rviz`. As setas da odometria continuam.
+
+**Para ver a covariância de novo**, marque `Odometry → Covariance` no painel do RViz. Para
+acompanhar o crescimento sem o RViz: `ros2 topic echo /odom --field pose.covariance --once`
+(índices 0 e 7 são as variâncias de x e y).
+
+**Validação.** YAML conferido com parser; o nome da propriedade (`Covariance`) conferido no
+`librviz_default_plugins.so` do Jazzy. Não foi possível abrir o RViz aqui.
