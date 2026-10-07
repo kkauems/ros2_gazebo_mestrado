@@ -498,3 +498,52 @@ o que levaria outros agentes a trabalhar no simulador errado.
 
 **Validação.** Frontmatter YAML conferido; os caminhos citados no exemplo existem.
 Nenhum código ROS foi alterado.
+
+### 2026-10-07 — `colcon build` falhava com "File exists" em `meshes/chassis.stl`
+
+**Sintoma.** Depois de atualizar para o PR, `colcon build --symlink-install
+--packages-select agrobot_webots` falhava com
+`error: [Errno 17] File exists: '.../build/agrobot_webots/meshes/chassis.stl' ->
+'.../install/agrobot_webots/share/agrobot_webots/meshes/chassis.stl'`.
+
+**Causa.** É uma sobra do build antigo, não um erro do `setup.py` novo. No `main`, o
+`setup.py` instalava a malha a partir de `../agrobot_description/meshes/chassis.stl`. Com
+`--symlink-install`, o colcon deixou em `install/.../meshes/chassis.stl` um link para a malha
+do `agrobot_description`. O `setup.py` novo instala `agrobot_webots/meshes/chassis.stl`, que
+é outro arquivo (mesmo conteúdo, outro inode). O comando `symlink_data` do colcon-core (a
+partir da 0.16.0) chama `os.symlink`, e ele falha porque o destino já existe; o colcon não
+apaga links antigos nesse caso. Só acontece em workspaces compilados com
+`--symlink-install` antes da entrada "Malha do chassi não encontrada pelo Webots"; um
+clone novo compila sem erro.
+
+**Como resolver (uma vez por workspace)**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+rm install/agrobot_webots/share/agrobot_webots/meshes/chassis.stl
+colcon build --symlink-install --packages-select agrobot_webots
+source install/setup.bash
+```
+Se der outro erro, ou ao trocar de branch (por exemplo, voltar para o `main`) ou alternar
+entre build com e sem `--symlink-install`, limpe o pacote:
+`rm -rf build/agrobot_webots install/agrobot_webots` e compile de novo. O colcon não remove
+links de arquivos que saíram do pacote, e eles quebram o build seguinte.
+
+**Observação.** A malha é o último item de `data_files`. No build que falhava, o script
+`goal_navigator`, o `goal_navigation.launch.py` e o `goal.rviz` já tinham sido instalados
+antes do erro, e o link velho aponta para uma malha idêntica. Por isso os testes anteriores
+rodaram o código novo mesmo com o colcon mostrando `Failed`.
+
+**O que mudou**
+- `README.md`: item em "Known issues" com o erro e os dois comandos.
+- Nenhuma mudança de código. Voltar a instalar a malha de `../agrobot_description` traria
+  de volta o erro do Webots com `--symlink-install` e criaria o conflito inverso para quem
+  já compilou a versão nova. Renomear a malha evitaria o erro, mas deixaria um link órfão
+  em cada workspace existente, por um problema que acontece uma vez só.
+
+**Validação.** Reproduzido num workspace com o mesmo layout (pacotes na raiz), Python 3.12
+e setuptools 68.1.2 (versões do Ubuntu 24.04), com colcon-core 0.16.0, 0.18.4, 0.20.1 e
+0.21.3. Em todas: o build do `main` com `--symlink-install` seguido do build do PR deu o
+mesmo `[Errno 17]`, e tanto o `rm` do arquivo quanto o `rm -rf` do pacote resolveram. O
+build seguinte também passou, e o `meshes/chassis.stl` instalado passou a apontar para
+`agrobot_webots/meshes/chassis.stl`. A colcon-core 0.15.2 não tem `symlink_data` (copia os
+arquivos) e não dá o erro.

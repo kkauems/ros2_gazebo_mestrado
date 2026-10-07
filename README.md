@@ -241,6 +241,13 @@ In Gazebo, the robot uses the `gz-sim-diff-drive-system` plugin and the tall `li
 - **`stability_simulation.launch.py`** uses the relative world path
   `agrobot_gazebo/stability_test_world.sdf`, so it only works when started from the repo
   root.
+- **`[Errno 17] File exists: .../meshes/chassis.stl` on `colcon build`.** A workspace built
+  with `--symlink-install` before the chassis mesh moved into `agrobot_webots/meshes/`
+  (2026-10-06) keeps an old link in `install/` to `agrobot_description`'s mesh, and colcon
+  won't replace it. Run once from the workspace root, then rebuild:
+  `rm install/agrobot_webots/share/agrobot_webots/meshes/chassis.stl`. If the build still
+  fails, or after switching branches or between builds with and without
+  `--symlink-install`, clean the package: `rm -rf build/agrobot_webots install/agrobot_webots`.
 - **Committed `__pycache__/` files.** Add `__pycache__/` to `.gitignore` and `git rm --cached` them.
 
 ## Next steps
