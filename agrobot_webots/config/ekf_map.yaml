@@ -1,0 +1,94 @@
+# robot_localization (EKF) no frame map: rodas + IMU + pose do slam_toolbox
+# -> /odometry/map. Usado pelo simulation.launch.py com slam:=true.
+#
+# É a elipse que o RViz mostra com slam:=true. Entre um scan e outro ela
+# cresce com o movimento (rodas, IMU e uma folga para o escorregamento); a
+# cada pose do scan matching (/pose) ela encolhe na direção que as paredes
+# vistas prendem. Sem nada no alcance do LiDAR, só cresce.
+#
+# Não publica TF: map -> odom é do slam_toolbox. Para este nó assumir o TF
+# (arranjo de dois EKFs do REP-105), troque publish_tf para true aqui e
+# transform_publish_period para 0.0 no slam_toolbox.yaml.
+#
+# Vetor de estado de cada *_config e das matrizes (15 valores):
+#   [x,  y,  z,
+#    roll, pitch, yaw,
+#    vx, vy, vz,
+#    vroll, vpitch, vyaw,
+#    ax, ay, az]
+
+ekf_map_node:
+  ros__parameters:
+    use_sim_time: true
+    frequency: 30.0
+    sensor_timeout: 0.2
+    two_d_mode: true
+    publish_tf: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: map
+
+    # A pose do slam_toolbox chega atrasada (carimbo do scan, publicada depois
+    # do scan matching). Com smooth_lagged_data o filtro volta ao instante do
+    # scan e reaplica rodas e IMU; sem isso, aplicaria a pose antiga como se
+    # fosse atual.
+    smooth_lagged_data: true
+    history_length: 1.0
+
+    # Ruído de processo (15 valores = diagonal). Igual ao ekf.yaml, menos x e
+    # y: 0,01 em vez de 0, escalado pela velocidade (dynamic), como folga
+    # para o escorregamento que o modelo das rodas não representa. Com 0 o
+    # filtro confia demais nas rodas e quase ignora o LiDAR (no teste: erro
+    # médio de 3,7 cm com σ de 1 cm); com 0,01, erro de 1,7 cm dentro de σ de
+    # 1,5 a 5 cm. Parado, não soma nada. Calibre com a pose real do Webots.
+    dynamic_process_noise_covariance: true
+    process_noise_covariance: [0.01,  0.01,  0.06,
+                               0.03,  0.03,  0.06,
+                               0.025, 0.025, 0.04,
+                               0.01,  0.01,  0.02,
+                               0.01,  0.01,  0.015]
+    # O frame map nasce na pose inicial do robô: incerteza inicial quase nula.
+    # Definida aqui porque, sem ela, o serviço reset do nó zera a matriz.
+    initial_estimate_covariance: [1e-6, 1e-6, 1e-9,
+                                  1e-9, 1e-9, 1e-6,
+                                  1e-3, 1e-3, 1e-9,
+                                  1e-9, 1e-9, 1e-3,
+                                  1e-9, 1e-9, 1e-9]
+
+    # Rodas (/wheel/odom): vx e vy, como no ekf.yaml.
+    odom0: /wheel/odom
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,
+                   false, false, false,
+                   false, false, false]
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_relative: false
+
+    # IMU (/imu/data): só a velocidade de yaw. O yaw absoluto no frame map
+    # vem do slam_toolbox; duas fontes de yaw absoluto brigariam no filtro.
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_queue_size: 10
+    imu0_differential: false
+    imu0_relative: false
+    imu0_remove_gravitational_acceleration: true
+
+    # slam_toolbox (/pose, frame map): x, y e yaw com a covariância do scan
+    # matching, usada como veio.
+    pose0: /pose
+    pose0_config: [true,  true,  false,
+                   false, false, true,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose0_queue_size: 5
+    pose0_differential: false
+    pose0_relative: false

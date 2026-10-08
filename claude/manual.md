@@ -753,3 +753,118 @@ fique dentro de 2σ na maior parte do tempo.
 **Para ver as elipses de novo no RViz**, marque `Odometry → Covariance`. Agora elas têm
 poucos centímetros; aumente `Covariance → Position → Scale` para enxergá-las ao lado do
 robô.
+
+### 2026-10-08 — SLAM com o LiDAR (`slam_toolbox`) e a elipse no frame `map`
+
+**Pedido.** Depois da explicação de que a elipse do `/odom` não tem como diminuir (nenhuma
+entrada do EKF mede posição), Kauê pediu para configurar o slam_toolbox, para a elipse
+diminuir perto das paredes.
+
+**O que mudou** (tudo só com `slam:=true`; o padrão `slam:=false` não muda nada)
+- `agrobot_webots/config/slam_toolbox.yaml` (novo): slam_toolbox 2.8.5 em modo mapping com
+  o `/scan`. Monta o `/map`, publica `map → odom` e, a cada scan processado, `/pose`
+  (`PoseWithCovarianceStamped` no frame `map`) com a covariância do scan matching.
+  `base_frame: base_link` (o padrão do pacote, `base_footprint`, não existe no URDF).
+  Processa um scan a cada 0,2 m ou 0,2 rad de giro, no máximo a cada 0,25 s.
+- `agrobot_webots/config/ekf_map.yaml` (novo): um segundo `ekf_node`, `ekf_map_node`, no
+  frame `map`. Funde vx e vy das rodas, a velocidade de yaw do IMU e x, y e yaw do `/pose`,
+  e publica `/odometry/map`. Não publica TF: `map → odom` continua sendo do slam_toolbox.
+- `agrobot_webots/launch/simulation.launch.py`: argumento `slam` (padrão `false`). Sobe o
+  slam_toolbox (nó lifecycle: o launch o configura e ativa) e o `ekf_map_node`, com os
+  serviços `set_pose`, `reset`, `enable` e `toggle` remapeados para `/ekf_map_node/...` para
+  não colidir com o `ekf_filter_node`. Com `slam:=true` o RViz abre `nav_slam.rviz`.
+- `agrobot_webots/rviz/nav_slam.rviz` (novo): cópia do `nav.rviz` com Fixed Frame `map`, o
+  `/map`, o robô translúcido e a elipse do `/odometry/map` (só a pose atual, ampliada 20×).
+  Há também a elipse do `/odom` para comparar, desligada.
+- `agrobot_webots/package.xml`: dependências `slam_toolbox` e `lifecycle_msgs`.
+- `README.md`: `apt install ros-jazzy-slam-toolbox`, argumento `slam`, tópicos novos.
+- `claude/img/slam_elipse_campo_arena.png` (novo): figura da medição abaixo.
+
+**Como a elipse se forma.** O slam_toolbox compara cada scan com os 10 scans anteriores
+numa busca de ±0,25 m (passo de 1 cm) e ±20°. A covariância de x e y é o espalhamento das
+posições da busca que casam quase tão bem quanto a melhor (`Mapper.cpp:874-966`): se as
+paredes vistas prendem uma direção, ela é estreita nessa direção; ao longo de uma parede
+reta todas as posições casam igual e ela fica longa (limitada pela janela de busca); sem
+nenhum ponto no alcance vale 500 m². O `ekf_map_node` funde essa pose: entre um scan e
+outro a elipse cresce com o movimento; a cada scan ela encolhe na direção que as paredes
+prendem.
+
+**Ruído de processo de x e y no `ekf_map_node`: 0,01, não 0 como no `ekf.yaml`.** Com 0, o
+filtro confia demais nas rodas (o modelo delas não tem o escorregamento sistemático) e
+quase ignora o LiDAR. Medição na arena (mesmo roteiro, robô falso com 4% de
+escorregamento):
+
+| x/y em `process_noise_covariance` | Erro médio / máximo | σ da elipse | Erro dentro de 2σ |
+|---|---|---|---|
+| 0 (como no `ekf.yaml`) | 3,7 / 7,4 cm | 0,6 a 1,7 cm | 15% das amostras |
+| 0,01 (escolhido) | 1,7 / 5,2 cm | 1,5 a 4,9 cm | 100% |
+| 0,05 (padrão do pacote) | 2,1 / 6,7 cm | 3,4 a 8,7 cm | 100% |
+
+O valor é escalado pela velocidade (`dynamic_process_noise_covariance`): parado, a elipse
+não cresce. Ele deve ser calibrado com a pose verdadeira do Webots, como os coeficientes
+das rodas.
+
+**Medição** (driver real, `simulation.launch.py` real com o Webots trocado por um robô falso
+em Python, slam_toolbox 2.8.5, `ekf_map_node` 3.8.3; figura
+`claude/img/slam_elipse_campo_arena.png`):
+
+| Situação | Elipse (1σ) | Erro real |
+|---|---|---|
+| Arena 5 × 5 m, área aberta | cerca de 3 × 3 cm | 0,5 a 5 cm |
+| Arena, de frente para a parede leste a 0,4 m | 2,6 cm perpendicular × 4,5 cm ao longo | menos de 1 cm |
+| Campo aberto, 4,4 m sem nada no alcance | cresce até 12 × 14 cm | 13 a 19 cm |
+| Campo, a parede (a 13 m) entra no alcance | perpendicular cai de 12 para 4 cm | continua 18 a 22 cm |
+| Campo, andando 5 m ao longo da parede | 6 × 8 cm | sobe até 75 cm |
+| Campo, de costas para a parede | volta a crescer, até 23 cm | 52 cm |
+
+Com Nav2 e `slam:=true`, os 4 objetivos de teste dados no frame `map` terminaram em
+SUCCEEDED, com erro do `/odometry/map` de 1 a 2 cm na chegada.
+
+**O que a elipse mostra (para a conversa com o orientador)**
+1. Na arena ela não diminui perto das paredes, porque o LiDAR (8 m) vê pelo menos duas
+   paredes de qualquer ponto de uma arena de 5 m: a elipse fica em ~3 cm em todo lugar.
+   O que muda é a forma: de frente para uma parede ela fica estreita na direção da parede
+   e comprida ao longo dela (o scan matching sozinho dá 2,6 × 14 cm ali).
+2. A intuição "perto da parede o robô sabe melhor onde está" aparece quando há lugares
+   sem nada no alcance: no campo aberto a elipse cresce e, quando a parede entra no
+   alcance, encolhe na direção perpendicular a ela.
+3. A elipse é a incerteza em relação ao mapa, não ao ponto de partida. No campo, a parede
+   foi mapeada com os 18 cm de erro que o robô já tinha quando a viu pela primeira vez; o
+   robô fica bem localizado em relação à parede mapeada, mas o erro em relação à origem
+   não cai. Isso é próprio do SLAM: só um mapa ou referência externa (GPS, marco
+   conhecido) corrige o erro anterior.
+4. Ao longo de uma parede longa e uniforme o scan matching não tem o que segurar e
+   desliza: 0,5 a 0,9 m em 5 m nos testes, pior que as rodas, enquanto a elipse diz
+   6 a 8 cm. A covariância do slam_toolbox é local (comparação com os últimos scans), não
+   acumula esse deslize. Isso importa para o vinhedo: uma fileira longa é o mesmo caso.
+
+**Escolhas e armadilhas**
+- slam_toolbox dono de `map → odom` e o `ekf_map_node` só para a elipse: a elipse é a
+  mesma que se o EKF publicasse o TF, sem risco de dois nós publicarem `map → odom`. Para
+  o arranjo de dois EKFs do REP-105, troque `publish_tf: true` no `ekf_map.yaml` e
+  `transform_publish_period: 0.0` no `slam_toolbox.yaml`.
+- `minimum_travel_distance: 0.2`, não 0. Com 0 o slam_toolbox processa scans com o robô
+  parado; nos testes a pose "andou" 10 a 16 cm em 40 s parada, e cada scan repetido faria
+  a elipse encolher sem informação nova.
+- O EKF do mapa usa só a velocidade de yaw do IMU: o yaw absoluto vem do slam_toolbox.
+  Duas fontes de yaw absoluto brigariam no filtro.
+- `smooth_lagged_data` com `history_length: 1.0`: a pose do slam_toolbox chega atrasada
+  (carimbo do scan); o filtro volta no tempo e reaplica rodas e IMU.
+- No RViz, `Keep: 1` e tolerâncias 0 no display da elipse: com os padrões (0,1 m e
+  0,1 rad) ela congela com o robô parado. `Scale: 20` desenha 20σ, porque 1σ (~3 cm) some
+  embaixo do robô de 1,2 m.
+- O Nav2 continua planejando no frame `odom`. Um objetivo clicado no RViz (frame `map`) é
+  convertido para `odom` uma vez, quando o Nav2 o aceita; se o SLAM corrigir `map → odom`
+  depois, o robô vai para o ponto antigo.
+
+**Para usar**
+```bash
+sudo apt install ros-jazzy-slam-toolbox
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots simulation.launch.py ekf:=true slam:=true
+```
+No RViz, a elipse azul-clara é a do `/odometry/map`. Para salvar o mapa:
+`ros2 run nav2_map_server map_saver_cli -f ~/mapa_arena`.
