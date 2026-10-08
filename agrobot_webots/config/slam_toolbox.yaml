@@ -52,7 +52,8 @@ slam_toolbox:
     check_min_dist_and_heading_precisely: true
 
     # Scan matching (padrões). A covariância publicada em /pose sai daqui:
-    # da busca de ±0,25 m em passos de 1 cm, com suavização de 0,1 m.
+    # da busca grossa de ±0,25 m em passos de 2 cm (2 × a resolução abaixo; o
+    # refino de 1 cm só ajusta a pose e o yaw), com suavização de 0,1 m.
     use_scan_matching: true
     use_scan_barycenter: true
     scan_buffer_size: 10

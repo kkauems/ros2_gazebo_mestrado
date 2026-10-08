@@ -111,6 +111,8 @@ Visualization Manager:
         Orientation:
           Value: false
     # Para comparar: a elipse do /odom (só rodas + IMU). Desligada por padrão.
+    # Só faz sentido com ekf:=true: com ekf:=false o driver publica covariância
+    # fixa (0,01 m²) e a elipse vira um disco constante de 4 m.
     - Class: rviz_default_plugins/Odometry
       Name: Elipse odom (sem SLAM)
       Enabled: false

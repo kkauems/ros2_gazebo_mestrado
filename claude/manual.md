@@ -775,14 +775,16 @@ diminuir perto das paredes.
   não colidir com o `ekf_filter_node`. Com `slam:=true` o RViz abre `nav_slam.rviz`.
 - `agrobot_webots/rviz/nav_slam.rviz` (novo): cópia do `nav.rviz` com Fixed Frame `map`, o
   `/map`, o robô translúcido e a elipse do `/odometry/map` (só a pose atual, ampliada 20×).
-  Há também a elipse do `/odom` para comparar, desligada.
+  Há também a elipse do `/odom` para comparar, desligada; ela só faz sentido com `ekf:=true`
+  (com `ekf:=false` o driver publica covariância fixa de 0,01 m², um disco constante).
 - `agrobot_webots/package.xml`: dependências `slam_toolbox` e `lifecycle_msgs`.
 - `README.md`: `apt install ros-jazzy-slam-toolbox`, argumento `slam`, tópicos novos.
 - `claude/img/slam_elipse_campo_arena.png` (novo): figura da medição abaixo.
 
 **Como a elipse se forma.** O slam_toolbox compara cada scan com os 10 scans anteriores
-numa busca de ±0,25 m (passo de 1 cm) e ±20°. A covariância de x e y é o espalhamento das
-posições da busca que casam quase tão bem quanto a melhor (`Mapper.cpp:874-966`): se as
+numa busca grossa de ±0,25 m (passo de 2 cm, refinada depois a 1 cm) e ±20°. A
+covariância de x e y é o espalhamento das posições da busca grossa que casam quase tão bem
+quanto a melhor (`Mapper.cpp:874-966`), com piso de σ = 6,3 mm: se as
 paredes vistas prendem uma direção, ela é estreita nessa direção; ao longo de uma parede
 reta todas as posições casam igual e ela fica longa (limitada pela janela de busca); sem
 nenhum ponto no alcance vale 500 m². O `ekf_map_node` funde essa pose: entre um scan e
@@ -811,14 +813,17 @@ em Python, slam_toolbox 2.8.5, `ekf_map_node` 3.8.3; figura
 | Situação | Elipse (1σ) | Erro real |
 |---|---|---|
 | Arena 5 × 5 m, área aberta | cerca de 3 × 3 cm | 0,5 a 5 cm |
-| Arena, de frente para a parede leste a 0,4 m | 2,6 cm perpendicular × 4,5 cm ao longo | menos de 1 cm |
-| Campo aberto, 4,4 m sem nada no alcance | cresce até 12 × 14 cm | 13 a 19 cm |
-| Campo, a parede (a 13 m) entra no alcance | perpendicular cai de 12 para 4 cm | continua 18 a 22 cm |
+| Arena, de frente para a parede leste (frente do robô a 0,3 m) | 2,6 cm perpendicular × 4,5 cm ao longo | menos de 1 cm |
+| Campo aberto, 4,4 m sem nada no alcance | cresce até 12 × 16 cm | de 0 a 15 cm |
+| Campo, a parede (a 13 m) entra no alcance | perpendicular cai de 12 para 4 cm | continua 17 a 22 cm |
 | Campo, andando 5 m ao longo da parede | 6 × 8 cm | sobe até 75 cm |
 | Campo, de costas para a parede | volta a crescer, até 23 cm | 52 cm |
 
 Com Nav2 e `slam:=true`, os 4 objetivos de teste dados no frame `map` terminaram em
-SUCCEEDED, com erro do `/odometry/map` de 1 a 2 cm na chegada.
+SUCCEEDED, com erro do `/odometry/map` de 1 a 2 cm na chegada. Com `slam:=false` o Nav2 se
+comporta como antes: nos testes, às vezes uma das 4 metas aborta porque o controlador vê
+colisão à frente ("collision ahead"), e isso também acontece no commit anterior a esta
+mudança.
 
 **O que a elipse mostra (para a conversa com o orientador)**
 1. Na arena ela não diminui perto das paredes, porque o LiDAR (8 m) vê pelo menos duas
