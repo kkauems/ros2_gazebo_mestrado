@@ -680,3 +680,76 @@ acompanhar o crescimento sem o RViz: `ros2 topic echo /odom --field pose.covaria
 
 **Validação.** YAML conferido com parser; o nome da propriedade (`Covariance`) conferido no
 `librviz_default_plugins.so` do Jazzy. Não foi possível abrir o RViz aqui.
+
+### 2026-10-08 — Covariância do EKF: círculos que só cresciam
+
+**Pergunta (reunião com o orientador).** Com `ekf:=true`, as elipses de covariância do
+`/odom` no RViz (1) continuavam crescendo mesmo com o robô perto de uma parede, onde se
+esperava que diminuíssem, e (2) eram círculos, sem diferença entre x e y.
+
+**Causa de (2), os círculos: ruído de processo padrão.** O `ekf.yaml` não definia
+`process_noise_covariance`, então o `robot_localization` usava o padrão do pacote
+(`filter_base.cpp:110-125` da 3.8.3): 0,05 em x e 0,05 em y. A cada passo de predição o
+filtro faz `P = J·P·Jᵀ + Q·Δt` (`ekf.cpp:431-436`), com Q no frame `odom`, sem rotação e,
+com `dynamic_process_noise_covariance` desligado (padrão), também com o robô parado. Esse
+termo soma 0,05 m²/s igual em x e em y: σ = 0,22·√t m, ou 0,7 m em 10 s e 1,7 m em 1 min.
+A parte que dependeria do movimento (incerteza das velocidades das rodas e do yaw do IMU,
+propagada pelo modelo) é cerca de 300 vezes menor e some no meio. Resultado: círculos
+iguais em x e y, crescendo com o tempo, andando ou parado.
+
+**Causa de (1): nenhuma entrada do EKF enxerga a parede.** O EKF recebe só vx e vy das
+rodas e yaw e velocidade de yaw do IMU. Nenhuma delas mede posição. O LiDAR alimenta só os
+costmaps do Nav2 e o `goal_navigator`, não a localização. Sem medida de posição, a
+variância de x e y só pode crescer. Isso não é erro: no REP-105 o frame `odom` é contínuo e
+deriva por definição. A elipse só diminui perto de paredes quando uma localização compara o
+que o sensor vê com um mapa: AMCL (precisa de mapa pronto), SLAM com o LiDAR
+(slam_toolbox) ou VSLAM (RTAB-Map), publicando `map → odom` e uma pose com covariância no
+frame `map`. Mesmo assim, perto de **uma** parede reta ela estreita só na direção
+perpendicular à parede (a distância fica conhecida, a posição ao longo dela não): vira uma
+elipse comprida paralela à parede, não um círculo menor. Num canto, ela fica pequena nos
+dois eixos.
+
+**O que mudou**
+- `agrobot_webots/config/ekf.yaml`: `process_noise_covariance` explícito, com x e y em
+  0 (os outros valores são os padrões do pacote), e `dynamic_process_noise_covariance:
+  true`. A incerteza de posição passa a vir só da incerteza das velocidades e do yaw,
+  propagada pelo modelo de movimento: cresce com o movimento e na direção dele. Definir
+  a matriz também evita um bug da 3.8.3 em que o serviço `reset` do nó zera Q quando o
+  parâmetro não está no arquivo.
+- `agrobot_webots/agrobot_webots/agrobot_driver.py`: o desvio-padrão das velocidades em
+  `/wheel/odom` deixou de ser fixo (0,071 m/s em vx e 0,032 m/s em vy, mesmo parado) e
+  passou a ser um piso de 0,002 m/s mais uma parte proporcional ao movimento: 10% de |v|
+  em vx; 5% de |v| mais 0,05 m/s por rad/s de giro em vy (deriva lateral do skid-steer).
+  É a ideia do modelo de odometria do *Probabilistic Robotics* (erro proporcional ao
+  movimento). Sem isso, mesmo com Q de x/y zerado, a elipse continuaria crescendo com o
+  robô parado, por causa da incerteza fixa das velocidades. Os quatro números são
+  constantes no topo do arquivo.
+- `claude/img/ekf_covariancia_antes_depois.png` (novo): figura da medição abaixo.
+
+**Medição** (driver real + robô falso em Python + `ekf_node` 3.8.3, mesmo roteiro nos dois
+casos: 10 s parado, 6 m em linha reta no eixo x, giro de 90°, 6 m no eixo y, 16 s
+parado; desvio-padrão de 1σ):
+
+| | Antes | Depois |
+|---|---|---|
+| Parado, 10 s | σx = σy = 0,71 m | σx = σy = 0,008 m |
+| Fim da 1ª reta (eixo x) | σx = σy = 1,10 m | σx = 0,030 m, σy = 0,020 m |
+| Fim da 2ª reta (eixo y) | σx = σy = 1,49 m | σx = σy = 0,037 m |
+| Parado mais 16 s no fim | sobe para 1,73 m | sobe cerca de 0,001 m |
+
+Na 1ª reta a elipse fica comprida no sentido do movimento (x); na 2ª, y cresce mais e
+alcança x, e no fim de um trajeto em L ela volta a ficar quase redonda, porque acumulou
+erro de avanço nos dois eixos. Com Nav2 (4 objetivos), todos SUCCEEDED, com o mesmo erro
+de posição de antes.
+
+**Limite importante para a dissertação.** O EKF trata o erro das rodas como ruído branco,
+e a covariância cresce com √distância. Um erro sistemático (raio de roda errado,
+escorregamento constante) cresce linearmente e o filtro não o representa: no robô falso,
+com 4% de escorregamento no avanço, o erro real chegou a 0,11 m com σ = 0,03 m. Os
+coeficientes de 10% e 5% são um ponto de partida; o certo é calibrá-los comparando o
+`/odom` com a pose verdadeira do Webots (Supervisor), por exemplo exigindo que o erro
+fique dentro de 2σ na maior parte do tempo.
+
+**Para ver as elipses de novo no RViz**, marque `Odometry → Covariance`. Agora elas têm
+poucos centímetros; aumente `Covariance → Position → Scale` para enxergá-las ao lado do
+robô.

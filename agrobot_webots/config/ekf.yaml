@@ -17,6 +17,33 @@ ekf_filter_node:
     two_d_mode: true
     publish_tf: true
 
+    # Ruído de processo (variância por segundo que o modelo soma a cada passo).
+    # Sem este bloco o robot_localization usa 0,05 em x e em y: a incerteza
+    # de posição cresce 0,05 m²/s igual nos dois eixos, até com o robô parado,
+    # e o RViz mostra círculos que só crescem. Aqui x e y ficam em 0: a
+    # incerteza de posição vem só da incerteza das velocidades (rodas) e do
+    # yaw (IMU), propagada pelo modelo de movimento, e por isso cresce mais na
+    # direção em que o robô anda. Os outros valores são os padrões do pacote.
+    # dynamic_process_noise_covariance escala o ruído dos estados de pose
+    # pela velocidade: parado, não soma nada.
+    dynamic_process_noise_covariance: true
+    process_noise_covariance: [
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,  0.06,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,  0.03,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,  0.03,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,  0.06,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0, 0.025,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0, 0.025,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.04,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.02,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0, 0.015]
+
     # Sem mapa (REP-105): o EKF publica odom -> base_link. Quem um dia
     # publicar map -> odom (VSLAM, SLAM, GPS) entra num segundo nó.
     map_frame: map
