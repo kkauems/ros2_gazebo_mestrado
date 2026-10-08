@@ -800,8 +800,8 @@ escorregamento):
 | 0,01 (escolhido) | 1,7 / 5,2 cm | 1,5 a 4,9 cm | 100% |
 | 0,05 (padrão do pacote) | 2,1 / 6,7 cm | 3,4 a 8,7 cm | 100% |
 
-O valor é escalado pela velocidade (`dynamic_process_noise_covariance`): parado, a elipse
-não cresce. Ele deve ser calibrado com a pose verdadeira do Webots, como os coeficientes
+O valor é escalado pela velocidade (`dynamic_process_noise_covariance`): parado, essa folga
+não soma nada, e a elipse só cresce alguns milímetros por minuto, como a do `/odom`. Ele deve ser calibrado com a pose verdadeira do Webots, como os coeficientes
 das rodas.
 
 **Medição** (driver real, `simulation.launch.py` real com o Webots trocado por um robô falso
