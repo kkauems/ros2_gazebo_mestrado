@@ -17,10 +17,11 @@ reactive obstacle avoidance and stability tests).
 | Wheel + IMU odometry (`/odom`, TF `odom → base_link`) | Webots | Works |
 | Low front lidar (`/scan`) that sees the crates and boxes | Webots | Works |
 | Nav2: click a goal in RViz and the robot drives there around obstacles | Webots | Works, tested on 2026-10-02 |
-| Goal from RViz without Nav2 or map: odometry only, avoids what is in front (`goal_navigator`) | Webots | New on 2026-10-06, tested only in a 2D Python simulation |
-| `robot_localization` EKF (wheels + IMU) as the `/odom` source, `ekf:=true` | Webots | New on 2026-10-07, tested with Nav2 against a Python stand-in for Webots, not yet in Webots |
+| Goal from RViz without Nav2 or map: odometry only, avoids what is in front (`goal_navigator`) | Webots | New on 2026-10-06. Run in Webots R2025a on Linux (headless) on 2026-10-09: reaches the arena goals, but doesn't get into the crop-field lanes (see [Plantation field](#plantation-field-world)). Not yet on Windows |
+| `robot_localization` EKF (wheels + IMU) as the `/odom` source, `ekf:=true` | Webots | New on 2026-10-07. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route, with `slam:=true`), not yet on Windows |
 | `/clock` from Webots sim time | Webots | New on 2026-10-07 |
-| Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08, tested against a Python stand-in for Webots, not yet in Webots |
+| Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route); the ellipse wasn't checked in RViz, not yet on Windows |
+| Crop-field test world (`plantation_field.wbt`): 6 plant rows, uneven ground, clods, stones and branches, `world:=plantation_field.wbt` | Webots | New on 2026-10-09, tested in Webots R2025a on Linux (headless) with the real driver, Nav2 and slam_toolbox, not yet on Windows. See [Plantation field](#plantation-field-world) |
 | AMCL / GPS / VSLAM | — | Not done. Nav2 still plans in the `odom` frame. VSLAM study: [claude/estudo_vslam.md](claude/estudo_vslam.md) |
 | `cmd_vel` / `odom` / `scan` bridge | Gazebo | Works (from the earlier commits) |
 | Reactive obstacle avoidance node | Gazebo | Code exists, but see [Known issues](#known-issues) |
@@ -38,6 +39,9 @@ agrobot_webots/          Webots simulation + Nav2 (ament_python)
   agrobot_webots/agrobot_driver.py   webots_ros2 plugin: motors, odom, TF, scan, joint_states
   protos/agrobot.proto     Webots robot (generated from the URDF, plus IMU and lidar)
   worlds/obstacle_arena.wbt  5 x 5 m arena, walls, 4 crates, 3 boxes
+  worlds/plantation_field.wbt  crop field on uneven ground (generated, don't edit by hand)
+  protos/CropPlant.proto   corn-like plant for the field (only the stalk collides)
+  scripts/generate_plantation_field.py  generates plantation_field.wbt (fixed seed)
   launch/simulation.launch.py  Webots + driver + robot_state_publisher + Nav2 + RViz
   launch/navigation.launch.py  only the Nav2 servers (no map server, no AMCL)
   launch/goal_navigation.launch.py  Webots + driver + RViz + goal_navigator (no Nav2)
@@ -90,14 +94,15 @@ Rebuild `agrobot_webots` after editing anything in it. The launch files read the
 ros2 launch agrobot_webots simulation.launch.py
 ```
 
-This starts Webots with `obstacle_arena.wbt`, the Agrobot driver plugin,
-`robot_state_publisher`, the Nav2 servers and RViz. Closing Webots shuts the whole launch
-down.
+This starts Webots with `obstacle_arena.wbt` (or the world given in `world`), the Agrobot
+driver plugin, `robot_state_publisher`, the Nav2 servers and RViz. Closing Webots shuts the
+whole launch down.
 
 Launch arguments:
 
 | Argument | Default | Effect |
 |---|---|---|
+| `world` | `obstacle_arena.wbt` | World file in `agrobot_webots/worlds/`. `plantation_field.wbt` is the crop field ([below](#plantation-field-world)). `goal_navigation.launch.py` takes the same argument |
 | `nav` | `true` | Start the Nav2 servers (`navigation.launch.py`) |
 | `rviz` | `true` | Start RViz with `rviz/nav.rviz` (`rviz/nav_slam.rviz` with `slam:=true`) |
 | `ekf` | `false` | `true`: the `robot_localization` EKF fuses `/wheel/odom` + `/imu/data` and publishes `/odom` and TF `odom → base_link` (the driver stops publishing them). `goal_navigation.launch.py` takes the same argument |
@@ -109,6 +114,7 @@ Examples:
 ros2 launch agrobot_webots simulation.launch.py ekf:=true                 # Nav2 on the EKF odometry
 ros2 launch agrobot_webots simulation.launch.py ekf:=true slam:=true      # + lidar SLAM and the map-frame ellipse
 ros2 launch agrobot_webots simulation.launch.py nav:=false rviz:=false   # robot only
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt slam:=true  # crop field
 ros2 launch agrobot_webots navigation.launch.py                          # Nav2 alone, in another terminal
 ```
 
@@ -119,13 +125,63 @@ ros2 launch agrobot_webots navigation.launch.py                          # Nav2 
 - **CLI:**
   ```bash
   ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
-    "{pose: {header: {frame_id: odom}, pose: {position: {x: 1.5, y: 1.0}, orientation: {w: 1.0}}}}"
+    "{pose: {header: {frame_id: odom}, pose: {position: {x: 2.6, y: 0.6}, orientation: {w: 1.0}}}}"
   ```
 
 Goal coordinates are in `odom`. **`odom` = where the robot spawned** (world position
 `(-1.0, -0.3)`, facing +x), not the center of the arena. The walls are at world ±2.5 m, so
 in `odom` the free space runs roughly from x = -1.5 to 3.5 and y = -2.2 to 2.8, minus the
-robot's half-width (~0.56 m).
+robot's half-width (~0.56 m). The goal must leave room for the whole 1.2 × 1.12 m footprint:
+the old example `(1.5, 1.0)` puts the robot on top of the crate at world `(0.19, 0.37)` and
+Nav2 aborts it.
+
+The global costmap is a 24 × 24 m window centered on the robot, so Nav2 refuses goals more
+than about 12 m away.
+
+### Plantation field world
+
+```bash
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt            # Nav2
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true slam:=true
+ros2 launch agrobot_webots goal_navigation.launch.py world:=plantation_field.wbt       # no Nav2
+```
+
+A crop field on uneven ground (x along the rows, world frame):
+- 18 × 16 m `ElevationGrid` of soil: wide gentle hills (20–40 m wavelength, up to ~5 cm),
+  fine roughness, a 5 cm raised bed under each row, shallow wheel ruts and a few holes.
+  Wheel–soil friction is 0.7 (Webots default 1).
+- 6 rows of `CropPlant` (corn-like, 0.9–1.6 m tall), 9 m long (x = -4.5 to 4.5), 1.8 m
+  apart (y = ±0.9, ±2.7, ±4.5), with gaps. The 5 lanes between them are at y = 0, ±1.8, ±3.6.
+- In the lanes, clods, small stones and one branch each, all under the lidar plane: the
+  robot drives over them. Six bigger rocks (15–23 cm above the ground, the lidar sees them):
+  four in the headlands and two in the side margins, at world `(1.5, -5.4)` and `(-2.5, 5.5)`.
+- Headlands 2.5 m long at both ends, a fence of wooden posts at x = ±7.6, y = ±6.6.
+- The robot starts at world `(-6, 0)` facing +x, at the head of the middle lane. So in
+  `odom` the lanes are at y = 0, ±1.8, ±3.6, the rows run from x = 1.5 to 10.5, and the
+  far headland is around x = 11.5–12.5. Example: `(10.5, 0)` drives down the middle lane,
+  `(11.8, 1.8, yaw π)` turns into the next lane, `(0.5, 1.8, yaw π)` comes back.
+
+The world is generated. To change it, edit the parameters in
+[generate_plantation_field.py](agrobot_webots/scripts/generate_plantation_field.py) and run
+`python3 agrobot_webots/scripts/generate_plantation_field.py` (`--roughness 2` for rougher
+ground, `--seed N` for another layout), then rebuild `agrobot_webots`.
+
+**The lidar and the uneven ground.** `front_lidar` is a single horizontal plane about 13 cm
+above the ground. When the robot pitches over a clod or a stone, the plane can still hit the
+soil ahead, and Nav2 marks it as an obstacle in the lane, so expect some "collision ahead"
+stops. In the cloud tests, 4 runs of a 5-goal route through the lanes reached all 20 goals
+(with the earlier 8 cm lidar it was 18 of 23). If a goal aborts, resend it, and if it keeps
+failing clear the costmaps first:
+
+```bash
+ros2 service call /global_costmap/clear_entirely_global_costmap nav2_msgs/srv/ClearEntireCostmap
+ros2 service call /local_costmap/clear_entirely_local_costmap nav2_msgs/srv/ClearEntireCostmap
+```
+
+`goal_navigator` (below) does not get into the lanes: just before the first plants it
+reports an obstacle in the strip it needs free in front of the robot, and it gives up after
+40 s. It did the same with the 8 cm lidar; the cause wasn't investigated. Measurements are in
+[claude/manual.md](claude/manual.md#2026-10-09--lidar-frontal-5-cm-mais-alto-13-cm-do-chão).
 
 ### Goal without Nav2 (`goal_navigator`)
 
@@ -218,14 +274,17 @@ Set in the URDF `<webots><plugin>` block ([agrobot.urdf](agrobot_description/urd
 Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
 - `InertialUnit` `imu`, `Gyro` `gyro` and `Accelerometer` `accelerometer` at `imu_link`
   (0.35 m above `base_link`), published together on `/imu/data`
-- `Lidar` named `front_lidar` at (0.65, 0, -0.15) from `base_link`, about 0.14 m above the
-  floor, so it sees the 0.2 m boxes and 0.3 m crates
+- `Lidar` named `front_lidar` at (0.65, 0, -0.10) from `base_link`. `base_link` rests
+  0.23–0.24 m above the ground, so the scan plane is about 13 cm above the floor (z = 0.18 m
+  in the arena's world frame, whose floor top is at z = 0.05). It sees the boxes (0.20 m
+  above the floor) and the crates (0.30 m). Until 2026-10-09 it was 5 cm lower; see
+  [claude/manual.md](claude/manual.md#2026-10-09--lidar-frontal-5-cm-mais-alto-13-cm-do-chão)
 
 ### Nav2 configuration (summary)
 
 [config/nav2_params.yaml](agrobot_webots/config/nav2_params.yaml):
 - No map. `global_frame: odom` everywhere. Both costmaps are rolling windows (local 4×4 m,
-  global 12×12 m, 5 cm cells).
+  global 24×24 m, 5 cm cells). Goals must be inside the global window (up to ~12 m away).
 - Layers: `obstacle_layer` (from `/scan`) + `inflation_layer` (radius 0.7 m).
 - Footprint 1.2 × 1.12 m (chassis length × outer wheel width).
 - Planner: NavFn. Controller: Regulated Pure Pursuit, 0.4 m/s, rotate-to-heading on.
@@ -278,7 +337,8 @@ In Gazebo, the robot uses the `gz-sim-diff-drive-system` plugin and the tall `li
 
 ## Next steps
 
-1. Test `ekf:=true slam:=true` in Webots. Then decide whether Nav2 should plan in `map`
+1. Check `ekf:=true slam:=true` in RViz on Windows/WSL (so far it only ran headless in the
+   cloud). Then decide whether Nav2 should plan in `map`
    (global costmap with the SLAM map) and whether to add RTAB-Map with the RGB-D camera
    (plan in [claude/estudo_vslam.md](claude/estudo_vslam.md)).
 2. Move the Nav2 setup to the vineyard world (rows, longer distances).

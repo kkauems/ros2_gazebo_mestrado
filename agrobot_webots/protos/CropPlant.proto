@@ -1,0 +1,149 @@
+#VRML_SIM R2025a utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# Planta de lavoura parecida com milho, para o mundo plantation_field.wbt.
+# Só o colmo tem boundingObject (o robô bate nele); as folhas são só visuais,
+# mas o LiDAR do Webots enxerga tudo o que é desenhado, inclusive as folhas.
+# A origem fica no chão, na base do colmo.
+# template language: javascript
+
+PROTO CropPlant [
+  field SFVec3f    translation   0 0 0
+  field SFRotation rotation      0 0 1 0
+  field SFString   name          "crop plant"
+  field SFFloat    height        1.4    # Altura do colmo (m).
+  field SFFloat    stalkRadius   0.02   # Raio do colmo na base (m).
+  field SFInt32    leafCount     8      # Número de folhas.
+  field SFFloat    leafLength    0.55   # Comprimento da maior folha (m).
+  field SFInt32    seed          1      # Varia o ângulo e a curvatura das folhas.
+  field SFColor    color         0.33 0.52 0.16
+]
+{
+  %<
+    const height = Math.max(fields.height.value, 0.2);
+    const radius = Math.max(fields.stalkRadius.value, 0.005);
+    const leafCount = Math.max(fields.leafCount.value, 0);
+    const leafLength = Math.max(fields.leafLength.value, 0.05);
+
+    // Gerador pseudoaleatório simples e determinístico (LCG).
+    let state = (fields.seed.value * 2654435761) % 4294967296;
+    if (state < 0)
+      state += 4294967296;
+    function random() {
+      state = (1664525 * state + 1013904223) % 4294967296;
+      return state / 4294967296;
+    }
+
+    // Folha: fita que sai do colmo, sobe e depois arqueia para baixo.
+    function leaf(zBase, angle, length, width, lift) {
+      const segments = 6;
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+      let points = [];
+      for (let i = 0; i <= segments; ++i) {
+        const t = i / segments;
+        const r = radius + length * t;
+        const z = zBase + length * (lift * t - (lift + 0.35) * t * t);
+        const w = width * Math.sin(Math.PI * Math.min(0.15 + t, 1.0)) * (1.0 - 0.7 * t);
+        // Perpendicular à direção da folha, no plano horizontal.
+        points.push([r * cosA - w * sinA, r * sinA + w * cosA, z]);
+        points.push([r * cosA + w * sinA, r * sinA - w * cosA, z]);
+      }
+      return points;
+    }
+
+    let coords = '';
+    let indices = '';
+    let offset = 0;
+    for (let k = 0; k < leafCount; ++k) {
+      const fraction = (k + 1) / (leafCount + 1);
+      const zBase = height * (0.22 + 0.68 * fraction);
+      // Folhas alternadas (filotaxia dística) com um pouco de variação.
+      const angle = (k % 2) * Math.PI + (random() - 0.5) * 0.9;
+      const length = leafLength * (0.65 + 0.35 * Math.sin(Math.PI * Math.min(fraction + 0.15, 1.0))) * (0.85 + 0.3 * random());
+      const width = 0.035 + 0.015 * random();
+      const lift = 0.45 + 0.4 * random();
+      const points = leaf(zBase, angle, length, width, lift);
+      for (const p of points)
+        coords += `${p[0].toFixed(4)} ${p[1].toFixed(4)} ${p[2].toFixed(4)}, `;
+      for (let i = 0; i < points.length / 2 - 1; ++i) {
+        const a = offset + 2 * i;
+        // As duas faces: o IndexedFaceSet do Webots só desenha um lado.
+        indices += `${a} ${a + 1} ${a + 3} ${a + 2} -1, ${a} ${a + 2} ${a + 3} ${a + 1} -1, `;
+      }
+      offset += points.length;
+    }
+  >%
+  Solid {
+    translation IS translation
+    rotation IS rotation
+    name IS name
+    model "crop plant"
+    children [
+      Pose {
+        translation 0 0 %<= (height / 2).toFixed(4) >%
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor %<= (fields.color.value.r * 0.85).toFixed(3) >% %<= (fields.color.value.g * 0.9).toFixed(3) >% %<= (fields.color.value.b * 0.8).toFixed(3) >%
+              roughness 0.9
+              metalness 0
+            }
+            geometry Cylinder {
+              height %<= height.toFixed(4) >%
+              radius %<= radius.toFixed(4) >%
+              subdivision 8
+            }
+          }
+        ]
+      }
+      Pose {
+        translation 0 0 %<= (height + 0.08).toFixed(4) >%
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.72 0.62 0.32
+              roughness 1
+              metalness 0
+            }
+            geometry Cone {
+              bottomRadius %<= (radius * 1.5).toFixed(4) >%
+              height 0.16
+              subdivision 6
+            }
+          }
+        ]
+      }
+      %< if (leafCount > 0) { >%
+      Shape {
+        appearance PBRAppearance {
+          baseColor IS color
+          roughness 0.8
+          metalness 0
+        }
+        geometry IndexedFaceSet {
+          creaseAngle 0.8
+          coord Coordinate {
+            point [
+              %<= coords >%
+            ]
+          }
+          coordIndex [
+            %<= indices >%
+          ]
+        }
+      }
+      %< } >%
+    ]
+    boundingObject Pose {
+      translation 0 0 %<= (height / 2).toFixed(4) >%
+      children [
+        Cylinder {
+          height %<= height.toFixed(4) >%
+          radius %<= radius.toFixed(4) >%
+        }
+      ]
+    }
+    locked TRUE
+  }
+}

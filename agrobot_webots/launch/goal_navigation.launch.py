@@ -36,6 +36,7 @@ def generate_launch_description():
                 'nav': 'false',
                 'rviz': 'false',
                 'ekf': LaunchConfiguration('ekf'),
+                'world': LaunchConfiguration('world'),
             }.items(),
         ),
     ])
@@ -58,6 +59,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument('world', default_value='obstacle_arena.wbt'),
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('ekf', default_value='false'),
         simulation,
