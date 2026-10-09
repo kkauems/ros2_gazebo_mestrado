@@ -13,6 +13,7 @@
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>navigation2</exec_depend>
   <exec_depend>rclpy</exec_depend>
@@ -21,6 +22,7 @@
   <exec_depend>rosgraph_msgs</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>webots_ros2_driver</exec_depend>
 

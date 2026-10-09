@@ -15,6 +15,15 @@ IMU_ORIENTATION_VARIANCE = 0.0004   # (0.02 rad)^2, ~1 grau
 IMU_GYRO_VARIANCE = 0.0001          # (0.01 rad/s)^2
 IMU_ACCEL_VARIANCE = 0.01           # (0.1 m/s^2)^2
 
+# Desvio-padrão das velocidades das rodas em /wheel/odom: um piso pequeno
+# mais uma parte proporcional ao movimento (como o modelo de odometria do
+# Probabilistic Robotics). Parado, o EKF quase não acumula incerteza; andando,
+# ela cresce mais ao longo do movimento (vx) do que de lado (vy).
+WHEEL_STD_FLOOR = 0.002             # m/s
+WHEEL_VX_STD_PER_SPEED = 0.10       # 10% de |v|
+WHEEL_VY_STD_PER_SPEED = 0.05       # deriva lateral: 5% de |v| ...
+WHEEL_VY_STD_PER_TURN = 0.05        # ... + 0,05 m/s por rad/s (skid-steer)
+
 WHEEL_JOINTS = [
     'front_left_wheel_joint',
     'rear_left_wheel_joint',
@@ -326,16 +335,21 @@ class AgrobotDriver:
         odom.pose.pose.position.y = self.wheel_y
         odom.pose.pose.orientation.z = math.sin(self.wheel_yaw / 2.0)
         odom.pose.pose.orientation.w = math.cos(self.wheel_yaw / 2.0)
-        if dt > 0.0:
-            odom.twist.twist.linear.x = d_center / dt
-            odom.twist.twist.angular.z = d_yaw / dt
-        # O EKF usa só vx e vy daqui. vy = 0 com variância pequena é a
-        # restrição de que o robô não anda de lado. O giro das rodas erra
-        # muito (skid-steer derrapa), por isso a variância alta em wz.
+        v = d_center / dt if dt > 0.0 else 0.0
+        w = d_yaw / dt if dt > 0.0 else 0.0
+        odom.twist.twist.linear.x = v
+        odom.twist.twist.angular.z = w
+        # O EKF usa só vx e vy daqui. vy = 0 é a restrição de que o robô não
+        # anda de lado; a variância diz quanto ele pode derrapar. O giro das
+        # rodas erra muito (skid-steer derrapa), por isso a variância alta em
+        # wz. A pose fica com variância fixa: o EKF não a usa.
+        std_vx = WHEEL_STD_FLOOR + WHEEL_VX_STD_PER_SPEED * abs(v)
+        std_vy = (WHEEL_STD_FLOOR + WHEEL_VY_STD_PER_SPEED * abs(v)
+                  + WHEEL_VY_STD_PER_TURN * abs(w))
         odom.pose.covariance[0] = 0.01
         odom.pose.covariance[7] = 0.01
         odom.pose.covariance[35] = 0.5
-        odom.twist.covariance[0] = 0.005
-        odom.twist.covariance[7] = 0.001
+        odom.twist.covariance[0] = std_vx ** 2
+        odom.twist.covariance[7] = std_vy ** 2
         odom.twist.covariance[35] = 0.5
         self.wheel_odom_publisher.publish(odom)

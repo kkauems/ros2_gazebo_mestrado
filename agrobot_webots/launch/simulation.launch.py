@@ -11,10 +11,13 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
-from launch.events import Shutdown
+from launch.events import Shutdown, matches_action
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import Node
+from launch_ros.actions import LifecycleNode, Node
+from launch_ros.event_handlers import OnStateTransition
+from launch_ros.events.lifecycle import ChangeState
+from lifecycle_msgs.msg import Transition
 from ament_index_python.packages import get_package_share_directory
 from webots_ros2_driver.webots_launcher import WebotsLauncher
 from webots_ros2_driver.webots_controller import WebotsController
@@ -98,20 +101,82 @@ def generate_launch_description():
         }],
     )
 
+    # SLAM com o LiDAR: /map, map -> odom e /pose (com covariância do scan
+    # matching). O nó é lifecycle: o launch o configura e ativa.
+    slam = IfCondition(LaunchConfiguration('slam'))
+    slam_toolbox = LifecycleNode(
+        package='slam_toolbox',
+        executable='async_slam_toolbox_node',
+        name='slam_toolbox',
+        namespace='',
+        output='screen',
+        parameters=[
+            os.path.join(webots_share, 'config', 'slam_toolbox.yaml'),
+            {'use_sim_time': True},
+        ],
+        condition=slam,
+    )
+    slam_configure = EmitEvent(
+        event=ChangeState(
+            lifecycle_node_matcher=matches_action(slam_toolbox),
+            transition_id=Transition.TRANSITION_CONFIGURE,
+        ),
+        condition=slam,
+    )
+    slam_activate = RegisterEventHandler(
+        OnStateTransition(
+            target_lifecycle_node=slam_toolbox,
+            start_state='configuring',
+            goal_state='inactive',
+            entities=[EmitEvent(event=ChangeState(
+                lifecycle_node_matcher=matches_action(slam_toolbox),
+                transition_id=Transition.TRANSITION_ACTIVATE,
+            ))],
+        ),
+        condition=slam,
+    )
+
+    # Rodas + IMU + pose do slam_toolbox -> /odometry/map (a elipse no frame
+    # map). Os serviços ganham prefixo para não colidir com o ekf_filter_node.
+    ekf_map_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_map_node',
+        output='screen',
+        parameters=[
+            os.path.join(webots_share, 'config', 'ekf_map.yaml'),
+            {'use_sim_time': True},
+        ],
+        remappings=[
+            ('odometry/filtered', '/odometry/map'),
+            ('set_pose', '/ekf_map_node/set_pose'),
+            ('enable', '/ekf_map_node/enable'),
+            ('reset', '/ekf_map_node/reset'),
+            ('toggle', '/ekf_map_node/toggle'),
+        ],
+        condition=slam,
+    )
+
     navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(webots_share, 'launch', 'navigation.launch.py')),
         condition=IfCondition(LaunchConfiguration('nav')),
     )
 
-    rviz = Node(
-        package='rviz2',
-        executable='rviz2',
-        arguments=['-d', os.path.join(webots_share, 'rviz', 'nav.rviz')],
-        parameters=[{'use_sim_time': True}],
-        output='screen',
-        condition=IfCondition(LaunchConfiguration('rviz')),
-    )
+    def start_rviz(context):
+        # Com slam, o RViz usa o frame map e mostra o /map e as elipses.
+        slam_on = LaunchConfiguration('slam').perform(context).lower() == 'true'
+        config = 'nav_slam.rviz' if slam_on else 'nav.rviz'
+        return [Node(
+            package='rviz2',
+            executable='rviz2',
+            arguments=['-d', os.path.join(webots_share, 'rviz', config)],
+            parameters=[{'use_sim_time': True}],
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('rviz')),
+        )]
+
+    rviz = OpaqueFunction(function=start_rviz)
 
     shutdown_on_webots_exit = RegisterEventHandler(
         event_handler=OnProcessExit(
@@ -124,10 +189,15 @@ def generate_launch_description():
         DeclareLaunchArgument('nav', default_value='true'),
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('ekf', default_value='false'),
+        DeclareLaunchArgument('slam', default_value='false'),
         webots,
         agrobot_driver,
         robot_state_publisher,
         ekf_node,
+        slam_toolbox,
+        slam_configure,
+        slam_activate,
+        ekf_map_node,
         navigation,
         rviz,
         shutdown_on_webots_exit,

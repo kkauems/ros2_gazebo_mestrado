@@ -20,7 +20,8 @@ reactive obstacle avoidance and stability tests).
 | Goal from RViz without Nav2 or map: odometry only, avoids what is in front (`goal_navigator`) | Webots | New on 2026-10-06, tested only in a 2D Python simulation |
 | `robot_localization` EKF (wheels + IMU) as the `/odom` source, `ekf:=true` | Webots | New on 2026-10-07, tested with Nav2 against a Python stand-in for Webots, not yet in Webots |
 | `/clock` from Webots sim time | Webots | New on 2026-10-07 |
-| Mapping / SLAM / AMCL / GPS / VSLAM | — | Not done. Navigation happens in the `odom` frame. VSLAM study: [claude/estudo_vslam.md](claude/estudo_vslam.md) |
+| Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08, tested against a Python stand-in for Webots, not yet in Webots |
+| AMCL / GPS / VSLAM | — | Not done. Nav2 still plans in the `odom` frame. VSLAM study: [claude/estudo_vslam.md](claude/estudo_vslam.md) |
 | `cmd_vel` / `odom` / `scan` bridge | Gazebo | Works (from the earlier commits) |
 | Reactive obstacle avoidance node | Gazebo | Code exists, but see [Known issues](#known-issues) |
 | Roll/pitch stability monitor | Gazebo | Code exists, no entry point yet |
@@ -43,7 +44,10 @@ agrobot_webots/          Webots simulation + Nav2 (ament_python)
   agrobot_webots/goal_navigator.py  goes to the RViz goal, avoids obstacles in front
   config/nav2_params.yaml  Nav2 parameters (map-free, odom frame)
   config/ekf.yaml          robot_localization EKF (wheels + IMU), used with ekf:=true
+  config/slam_toolbox.yaml slam_toolbox (lidar SLAM), used with slam:=true
+  config/ekf_map.yaml      map-frame EKF (wheels + IMU + slam_toolbox pose), used with slam:=true
   rviz/nav.rviz            RViz config with the "Nav2 Goal" tool
+  rviz/nav_slam.rviz       same, Fixed Frame map, with /map and the covariance ellipses (slam:=true)
   rviz/goal.rviz           RViz config for goal_navigator ("2D Goal Pose" tool)
 agrobot_gazebo/          Gazebo Harmonic worlds (.sdf) and launch files (ament_cmake)
 agrobot_control/         Gazebo-era nodes: obstacle_avoidance.py, stability_monitor.py
@@ -58,7 +62,8 @@ claude/                  Notes for/from Claude: instructions.md (plan + status),
 
 ```bash
 sudo apt install ros-jazzy-webots-ros2 ros-jazzy-navigation2 ros-jazzy-rviz2 \
-                 ros-jazzy-robot-state-publisher ros-jazzy-robot-localization ros-jazzy-ros-gz
+                 ros-jazzy-robot-state-publisher ros-jazzy-robot-localization \
+                 ros-jazzy-slam-toolbox ros-jazzy-ros-gz
 ```
 
 Webots runs on Windows. `webots_ros2_driver` finds it through `WEBOTS_HOME`, so that
@@ -94,13 +99,15 @@ Launch arguments:
 | Argument | Default | Effect |
 |---|---|---|
 | `nav` | `true` | Start the Nav2 servers (`navigation.launch.py`) |
-| `rviz` | `true` | Start RViz with `rviz/nav.rviz` |
+| `rviz` | `true` | Start RViz with `rviz/nav.rviz` (`rviz/nav_slam.rviz` with `slam:=true`) |
 | `ekf` | `false` | `true`: the `robot_localization` EKF fuses `/wheel/odom` + `/imu/data` and publishes `/odom` and TF `odom → base_link` (the driver stops publishing them). `goal_navigation.launch.py` takes the same argument |
+| `slam` | `false` | `true`: `slam_toolbox` builds `/map` from `/scan` and publishes TF `map → odom` and `/pose`; `ekf_map_node` fuses `/wheel/odom` + `/imu/data` + `/pose` into `/odometry/map`. RViz shows the map and the `/odometry/map` covariance ellipse (magnified 20×); an `/odom` ellipse for comparison is in the Displays panel, off by default and meaningful only with `ekf:=true`. Nav2 still plans in `odom`. Works with `ekf:=true` or `false` |
 
 Examples:
 
 ```bash
 ros2 launch agrobot_webots simulation.launch.py ekf:=true                 # Nav2 on the EKF odometry
+ros2 launch agrobot_webots simulation.launch.py ekf:=true slam:=true      # + lidar SLAM and the map-frame ellipse
 ros2 launch agrobot_webots simulation.launch.py nav:=false rviz:=false   # robot only
 ros2 launch agrobot_webots navigation.launch.py                          # Nav2 alone, in another terminal
 ```
@@ -167,6 +174,8 @@ ros2 lifecycle get /bt_navigator        # should be "active [3]"
                                                      │            /wheel/odom, /imu/data, /clock,
                                                      │            /scan, /joint_states
 ekf_filter_node (ekf:=true) ◄── /wheel/odom, /imu/data   ──► /odom, TF odom→base_link
+slam_toolbox (slam:=true)   ◄── /scan, TF odom→base_link ──► /map, /pose, TF map→odom
+ekf_map_node (slam:=true)   ◄── /wheel/odom, /imu/data, /pose ──► /odometry/map (no TF)
 robot_state_publisher ◄── /joint_states             ─┘
    (URDF static TF: base_link → wheels, lidars, imu, ...)
 
@@ -185,7 +194,10 @@ Nav2:  bt_navigator → planner_server (NavFn) → controller_server (Regulated 
 | `/clock` | `rosgraph_msgs/Clock` | AgrobotDriver | Webots sim time, every step |
 | `/scan` | `sensor_msgs/LaserScan` | AgrobotDriver | frame `front_lidar_link`, 300 rays, 3.0 rad FOV, 0.1–8 m, sensor-data QoS |
 | `/joint_states` | `sensor_msgs/JointState` | AgrobotDriver | 4 wheel positions |
-| `/tf` | | AgrobotDriver or EKF, robot_state_publisher | `odom → base_link` is dynamic, the rest is static |
+| `/map` | `nav_msgs/OccupancyGrid` | slam_toolbox (`slam:=true`) | 0.05 m cells, transient local, every 5 s |
+| `/pose` | `geometry_msgs/PoseWithCovarianceStamped` | slam_toolbox (`slam:=true`) | frame `map`, one per processed scan, scan-matching covariance |
+| `/odometry/map` | `nav_msgs/Odometry` | ekf_map_node (`slam:=true`) | frame `map`: wheels + IMU + `/pose`; the ellipse shown in RViz |
+| `/tf` | | AgrobotDriver or EKF, robot_state_publisher, slam_toolbox | `map → odom` (slam) and `odom → base_link` are dynamic, the rest is static |
 
 All messages are stamped with **Webots simulation time** (`robot.getTime()`), and the
 nodes run with `use_sim_time: true`, except `goal_navigator`. Since 2026-10-07 the driver
@@ -237,7 +249,9 @@ In Gazebo, the robot uses the `gz-sim-diff-drive-system` plugin and the tall `li
 - **Odometry drift.** Skid-steer wheels slip sideways in turns, and the encoders can't
   see it. Expect about 0.3 m position error per goal and about 0.4 m after a round trip.
   The EKF (`ekf:=true`) doesn't remove this: slip is invisible to wheels and IMU alike.
-  Fix: a global reference (VSLAM, SLAM, GPS) publishing `map → odom`.
+  `slam:=true` corrects it in the `map` frame (`map → odom`), but Nav2 still plans and
+  takes goals in `odom`: a goal clicked in the `map` frame is converted to `odom` once,
+  when Nav2 accepts it.
 - **`odom` is relative to the spawn point.** Goals don't refer to fixed world positions.
   Moving the spawn pose in the `.wbt` moves the whole goal frame.
 - **Orphan Nav2 processes.** If you kill `ros2 launch` with SIGKILL, leftover nodes (e.g.
@@ -264,9 +278,9 @@ In Gazebo, the robot uses the `gz-sim-diff-drive-system` plugin and the tall `li
 
 ## Next steps
 
-1. Test `ekf:=true` in Webots, then a global reference with a `map` frame: RTAB-Map with
-   the RGB-D camera (plan in [claude/estudo_vslam.md](claude/estudo_vslam.md)) or
-   slam_toolbox with the lidar.
+1. Test `ekf:=true slam:=true` in Webots. Then decide whether Nav2 should plan in `map`
+   (global costmap with the SLAM map) and whether to add RTAB-Map with the RGB-D camera
+   (plan in [claude/estudo_vslam.md](claude/estudo_vslam.md)).
 2. Move the Nav2 setup to the vineyard world (rows, longer distances).
 3. Fix the `agrobot_control` package layout. Decide whether the reactive avoider is still
    needed alongside Nav2.

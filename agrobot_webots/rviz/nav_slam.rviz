@@ -1,0 +1,164 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Tool Properties
+    Name: Tool Properties
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Reference Frame: <Fixed Frame>
+      Plane Cell Count: 20
+      Cell Size: 1
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      # Translúcido para a elipse de covariância aparecer por baixo.
+      Alpha: 0.5
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Topic:
+        Value: /scan
+        Reliability Policy: Best Effort
+      Size (m): 0.04
+      Color Transformer: FlatColor
+      Color: 255; 0; 0
+    - Class: rviz_default_plugins/Map
+      Name: SLAM Map
+      Enabled: true
+      Topic:
+        Value: /map
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+      Color Scheme: map
+      Alpha: 0.7
+      Draw Behind: true
+    - Class: rviz_default_plugins/Map
+      Name: Global Costmap
+      Enabled: true
+      Topic:
+        Value: /global_costmap/costmap
+      Color Scheme: costmap
+      Alpha: 0.3
+    - Class: rviz_default_plugins/Map
+      Name: Local Costmap
+      Enabled: true
+      Topic:
+        Value: /local_costmap/costmap
+      Color Scheme: costmap
+      Alpha: 0.5
+    - Class: rviz_default_plugins/Polygon
+      Name: Footprint
+      Enabled: true
+      Topic:
+        Value: /local_costmap/published_footprint
+      Color: 0; 255; 0
+    - Class: rviz_default_plugins/Path
+      Name: Global Plan
+      Enabled: true
+      Topic:
+        Value: /plan
+      Color: 0; 120; 255
+    - Class: rviz_default_plugins/Odometry
+      Name: Odometry
+      Enabled: true
+      # Sem as elipses de covariância: com o EKF a incerteza de x/y cresce
+      # sem limite (não há referência absoluta) e elas cobrem o mapa.
+      Covariance:
+        Value: false
+      Topic:
+        Value: /odom
+      Keep: 50
+      Shape:
+        Value: Arrow
+    # Elipses de covariância ampliadas 20x (Scale = 20 desvios-padrão): com o
+    # SLAM a incerteza fica em poucos centímetros, menor que o robô.
+    # Keep 1 e tolerâncias 0: só a pose atual, atualizada também parado.
+    - Class: rviz_default_plugins/Odometry
+      Name: Elipse map (SLAM)
+      Enabled: true
+      Topic:
+        Value: /odometry/map
+      Keep: 1
+      Position Tolerance: 0
+      Angle Tolerance: 0
+      Shape:
+        Value: Arrow
+        Color: 0; 255; 255
+        Alpha: 1
+        Shaft Length: 0.5
+        Shaft Radius: 0.03
+        Head Length: 0.15
+        Head Radius: 0.07
+      Covariance:
+        Value: true
+        Position:
+          Value: true
+          Color: 0; 255; 255
+          Alpha: 0.5
+          Scale: 20
+        Orientation:
+          Value: false
+    # Para comparar: a elipse do /odom (só rodas + IMU). Desligada por padrão.
+    # Só faz sentido com ekf:=true: com ekf:=false o driver publica covariância
+    # fixa (0,01 m²) e a elipse vira um disco constante de 4 m.
+    - Class: rviz_default_plugins/Odometry
+      Name: Elipse odom (sem SLAM)
+      Enabled: false
+      Topic:
+        Value: /odom
+      Keep: 1
+      Position Tolerance: 0
+      Angle Tolerance: 0
+      Shape:
+        Value: Arrow
+        Color: 255; 170; 0
+        Alpha: 0
+        Shaft Length: 0.5
+        Shaft Radius: 0.03
+        Head Length: 0.15
+        Head Radius: 0.07
+      Covariance:
+        Value: true
+        Position:
+          Value: true
+          Color: 255; 170; 0
+          Alpha: 0.35
+          Scale: 20
+        Orientation:
+          Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 80
+      X: 0
+      Y: 0
+    Saved: ~
+Window Geometry:
+  Width: 1400
+  Height: 900
