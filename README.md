@@ -275,7 +275,7 @@ Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
 - `Lidar` named `front_lidar` at (0.65, 0, -0.15) from `base_link`. `base_link` rests
   0.23–0.24 m above the ground, so the scan plane is about 8 cm above the floor (measured in
   Webots on 2026-10-09; z = 0.14 m in the arena's world frame, whose floor top is at
-  z = 0.05). It sees the boxes (0.15 m above the floor) and the crates (0.25 m)
+  z = 0.05). It sees the boxes (0.20 m above the floor) and the crates (0.25 m)
 
 ### Nav2 configuration (summary)
 

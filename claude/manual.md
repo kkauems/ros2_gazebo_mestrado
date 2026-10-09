@@ -920,8 +920,9 @@ Objetivos de exemplo no frame `odom`: `(10.5, 0)` percorre a entrelinha do meio,
     mundo e o Nav2 aborta. Troquei por `(2.6, 0.6)`, que termina em SUCCEEDED;
   - o LiDAR fica a cerca de 8 cm do chão, não 14 cm. O 0,14 m é a altura no frame do
     mundo da arena, cujo piso está em z = 0,05. Medido no Webots: `base_link` a
-    0,23–0,24 m do chão, LiDAR 0,15 m abaixo dele. As caixas sobem 0,15 m e os caixotes
-    0,25 m acima do piso.
+    0,23–0,24 m do chão, LiDAR 0,15 m abaixo dele. As caixas ficam 0,20 m acima do piso
+    (no arquivo elas estão 5 cm dentro do piso, mas a física as levanta no primeiro
+    segundo) e os caixotes 0,25 m (eles não têm física e ficam 5 cm enterrados).
 
 **O mundo** (x ao longo das fileiras, frame do mundo)
 - Solo: `ElevationGrid` de 18 × 16 m com células de 10 cm e textura `Soil`, e grama em
@@ -986,8 +987,8 @@ limpar os costmaps antes (comandos no README).
 
 **Opções para depois** (nenhuma foi aplicada; o robô não mudou)
 1. Subir o LiDAR uns 5 cm (z de -0,15 para -0,10 em `agrobot.proto` e no URDF). Foi a
-   opção que funcionou nos testes, e a arena continua igual. A folga para as caixas da
-   arena (0,15 m) fica pequena, ~2 cm, e no robô real a altura tem que bater.
+   opção que funcionou nos testes, e o Nav2 continuou chegando aos objetivos da arena. No
+   robô real a altura tem que bater.
 2. LiDAR 3D, ou LiDAR inclinado, com filtragem do chão. É o que se usa em campo, mas exige
    mudar o pipeline do costmap (nuvem de pontos, filtro de solo).
 3. No mundo: menos obstáculos nas entrelinhas, ou `--roughness` menor.
