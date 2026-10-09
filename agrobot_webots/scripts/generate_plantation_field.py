@@ -39,10 +39,10 @@ PLANT_SPACING = 0.3     # entre plantas na fileira
 MISSING_PLANTS = 0.08   # fração de falhas na fileira
 
 # Relevo (m).
-# O LiDAR do Agrobot fica a ~8 cm do chão. Ondas de 5 a 12 m com 2 cm já
-# fazem o feixe bater no chão à frente e o Nav2 marcar obstáculo na
-# entrelinha (testado). Por isso a ondulação é longa (20 a 40 m): inclina o
-# robô sem curvar o chão à frente dele.
+# O mundo foi ajustado com o LiDAR do Agrobot a ~8 cm do chão (hoje ele fica
+# a ~13 cm). Com 8 cm, ondas de 5 a 12 m com 2 cm já faziam o feixe bater no
+# chão à frente e o Nav2 marcar obstáculo na entrelinha (testado). Por isso a
+# ondulação é longa (20 a 40 m): inclina o robô sem curvar o chão à frente.
 UNDULATION = 0.05       # ondulação suave (morros largos)
 UNDULATION_WAVELENGTH = (20.0, 40.0)
 ROUGHNESS = 0.004       # rugosidade fina

@@ -341,7 +341,10 @@
     <origin xyz="0.45 0 0.38" rpy="0 0 0"/>
   </joint>
 
-  <!-- SENSOR: LIDAR FRONTAL BAIXO (Webots/Nav2: vê caixas de 0.2 m) -->
+  <!-- SENSOR: LIDAR FRONTAL BAIXO (Webots/Nav2). Plano do scan a ~13 cm do
+       chão: vê as caixas (0,20 m) e os caixotes (0,30 m) da arena e passa por
+       cima dos torrões da plantation_field.wbt. Mesma pose do front_lidar no
+       agrobot.proto. -->
   <link name="front_lidar_link">
     <visual>
       <origin xyz="0 0 0"/>
@@ -355,7 +358,7 @@
   <joint name="front_lidar_joint" type="fixed">
     <parent link="base_link"/>
     <child link="front_lidar_link"/>
-    <origin xyz="0.65 0 -0.15" rpy="0 0 0"/>
+    <origin xyz="0.65 0 -0.10" rpy="0 0 0"/>
   </joint>
 
 <gazebo reference="lidar_link">
