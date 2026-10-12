@@ -84,7 +84,7 @@ local_costmap:
         scan:
           topic: /scan
           data_type: "LaserScan"
-          # O lidar fica 0.15 m abaixo de base_link (z<0 em odom).
+          # O lidar fica 0.10 m abaixo de base_link (z<0 em odom).
           min_obstacle_height: -1.0
           max_obstacle_height: 2.0
           clearing: true
@@ -126,7 +126,7 @@ global_costmap:
         scan:
           topic: /scan
           data_type: "LaserScan"
-          # O lidar fica 0.15 m abaixo de base_link (z<0 em odom).
+          # O lidar fica 0.10 m abaixo de base_link (z<0 em odom).
           min_obstacle_height: -1.0
           max_obstacle_height: 2.0
           clearing: true

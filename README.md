@@ -17,10 +17,10 @@ reactive obstacle avoidance and stability tests).
 | Wheel + IMU odometry (`/odom`, TF `odom → base_link`) | Webots | Works |
 | Low front lidar (`/scan`) that sees the crates and boxes | Webots | Works |
 | Nav2: click a goal in RViz and the robot drives there around obstacles | Webots | Works, tested on 2026-10-02 |
-| Goal from RViz without Nav2 or map: odometry only, avoids what is in front (`goal_navigator`) | Webots | New on 2026-10-06, tested only in a 2D Python simulation |
-| `robot_localization` EKF (wheels + IMU) as the `/odom` source, `ekf:=true` | Webots | New on 2026-10-07, tested with Nav2 against a Python stand-in for Webots, not yet in Webots |
+| Goal from RViz without Nav2 or map: odometry only, avoids what is in front (`goal_navigator`) | Webots | New on 2026-10-06. Run in Webots R2025a on Linux (headless) on 2026-10-09: reaches the arena goals, but doesn't get into the crop-field lanes (see [Plantation field](#plantation-field-world)). Not yet on Windows |
+| `robot_localization` EKF (wheels + IMU) as the `/odom` source, `ekf:=true` | Webots | New on 2026-10-07. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route, with `slam:=true`), not yet on Windows |
 | `/clock` from Webots sim time | Webots | New on 2026-10-07 |
-| Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08, tested against a Python stand-in for Webots, not yet in Webots |
+| Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route); the ellipse wasn't checked in RViz, not yet on Windows |
 | Crop-field test world (`plantation_field.wbt`): 6 plant rows, uneven ground, clods, stones and branches, `world:=plantation_field.wbt` | Webots | New on 2026-10-09, tested in Webots R2025a on Linux (headless) with the real driver, Nav2 and slam_toolbox, not yet on Windows. See [Plantation field](#plantation-field-world) |
 | AMCL / GPS / VSLAM | — | Not done. Nav2 still plans in the `odom` frame. VSLAM study: [claude/estudo_vslam.md](claude/estudo_vslam.md) |
 | `cmd_vel` / `odom` / `scan` bridge | Gazebo | Works (from the earlier commits) |
@@ -166,20 +166,22 @@ The world is generated. To change it, edit the parameters in
 `python3 agrobot_webots/scripts/generate_plantation_field.py` (`--roughness 2` for rougher
 ground, `--seed N` for another layout), then rebuild `agrobot_webots`.
 
-**The lidar limits how rough the ground can be.** `front_lidar` is a single horizontal
-plane about 8 cm above the ground. When the robot pitches over a clod or a stone, the plane
-hits the soil ahead and Nav2 marks it as an obstacle in the lane. Expect "collision ahead"
-stops and spin recoveries. In the cloud tests about 4 out of 5 goals succeeded (18 of 23);
-the others aborted, usually after a spin left the robot crosswise in the lane. Resend the
-goal, and if it keeps failing clear the costmaps first:
+**The lidar and the uneven ground.** `front_lidar` is a single horizontal plane about 13 cm
+above the ground. When the robot pitches over a clod or a stone, the plane can still hit the
+soil ahead, and Nav2 marks it as an obstacle in the lane, so expect some "collision ahead"
+stops. In the cloud tests, 4 runs of a 5-goal route through the lanes reached all 20 goals
+(with the earlier 8 cm lidar it was 18 of 23). If a goal aborts, resend it, and if it keeps
+failing clear the costmaps first:
 
 ```bash
 ros2 service call /global_costmap/clear_entirely_global_costmap nav2_msgs/srv/ClearEntireCostmap
 ros2 service call /local_costmap/clear_entirely_local_costmap nav2_msgs/srv/ClearEntireCostmap
 ```
 
-Measurements and options (for example a higher lidar) are in
-[claude/manual.md](claude/manual.md#2026-10-09--mundo-de-plantação-com-terreno-não-estruturado-plantation_fieldwbt).
+`goal_navigator` (below) does not get into the lanes: just before the first plants it
+reports an obstacle in the strip it needs free in front of the robot, and it gives up after
+40 s. It did the same with the 8 cm lidar; the cause wasn't investigated. Measurements are in
+[claude/manual.md](claude/manual.md#2026-10-09--lidar-frontal-5-cm-mais-alto-13-cm-do-chão).
 
 ### Goal without Nav2 (`goal_navigator`)
 
@@ -272,10 +274,11 @@ Set in the URDF `<webots><plugin>` block ([agrobot.urdf](agrobot_description/urd
 Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
 - `InertialUnit` `imu`, `Gyro` `gyro` and `Accelerometer` `accelerometer` at `imu_link`
   (0.35 m above `base_link`), published together on `/imu/data`
-- `Lidar` named `front_lidar` at (0.65, 0, -0.15) from `base_link`. `base_link` rests
-  0.23–0.24 m above the ground, so the scan plane is about 8 cm above the floor (measured in
-  Webots on 2026-10-09; z = 0.14 m in the arena's world frame, whose floor top is at
-  z = 0.05). It sees the boxes (0.20 m above the floor) and the crates (0.25 m)
+- `Lidar` named `front_lidar` at (0.65, 0, -0.10) from `base_link`. `base_link` rests
+  0.23–0.24 m above the ground, so the scan plane is about 13 cm above the floor (z = 0.18 m
+  in the arena's world frame, whose floor top is at z = 0.05). It sees the boxes (0.20 m
+  above the floor) and the crates (0.30 m). Until 2026-10-09 it was 5 cm lower; see
+  [claude/manual.md](claude/manual.md#2026-10-09--lidar-frontal-5-cm-mais-alto-13-cm-do-chão)
 
 ### Nav2 configuration (summary)
 
@@ -334,7 +337,8 @@ In Gazebo, the robot uses the `gz-sim-diff-drive-system` plugin and the tall `li
 
 ## Next steps
 
-1. Test `ekf:=true slam:=true` in Webots. Then decide whether Nav2 should plan in `map`
+1. Check `ekf:=true slam:=true` in RViz on Windows/WSL (so far it only ran headless in the
+   cloud). Then decide whether Nav2 should plan in `map`
    (global costmap with the SLAM map) and whether to add RTAB-Map with the RGB-D camera
    (plan in [claude/estudo_vslam.md](claude/estudo_vslam.md)).
 2. Move the Nav2 setup to the vineyard world (rows, longer distances).

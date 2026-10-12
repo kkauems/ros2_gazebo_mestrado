@@ -78,10 +78,11 @@ removed too.
 ### 2. Robot model — [agrobot.proto](../agrobot_webots/protos/agrobot.proto) and [agrobot.urdf](../agrobot_description/urdf/agrobot.urdf)
 
 **New low front lidar** (`front_lidar` in the PROTO, `front_lidar_link` in the URDF) at
-(0.65, 0, -0.15) from `base_link`: 3.0 rad (~172°) FOV, 300 rays, 0.1–8 m.
+(0.65, 0, -0.10) from `base_link`: 3.0 rad (~172°) FOV, 300 rays, 0.1–8 m.
 *Why:* the existing `lidar_link` sits about 0.57 m above the floor. The crates are 0.3 m
 tall and the boxes 0.2 m, so a lidar there sees **nothing** in this arena. The new one is
-about 0.14 m above the floor. It sits ahead of the wheels, and its FOV stays under 180°, so
+about 0.13 m above the floor. (It was at z = -0.15, about 0.08 m above the floor, until
+2026-10-09; see "LiDAR frontal 5 cm mais alto" in the change log.) It sits ahead of the wheels, and its FOV stays under 180°, so
 it never hits the robot's own wheels.
 *Why a new link instead of moving `lidar_link`:* Gazebo uses the same URDF and its
 `gpu_lidar` is attached to `lidar_link`. Leaving that link alone keeps the Gazebo setup
@@ -103,6 +104,10 @@ Gazebo. The Webots device sits on the robot's root body.
   *Why:* at (0, 0), the robot's 1.2 × 1.12 m footprint overlapped `plastic crate(4)` at
   (0.19, 0.37). It spawned inside an obstacle, and the costmap marked the robot's own
   position as lethal.
+- **Crates on the floor (2026-10-09).** The four `PlasticCrate` nodes are at z = 0.05, on
+  top of the floor. *Why:* at z = 0 they sat 5 cm inside the floor, and the lidar at
+  ~13 cm went through the openings in their walls. See "LiDAR frontal 5 cm mais alto" in
+  the change log.
 
 Side effect: `odom` starts at the spawn, so goals are relative to (-1.0, -0.3) in world
 coordinates.
@@ -141,7 +146,7 @@ Velocity chain (the standard Nav2 one):
 | NavFn planner with `allow_unknown` | Most of the rolling global costmap is unknown at the start |
 | Footprint 1.2 × 1.12 m | The wheels stick out past the chassis: y = ±0.48 ± 0.07, x = ±0.35 ± 0.22. The first estimate of 1.2 × 0.8 would let the wheels hit obstacles |
 | Inflation radius 0.7 m | Must be at least the inscribed radius (~0.56 m) or the planner routes too close to obstacles |
-| `min_obstacle_height: -1.0` at **both** layer and source level | The lidar is 0.15 m **below** `base_link`, so its points have z < 0 in `odom`. The default (0) filters them all out. Setting it only on the `scan` source was not enough: clearing worked but nothing was marked. The layer-level value is a separate filter |
+| `min_obstacle_height: -1.0` at **both** layer and source level | The lidar is 0.10 m **below** `base_link`, so its points have z < 0 in `odom`. The default (0) filters them all out. Setting it only on the `scan` source was not enough: clearing worked but nothing was marked. The layer-level value is a separate filter |
 | Goal tolerance 0.15 m / 0.3 rad, `stateful` goal checker | Reachable with this odometry quality. Once xy is reached, the robot only rotates to the final heading |
 | Velocity limits 0.5 m/s, 1.0 rad/s | Moderate speeds for a 1.2 m robot in a 5 m arena |
 
@@ -922,7 +927,8 @@ Objetivos de exemplo no frame `odom`: `(10.5, 0)` percorre a entrelinha do meio,
     mundo da arena, cujo piso está em z = 0,05. Medido no Webots: `base_link` a
     0,23–0,24 m do chão, LiDAR 0,15 m abaixo dele. As caixas ficam 0,20 m acima do piso
     (no arquivo elas estão 5 cm dentro do piso, mas a física as levanta no primeiro
-    segundo) e os caixotes 0,25 m (eles não têm física e ficam 5 cm enterrados).
+    segundo) e os caixotes 0,25 m (eles não têm física e ficavam 5 cm enterrados; corrigido
+    no registro seguinte).
 
 **O mundo** (x ao longo das fileiras, frame do mundo)
 - Solo: `ElevationGrid` de 18 × 16 m com células de 10 cm e textura `Soil`, e grama em
@@ -980,15 +986,16 @@ y = 1,8, travessia para y = -1,8 e ida até o fim)
 |---|---|---|---|
 | Padrão (LiDAR a ~8 cm), 5 rodadas, inclusive `ekf:=true slam:=true` | 18 de 23 | 63 a 438 | 1 a 7 |
 | LiDAR 5 cm mais alto (~13 cm), 2 rodadas | 10 de 10 | 55 e 104 | 0 |
-| Arena com o LiDAR a ~13 cm (regressão) | 2 de 2 | 52 (50 com o LiDAR atual) | |
+| Arena com o LiDAR a ~13 cm (regressão) | 2 de 2 | 52 (50 com o LiDAR a ~8 cm) | |
 
 Quando um objetivo aborta, mandar de novo costuma funcionar. Se continuar falhando,
 limpar os costmaps antes (comandos no README).
 
-**Opções para depois** (nenhuma foi aplicada; o robô não mudou)
+**Opções para depois** (nenhuma foi aplicada neste registro; o robô não mudou)
 1. Subir o LiDAR uns 5 cm (z de -0,15 para -0,10 em `agrobot.proto` e no URDF). Foi a
    opção que funcionou nos testes, e o Nav2 continuou chegando aos objetivos da arena. No
-   robô real a altura tem que bater.
+   robô real a altura tem que bater. **Aplicada no registro seguinte**, junto com uma
+   correção dos caixotes da arena.
 2. LiDAR 3D, ou LiDAR inclinado, com filtragem do chão. É o que se usa em campo, mas exige
    mudar o pipeline do costmap (nuvem de pontos, filtro de solo).
 3. No mundo: menos obstáculos nas entrelinhas, ou `--roughness` menor.
@@ -1009,3 +1016,122 @@ limpar os costmaps antes (comandos no README).
 
 **Não testado:** Windows/WSL, RViz, desempenho com GPU, o `goal_navigator` na
 plantação.
+
+### 2026-10-09 — LiDAR frontal 5 cm mais alto (~13 cm do chão)
+
+**Pedido.** No mundo da plantação (registro anterior), o LiDAR a ~8 cm do chão batia no
+solo quando o robô inclinava, e o Nav2 via obstáculos falsos nas entrelinhas. Kauê escolheu
+subir o LiDAR 5 cm no modelo do Webots.
+
+**Para usar**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt
+```
+O `agrobot_description` entra no build porque o URDF mudou.
+
+**O que mudou**
+- `agrobot_webots/protos/agrobot.proto`: `front_lidar` de z = -0,15 para z = -0,10 em
+  relação ao `base_link` (x = 0,65 não muda). O plano do scan fica a ~13 cm do chão
+  (13,1 cm medido na arena; antes, 8,1 cm).
+- `agrobot_description/urdf/agrobot.urdf`: `front_lidar_joint` com a mesma pose. O Nav2 e o
+  slam_toolbox projetam o `/scan` pelo TF, então o URDF tem que bater com o PROTO. O Gazebo
+  não usa esse link (o `gpu_lidar` dele fica no `lidar_link`), então lá nada muda.
+- `agrobot_webots/worlds/obstacle_arena.wbt`: os 4 caixotes (`PlasticCrate`) passam de
+  z = 0 para z = 0,05, em cima do piso. Explicação logo abaixo.
+- `agrobot_webots/config/nav2_params.yaml` e `scripts/generate_plantation_field.py`: só
+  comentários com a altura nova. O mundo gerado não muda (conferido byte a byte).
+- `README.md`: na lista de sensores, pose e altura do LiDAR e altura dos caixotes (0,25 →
+  0,30 m); na seção da plantação, os números novos do Nav2, uma nota sobre o
+  `goal_navigator` e o link para este registro; na tabela de estado, o `goal_navigator`, o
+  EKF e o SLAM agora aparecem como rodados no Webots (headless, na nuvem), e o passo 1 de
+  "Next steps" passa a ser conferir `ekf:=true slam:=true` no RViz.
+- Este manual: seção 2 (pose e altura do LiDAR), seção 3 (caixotes no piso), tabela da
+  seção 6 (LiDAR 0,10 m abaixo do `base_link`) e, no registro anterior, notas de que os
+  caixotes foram corrigidos e de que a opção 1 foi aplicada aqui.
+
+**Os caixotes da arena estavam enterrados.** O piso da arena é uma caixa de 0,1 m centrada em
+z = 0, com o topo em z = 0,05. O `PlasticCrate` tem a origem na base e não tem física, então
+com z = 0 ele ficava 5 cm dentro do piso. As paredes dele têm uma faixa de vãos de 16 a 22 cm
+acima da base (medido na malha do PROTO). Com o caixote enterrado, essa faixa ficava de 11 a
+17 cm acima do piso, exatamente onde o LiDAR novo passa. Com o LiDAR a 8 cm isso não
+aparecia. Agora os caixotes ficam 0,30 m acima do piso e os vãos começam a 16 cm, acima do
+LiDAR. As caixas de papelão também estão 5 cm dentro do piso no arquivo, mas têm física e
+sobem para cima dele no primeiro segundo de simulação; ficam 0,20 m acima do piso e não
+mudaram.
+
+**Medições**
+
+Arena, robô parado em 160 poses (grade de 0,4 m × 8 direções, longe dos obstáculos). Cada
+raio do scan é comparado com o objeto que ele deveria acertar (traçado 2D com as posições
+reais dos objetos). A tabela mostra a fração de raios que acertam:
+
+| | Caixas | Caixotes | Paredes |
+|---|---|---|---|
+| LiDAR a 8 cm (antes) | 98,6% | 98,9% | 99,7% |
+| LiDAR a 13 cm, caixotes enterrados | 98,6% | 74,1% (11% atravessam, 14% batem por dentro) | 99,7% |
+| LiDAR a 13 cm, caixotes no piso (esta mudança) | 98,6% | 98,9% | 99,7% |
+
+O 1,4% que falta nas caixas são raios que raspam as quinas, igual nas duas alturas.
+
+Plantação, percurso de ~10 m pelo centro de cada entrelinha (mesmo teste do registro
+anterior): pontos do scan que caem no chão da entrelinha a menos de 5 m, somados no
+percurso (~270 scans).
+
+| Entrelinha (y) | 0 | 1,8 | -1,8 | 3,6 | -3,6 |
+|---|---|---|---|---|---|
+| LiDAR a 8 cm | 651 | 429 | 258 | 447 | 676 |
+| LiDAR a 13 cm | 80 | 69 | 0 | 50 | 117 |
+
+Nav2 (rota de 5 objetivos na plantação; na arena, `(2.6, 0.6)` e depois `(0.5, -0.6, yaw π)`):
+
+| | Objetivos com SUCCEEDED | "collision ahead" por rota | Giros de recuperação |
+|---|---|---|---|
+| Plantação, LiDAR a 8 cm (registro anterior) | 18 de 23 | 63 a 438 | 1 a 7 |
+| Plantação, LiDAR a 13 cm, 3 rodadas + 1 com `ekf:=true slam:=true` | 20 de 20 | 49 a 109 | 0 a 2 |
+| Arena, LiDAR a 13 cm, caixotes no piso, 5 rodadas | 10 de 10 | 46 a 66 | 1 por rodada |
+| Arena, LiDAR a 8 cm, caixotes enterrados, 5 rodadas (comparação) | 10 de 10 | 51 a 56 | 1 por rodada |
+
+`goal_navigator` (uma rodada de cada):
+
+| | Arena: `(2.6, 0.6)`, `(0.5, -0.6, yaw π)` | Plantação: `(10.5, 0)`, `(0.5, 0, yaw π)` |
+|---|---|---|
+| LiDAR a 8 cm | 1º desiste (40 s sem progresso), 2º chega sem o giro final | 1º desiste, 2º chega sem o giro final |
+| LiDAR a 13 cm | 1º chega sem o giro final, 2º chega | 1º desiste, 2º chega sem o giro final |
+
+"Sem o giro final": o nó chegou à posição, mas avisou "Objetivo alcançado, mas sem espaço
+para girar até a orientação pedida".
+
+Na plantação, o `goal_navigator` não entra na entrelinha com nenhuma das duas alturas: ainda
+na cabeceira, antes das primeiras plantas, ele avisa "Obstáculo no caminho", desvia e para
+depois de 40 s sem progresso. Ele exige livre uma faixa de 1,32 m à frente do robô. O que
+ocupou essa faixa não foi investigado; como acontece igual com as duas alturas, não é efeito
+desta mudança.
+
+**Comportamento que já existia (não muda com esta mudança).** Na arena, depois de chegar a
+`(2.6, 0.6)` o Nav2 gira no lugar para ir até `(0.5, -0.6)`, e a quina do robô encosta na
+`cardboard box(2)` e a empurra de 2 a 10 cm. Aconteceu em todas as rodadas com o LiDAR novo
+e em 4 de 5 com o antigo. O LiDAR vê a caixa nos dois casos; o giro no lugar é que passa
+perto demais dela.
+
+**Limites**
+- No robô real, a altura de montagem do LiDAR tem que bater (~13 cm do chão).
+- As pedras grandes da plantação (topo de 15 a 23 cm) ficam só de 2 a 10 cm acima do plano
+  do scan. Com o robô inclinado, uma pedra baixa e longe pode sumir de alguns scans.
+- Com o LiDAR mais alto, dá para deixar a plantação mais difícil (`--roughness` maior ou
+  mais obstáculos). Não mexi no mundo.
+
+**Como foi validado** (nuvem Linux, sem GPU, mesmo ambiente do registro anterior)
+- Webots R2025a headless, driver real, Nav2 1.3.13, slam_toolbox 2.8.5,
+  robot_localization 3.8.3, com `agrobot_description` e `agrobot_webots` reconstruídos.
+- Para as comparações com o LiDAR antigo, o PROTO instalado foi trocado temporariamente pelo
+  do commit anterior, e o mundo da arena, pela versão com os caixotes enterrados.
+- Os objetos empurrados foram detectados comparando a posição de cada caixa e caixote no
+  começo e durante a rodada (pelo Supervisor).
+- Uma rodada da arena com o LiDAR novo não começou (o Nav2 não subiu: timeout de serviço
+  do DDS na nuvem, robô parado) e foi repetida.
+
+**Não testado:** Windows/WSL, RViz.

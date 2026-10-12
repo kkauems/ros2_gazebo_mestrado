@@ -41,7 +41,7 @@ PROTO agrobot [
         name "accelerometer"
       }
       Lidar {
-        translation 0.650000 0.000000 -0.150000
+        translation 0.650000 0.000000 -0.100000
         name "front_lidar"
         fieldOfView 3.0
         horizontalResolution 300
