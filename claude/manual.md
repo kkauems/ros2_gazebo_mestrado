@@ -873,3 +873,139 @@ ros2 launch agrobot_webots simulation.launch.py ekf:=true slam:=true
 ```
 No RViz, a elipse azul-clara é a do `/odometry/map`. Para salvar o mapa:
 `ros2 run nav2_map_server map_saver_cli -f ~/mapa_arena`.
+
+### 2026-10-09 — Mundo de plantação com terreno não estruturado (`plantation_field.wbt`)
+
+**Pedido.** Kauê pediu um mapa novo para testes que imite uma plantação em terreno não
+estruturado: várias fileiras de plantas e chão rugoso ou de travessia difícil. O padrão
+continua sendo a arena; a plantação é escolhida com o argumento `world`.
+
+**Para usar**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true slam:=true
+ros2 launch agrobot_webots goal_navigation.launch.py world:=plantation_field.wbt
+```
+Objetivos de exemplo no frame `odom`: `(10.5, 0)` percorre a entrelinha do meio,
+`(11.8, 1.8, yaw π)` faz a manobra de cabeceira e entra na entrelinha vizinha,
+`(0.5, 1.8, yaw π)` volta por ela.
+
+**O que mudou**
+- `agrobot_webots/protos/CropPlant.proto` (novo): planta parecida com milho, feita só com
+  geometria própria. Caule (cilindro), pendão (cone) e folhas em fita curvada
+  (`IndexedFaceSet` com as duas faces, porque o Webots não tem o campo `solid`). Campos
+  `height`, `leafCount`, `leafLength`, `seed` e `color`; o `seed` muda a posição das folhas.
+  Só o caule colide (`boundingObject`); as folhas são visuais, mas o LiDAR as vê, porque
+  ele enxerga tudo que é renderizado.
+- `agrobot_webots/scripts/generate_plantation_field.py` (novo): gera o mundo com semente
+  fixa (`--seed`, padrão 7). `--roughness` escala a rugosidade fina, as trilhas de roda e
+  os buracos (0 deixa só a ondulação e os camalhões). Os parâmetros ficam no topo do
+  arquivo; a posição do robô, das pedras grandes e da cerca saem dos parâmetros das
+  fileiras.
+- `agrobot_webots/worlds/plantation_field.wbt` (novo, gerado, 255 KiB): não editar à mão.
+- `agrobot_webots/launch/simulation.launch.py` e `goal_navigation.launch.py`: argumento
+  `world` (padrão `obstacle_arena.wbt`), arquivo dentro de `agrobot_webots/worlds/`. O
+  `goal_navigation.launch.py` repassa o argumento.
+- `agrobot_webots/config/nav2_params.yaml`: costmap global de 12 × 12 m para 24 × 24 m.
+  A janela é centrada no robô e o planner recusa objetivos fora dela: com 12 m, o fim da
+  entrelinha (10,5 m à frente) era recusado na hora (erro 204). A arena continua igual
+  nos testes.
+- `README.md`: seção "Plantation field world", argumento `world` na tabela, linha nova
+  no estado atual. Duas correções que apareceram nos testes:
+  - o objetivo de exemplo `(1.5, 1.0)` coloca o robô em cima do caixote em `(0.19, 0.37)` do
+    mundo e o Nav2 aborta. Troquei por `(2.6, 0.6)`, que termina em SUCCEEDED;
+  - o LiDAR fica a cerca de 8 cm do chão, não 14 cm. O 0,14 m é a altura no frame do
+    mundo da arena, cujo piso está em z = 0,05. Medido no Webots: `base_link` a
+    0,23–0,24 m do chão, LiDAR 0,15 m abaixo dele. As caixas ficam 0,20 m acima do piso
+    (no arquivo elas estão 5 cm dentro do piso, mas a física as levanta no primeiro
+    segundo) e os caixotes 0,25 m (eles não têm física e ficam 5 cm enterrados).
+
+**O mundo** (x ao longo das fileiras, frame do mundo)
+- Solo: `ElevationGrid` de 18 × 16 m com células de 10 cm e textura `Soil`, e grama em
+  volta. O relevo soma:
+  - ondulação larga (comprimento de onda de 20 a 40 m, até ~5 cm);
+  - rugosidade fina (4 mm, ondas de 0,6 a 2 m);
+  - camalhão de 5 cm sob cada fileira;
+  - trilhas de roda de 1 cm nas entrelinhas;
+  - buracos de 3 a 5 cm, um por entrelinha e dois nas cabeceiras.
+- Atrito roda–solo 0,7 (`ContactProperties` "soil"; o padrão do Webots é 1).
+  `maxContactJoints 50`: com 30 o Webots avisava que faltavam juntas de contato (o robô
+  chegou a ter 32 pontos).
+- 6 fileiras de `CropPlant` de 9 m (x = -4,5 a 4,5), a 1,8 m uma da outra (y = ±0,9, ±2,7,
+  ±4,5). Uma planta a cada 0,3 m com 8% de falhas, alturas de 0,9 a 1,6 m. As 5
+  entrelinhas ficam em y = 0, ±1,8, ±3,6.
+- Em cada entrelinha: 5 torrões, 2 pedras pequenas e 1 galho, todos abaixo do plano do
+  LiDAR (o robô passa por cima).
+- Seis pedras grandes (topo 15 a 23 cm acima do chão, o LiDAR vê): quatro nas cabeceiras e
+  duas nas margens laterais, em `(1.5, -5.4)` e `(-2.5, 5.5)`.
+- Cabeceiras de 2,5 m e cerca de mourões de madeira com dois fios em x = ±7,6, y = ±6,6.
+- Robô em `(-6, 0)`, virado para +x, no começo da entrelinha do meio. No `odom`, as
+  fileiras vão de x = 1,5 a 10,5 e a cabeceira do fundo fica em x ≈ 11,5–12,5.
+
+**O que mais pesou: o LiDAR a 8 cm do chão.** O `front_lidar` é um plano horizontal só, a
+~8 cm do solo. Quando o robô inclina, o plano bate no chão à frente e o Nav2 marca isso
+como obstáculo na entrelinha. O controlador (Regulated Pure Pursuit) para com "collision
+ahead", o Nav2 tenta o giro de recuperação numa entrelinha de 1,8 m, e às vezes o robô
+termina atravessado e o objetivo aborta (erro 104). A medida abaixo é o número de pontos
+do scan que caem no chão da entrelinha a menos de 5 m, somados num percurso de ~10 m
+(26 s a 0,4 m/s, controlador de teste seguindo o centro da entrelinha).
+
+| Variante | Entrelinha y = 0 | y = 1,8 | y = -1,8 | Inclinação máx. |
+|---|---|---|---|---|
+| Primeira versão: ondas de 2 cm com 5–12 m, rugosidade 6 mm, trilhas de 2 cm | 1003 | | | |
+| Primeira versão, LiDAR 5 cm mais alto (~13 cm) | 193 | | | |
+| Primeira versão, LiDAR 10 cm mais alto (~18 cm) | 3 | | | |
+| **Versão final** (padrão) | 651 | 429 | 258 | 4,9° |
+| Final com buracos rasos (1,5–2,5 cm) | 650 | 489 | 269 | 4,9° |
+| Final sem torrões, pedras e galhos | 42 | 0 | 114 | 0,9° |
+
+- Com a primeira versão o Nav2 não passava de 3 m dentro da entrelinha (0 de 2 objetivos).
+  Ondas de 5 a 12 m com 2 cm já inclinam o plano o bastante; por isso a ondulação final
+  é bem mais larga (20 a 40 m).
+- Na versão final, quem inclina o robô são os obstáculos da entrelinha (até 4,9°; sem
+  eles, 0,9°). A profundidade dos buracos não faz diferença. Nas entrelinhas de fora
+  (y = 3,6 e -3,6) a contagem é 447 e 676.
+- Mantive os obstáculos porque são eles que tornam a travessia difícil, que era o pedido.
+  Uma variante com menos obstáculos (3 torrões e 1 pedra por entrelinha) não foi
+  claramente melhor no Nav2 (8 de 10 objetivos).
+
+**Nav2 na plantação** (rota de 5 objetivos: entrelinha do meio, cabeceira, volta pela
+y = 1,8, travessia para y = -1,8 e ida até o fim)
+
+| Configuração | Objetivos com SUCCEEDED | "collision ahead" por rota | Giros de recuperação |
+|---|---|---|---|
+| Padrão (LiDAR a ~8 cm), 5 rodadas, inclusive `ekf:=true slam:=true` | 18 de 23 | 63 a 438 | 1 a 7 |
+| LiDAR 5 cm mais alto (~13 cm), 2 rodadas | 10 de 10 | 55 e 104 | 0 |
+| Arena com o LiDAR a ~13 cm (regressão) | 2 de 2 | 52 (50 com o LiDAR atual) | |
+
+Quando um objetivo aborta, mandar de novo costuma funcionar. Se continuar falhando,
+limpar os costmaps antes (comandos no README).
+
+**Opções para depois** (nenhuma foi aplicada; o robô não mudou)
+1. Subir o LiDAR uns 5 cm (z de -0,15 para -0,10 em `agrobot.proto` e no URDF). Foi a
+   opção que funcionou nos testes, e o Nav2 continuou chegando aos objetivos da arena. No
+   robô real a altura tem que bater.
+2. LiDAR 3D, ou LiDAR inclinado, com filtragem do chão. É o que se usa em campo, mas exige
+   mudar o pipeline do costmap (nuvem de pontos, filtro de solo).
+3. No mundo: menos obstáculos nas entrelinhas, ou `--roughness` menor.
+
+**Como foi validado** (nuvem Linux, sem GPU)
+- Webots R2025a headless rodando o mundo gerado, com o driver real (`AgrobotDriver`) num
+  processo auxiliar no lugar do `webots_ros2_driver`. ROS 2 Jazzy via RoboStack: Nav2
+  1.3.13, slam_toolbox 2.8.5, robot_localization 3.8.3. Launch real
+  `simulation.launch.py world:=plantation_field.wbt`.
+- O Webots carrega o mundo e o robô percorre as 5 entrelinhas sem erros nem avisos
+  (só os de rodar como root e de som). O robô não trava nem tomba: velocidade mínima de
+  0,37 m/s com comando de 0,4 m/s, rolagem máxima 4,3°.
+- Regressão na arena com o costmap de 24 m: objetivos `(2.6, 0.6)` e `(0.5, -0.6, yaw π)`
+  com SUCCEEDED.
+- `ament_flake8` e `ament_pep257` sem erros no script novo.
+- A CPU da nuvem é fraca (controlador a 4–10 Hz em vez de 20). Os números do Nav2 são
+  pessimistas.
+
+**Não testado:** Windows/WSL, RViz, desempenho com GPU, o `goal_navigator` na
+plantação.

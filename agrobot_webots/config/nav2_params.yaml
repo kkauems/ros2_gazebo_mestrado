@@ -108,8 +108,11 @@ global_costmap:
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
-      width: 12
-      height: 12
+      # Janela centrada no robô: o planner só aceita objetivos dentro dela
+      # (até 12 m do robô). Com 12 x 12 m, um objetivo no fim da fileira da
+      # plantation_field.wbt (10,5 m) era recusado na hora.
+      width: 24
+      height: 24
       resolution: 0.05
       track_unknown_space: true
       footprint: "[[0.6, 0.56], [0.6, -0.56], [-0.6, -0.56], [-0.6, 0.56]]"

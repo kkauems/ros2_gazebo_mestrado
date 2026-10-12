@@ -44,10 +44,11 @@ def driver_urdf(robot_description, ekf):
 
 def generate_launch_description():
     webots_share = get_package_share_directory('agrobot_webots')
+    # Arquivo em worlds/ (world:=plantation_field.wbt para a plantação).
     world_path = PathJoinSubstitution([
         webots_share,
         'worlds',
-        'obstacle_arena.wbt',
+        LaunchConfiguration('world'),
     ])
 
     webots = WebotsLauncher(
@@ -186,6 +187,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument('world', default_value='obstacle_arena.wbt'),
         DeclareLaunchArgument('nav', default_value='true'),
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('ekf', default_value='false'),
