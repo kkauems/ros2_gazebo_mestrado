@@ -4,6 +4,8 @@
 # This is a proto file for Webots for the agrobot
 # Extracted from: /home/kkauesm/projects/ros2_gazebo_mestrado/agrobot_description/urdf/agrobot.urdf
 
+EXTERNPROTO "VslamCamera.proto"
+
 PROTO agrobot [
   field  SFVec3f     translation     0 0 0
   field  SFRotation  rotation        0 0 1 0
@@ -63,6 +65,13 @@ PROTO agrobot [
             }
           }
         ]
+      }
+      # Câmera RGB-D do VSLAM, na pose do vslam_camera_link do URDF: no lugar
+      # do camera_link (0,45 m à frente e 0,38 m acima do base_link, ~0,61 m
+      # do chão), inclinada 15 graus para baixo.
+      VslamCamera {
+        translation 0.45 0 0.38
+        rotation 0 1 0 0.2618
       }
       Transform {
         translation -0.500000 -0.250000 0.050000

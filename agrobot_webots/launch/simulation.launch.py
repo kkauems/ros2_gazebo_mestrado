@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 
 from launch import LaunchDescription
@@ -23,22 +24,37 @@ from webots_ros2_driver.webots_launcher import WebotsLauncher
 from webots_ros2_driver.webots_controller import WebotsController
 
 
-ODOM_FROM_DRIVER = '<publishOdom>true</publishOdom>'
+ODOM_FROM_DRIVER = re.escape('<publishOdom>true</publishOdom>')
 ODOM_FROM_EKF = '<publishOdom>false</publishOdom>'
+# Qualquer período (o URDF pode ter outro múltiplo de 32 ms).
+CAMERA_ON = r'<vslamCameraPeriod>\s*\d+\s*</vslamCameraPeriod>'
+CAMERA_OFF = '<vslamCameraPeriod>0</vslamCameraPeriod>'
 
 
-def driver_urdf(robot_description, ekf):
-    """Caminho do URDF para o driver; com ekf, o driver não publica /odom."""
-    if not ekf:
+def driver_urdf(robot_description, ekf, camera):
+    """
+    Caminho do URDF para o driver, com as trocas pedidas no launch.
+
+    Com ekf, o driver não publica /odom; sem camera, não liga a câmera do
+    VSLAM (o Webots também deixa de renderizá-la).
+    """
+    replacements = []
+    if ekf:
+        replacements.append((ODOM_FROM_DRIVER, ODOM_FROM_EKF))
+    if not camera:
+        replacements.append((CAMERA_ON, CAMERA_OFF))
+    if not replacements:
         return robot_description
     with open(robot_description) as urdf_file:
         content = urdf_file.read()
-    if ODOM_FROM_DRIVER not in content:
-        raise RuntimeError(
-            f'{ODOM_FROM_DRIVER} não encontrado em {robot_description}')
-    path = os.path.join(tempfile.gettempdir(), 'agrobot_webots_ekf.urdf')
+    for pattern, new in replacements:
+        content, count = re.subn(pattern, new, content)
+        if count == 0:
+            raise RuntimeError(
+                f'{pattern} não encontrado em {robot_description}')
+    path = os.path.join(tempfile.gettempdir(), 'agrobot_webots_driver.urdf')
     with open(path, 'w') as urdf_file:
-        urdf_file.write(content.replace(ODOM_FROM_DRIVER, ODOM_FROM_EKF))
+        urdf_file.write(content)
     return path
 
 
@@ -67,10 +83,13 @@ def generate_launch_description():
 
     def start_driver(context):
         ekf = LaunchConfiguration('ekf').perform(context).lower() == 'true'
+        camera = (
+            LaunchConfiguration('camera').perform(context).lower() == 'true')
         return [WebotsController(
             robot_name='agrobot',
             parameters=[
-                {'robot_description': driver_urdf(robot_description, ekf)},
+                {'robot_description':
+                    driver_urdf(robot_description, ekf, camera)},
                 {'use_sim_time': True},
             ],
             output='screen',
@@ -192,6 +211,7 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('ekf', default_value='false'),
         DeclareLaunchArgument('slam', default_value='false'),
+        DeclareLaunchArgument('camera', default_value='true'),
         webots,
         agrobot_driver,
         robot_state_publisher,

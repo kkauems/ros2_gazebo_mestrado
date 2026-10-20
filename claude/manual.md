@@ -63,6 +63,14 @@ Details:
 for continuous joints when it receives their positions. Without this, the wheel frames are
 missing and RViz shows the RobotModel with errors.
 
+**f) The VSLAM RGB-D camera (2026-10-20).** The plugin reads `vslam_color` (`Camera`) and
+`vslam_depth` (`RangeFinder`) every 96 ms and publishes color (`bgra8`), depth (`32FC1`) and
+the same `camera_info` for both, all with one stamp, on `/vslam_camera/...`.
+*Why the plugin and not webots_ros2_driver:* its `Ros2Camera` and `Ros2RangeFinder` stamp
+with their node clock, which lags the `/clock` of the current step, and VSLAM pairs color,
+depth and odometry by stamp. The URDF disables both, as it does for the lidar. See
+[the change log](#2026-10-20--câmera-rgb-d-do-vslam-etapas-1-e-2).
+
 **Timestamps:** everything is stamped with `robot.getTime()` (Webots sim time), so the
 plugin doesn't depend on its private node receiving `/clock`.
 
@@ -95,6 +103,14 @@ Gazebo. The Webots device sits on the robot's root body.
 `wheelSeparationScale` to the plugin, and disables the driver's built-in lidar publisher
 (see 1d).
 
+**VSLAM RGB-D camera (2026-10-20)** (`VslamCamera` in the PROTO, from
+[VslamCamera.proto](../agrobot_webots/protos/VslamCamera.proto); `vslam_camera_link` and
+`vslam_camera_optical_frame` in the URDF) at (0.45, 0, 0.38) from `base_link`, pitched 15°
+down: 424 × 240, 87° horizontal FOV, depth 0.5–6 m, like an Intel RealSense D455. It is only
+for VSLAM; the data acquisition camera will be a separate RGB camera.
+*Why a new link instead of using `camera_link`:* same reason as the lidar, Gazebo uses the
+same URDF.
+
 ### 3. World — [obstacle_arena.wbt](../agrobot_webots/worlds/obstacle_arena.wbt)
 
 - **Four walls** at ±2.55 m (0.4 m tall, 0.1 m thick) around the 5 × 5 m floor.
@@ -120,6 +136,9 @@ New nodes alongside Webots and the driver:
   transform `/scan` from `front_lidar_link` into `odom`.
 - **`navigation.launch.py`**, included when `nav:=true` (default).
 - **RViz** with `rviz/nav.rviz`, when `rviz:=true` (default).
+- **`camera`** (default `true`, 2026-10-20): with `camera:=false` the launch gives the driver
+  a URDF with `vslamCameraPeriod` 0, so the VSLAM camera is not enabled and Webots doesn't
+  render it.
 - **Shutdown handler:** when the Webots process exits, the whole launch shuts down.
   *Why:* otherwise closing Webots leaves Nav2 and RViz running with no simulation behind
   them.
@@ -156,6 +175,9 @@ Fixed frame `odom`, top-down view. Displays: Grid, RobotModel (from
 `/robot_description`), TF, LaserScan, global and local costmaps, footprint, global plan,
 odometry arrows. The **Nav2 Goal** tool (SetGoal) publishes to `/goal_pose`, and
 `bt_navigator` turns that into a `NavigateToPose` goal.
+Since 2026-10-20, nav.rviz, nav_slam.rviz and goal.rviz also have an Image display, "VSLAM
+Camera", with `/vslam_camera/color/image_raw` (reliable QoS); it stays empty with
+`camera:=false`.
 
 ### 8. Packaging — [setup.py](../agrobot_webots/setup.py) and [package.xml](../agrobot_webots/package.xml)
 
@@ -1135,3 +1157,118 @@ perto demais dela.
   do DDS na nuvem, robô parado) e foi repetida.
 
 **Não testado:** Windows/WSL, RViz.
+
+### 2026-10-20 — Câmera RGB-D do VSLAM (etapas 1 e 2)
+
+**Pedido.** Kauê pediu para começar a implementar a câmera RGB-D do plano
+(`planejamento/camera_rgbd.md`, nos arquivos do projeto). A câmera serve só para o VSLAM; a
+câmera de aquisição de dados será outra, RGB, mais tarde. Esta mudança faz as etapas 1
+(sensor e frames) e 2 (publicação com carimbo único) do plano, com a Intel RealSense D455
+como modelo. Ainda nada usa a câmera: o RTAB-Map vem nas próximas etapas.
+
+**Para usar**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt
+# câmera desligada (o Webots nem renderiza):
+ros2 launch agrobot_webots simulation.launch.py camera:=false
+```
+O `agrobot_description` entra no build porque o URDF mudou. No RViz, a imagem aparece no
+painel "VSLAM Camera".
+
+**O que mudou**
+- `agrobot_webots/protos/VslamCamera.proto` (novo): uma `Camera` (`vslam_color`) e um
+  `RangeFinder` (`vslam_depth`) na mesma pose, com a mesma resolução (424 × 240) e o mesmo
+  FOV horizontal (87°, o da profundidade da D455). Assim a profundidade já sai registrada à
+  cor, com um só `camera_info` e um só frame óptico. Profundidade de 0,5 a 6 m, sem ruído
+  (o plano liga o ruído só na avaliação), e um corpo de 12,4 × 2,6 × 2,9 cm atrás do centro
+  óptico, para não aparecer na própria imagem.
+- `agrobot_webots/protos/agrobot.proto`: a `VslamCamera` em (0,45; 0; 0,38) do `base_link`
+  (~0,61 m do chão, no lugar do `camera_link`), inclinada 15° para baixo.
+- `agrobot_description/urdf/agrobot.urdf`: `vslam_camera_link` (mesma pose do PROTO) e
+  `vslam_camera_optical_frame` (z para a frente, x para a direita, y para baixo, REP 103);
+  os dois devices desligados no `webots_ros2_driver` (`<ros><enabled>false</enabled>`, como
+  o LiDAR); a propriedade `vslamCameraPeriod` (96 ms) do plugin. O `camera_link` antigo
+  ficou como estava, porque o Gazebo usa o mesmo URDF.
+- `agrobot_webots/agrobot_webots/agrobot_driver.py`: liga os dois sensores com o mesmo
+  período e publica, no mesmo passo e com o mesmo carimbo, `/vslam_camera/color/image_raw`
+  (`bgra8`), `/vslam_camera/aligned_depth_to_color/image_raw` (`32FC1`, profundidade planar
+  em metros, `+inf` fora de 0,5 a 6 m) e os dois `camera_info` (iguais: fx = fy = 223,5 px,
+  cx = 211,5, cy = 119,5, sem distorção), QoS confiável. Confere se cor e profundidade têm
+  a mesma resolução e o mesmo FOV e se o período é múltiplo do passo de 32 ms. A cada 60 s
+  de simulação, loga quantos ms cada quadro custa.
+- `agrobot_webots/launch/simulation.launch.py`: argumento `camera` (padrão `true`). Com
+  `camera:=false`, o driver recebe um URDF com `vslamCameraPeriod` 0. A troca aceita
+  qualquer período no URDF, não só 96.
+- `agrobot_webots/rviz/nav.rviz`, `nav_slam.rviz` e `goal.rviz`: painel de imagem "VSLAM
+  Camera".
+- `README.md` e este manual (seções 1f, 2, 4 e 7): tópicos, argumento, propriedade e sensor
+  novos.
+
+**Por quê**
+- *Publicar no nosso driver, e não pelo `webots_ros2_driver`:* o `Ros2Camera` e o
+  `Ros2RangeFinder` dele carimbam com o relógio do nó deles, que fica atrás do `/clock` do
+  passo. O VSLAM casa cor, profundidade e odometria pelo carimbo; aqui as quatro mensagens
+  saem com o tempo do passo em que a imagem foi feita, igual ao `/scan`.
+- *Publicar por contador inteiro de ms:* o tempo do Webots chega em ponto flutuante, e a
+  conta `now >= próximo` às vezes pula um passo e sai de fase com a atualização do sensor,
+  publicando uma imagem 32 ou 64 ms mais velha que o carimbo. Publicar quando
+  `(ms desde o enable) % período == 0` evita isso.
+- *`depthResolution -1` (sem passo de quantização):* com passo de 1 mm, o Webots R2025a
+  escreve NaN, e não `+inf`, em todo pixel fora do alcance (o céu, por exemplo), na última
+  linha inteira e numa coluna na borda direita de cada objeto contra o fundo. Achado na
+  revisão do código; com -1 não há NaN.
+- *96 ms (~10,4 Hz) e 424 × 240:* cada quadro RGB-D tem 0,81 MB e, no Windows, vai do
+  Webots ao WSL por TCP. É suficiente para o RTAB-Map e deixa folga; a etapa 4 do plano mede
+  no PC do Kauê se dá para subir.
+
+**Medições** (robô parado 8 s e depois girando no lugar a 1 rad/s por 4 s, nos dois mundos)
+
+| | Arena | Plantação |
+|---|---|---|
+| Quadros, todos com o mesmo carimbo nos 4 tópicos e sincronizados exatamente | 126 | 126 |
+| Intervalo entre carimbos (tempo de simulação) | 96 ms sempre | 96 ms sempre |
+| Carimbos que não são um valor do `/clock` | 0 | 0 |
+| Imagem mudou fora de um passo publicado | 0 | 0 |
+| Pixels de profundidade NaN / `+inf` / válidos (de 101 760) | 0 / 32 318 / 69 442 | 0 / 17 208 / 84 552 |
+| Profundidade no plano do LiDAR contra o `/scan`, erro mediano | 5,4 mm | 8,7 mm |
+| A mesma conta com a imagem espelhada | 1,04 m | 3,0 cm (fileiras simétricas) |
+| Chão visível a partir de (x no `base_link`) | 1,07 m | 1,09 m |
+
+- O primeiro quadro sai em 192 ms (dois períodos depois de ligar, como o LiDAR).
+- O TF `base_link → vslam_camera_optical_frame` dá translação (0,45; 0; 0,38) e eixo de
+  visão (0,966; 0; −0,259), como o plano previa. Pontos da esquerda do robô ficam na metade
+  esquerda da imagem (u médio ≈ 63 a 80 de 424).
+- Nenhuma parte do robô aparece na imagem. O plano previa o chão visível a partir de 1,10 m.
+- Ler e publicar um quadro custa 3,0 ms no driver (média de 624 quadros).
+- Com `camera:=false`: nenhum tópico `/vslam_camera/...`, `/scan` a 10,1 Hz.
+- Velocidade da simulação na nuvem (sem GPU, renderização por software, modo rápido,
+  plantação, 30 s de simulação): 1,74× o tempo real sem câmera e 0,51× com a câmera. Como o
+  `/clock` manda em tudo, ficar abaixo do tempo real só deixa a simulação mais lenta no
+  relógio. No PC do Kauê, com GPU, o número deve ser outro; é a etapa 4 do plano. Se ficar
+  lento demais para o uso do dia a dia, `camera:=false` desliga a câmera.
+
+**Limites**
+- A profundidade é perfeita (sem ruído, sem buracos de estéreo). O plano liga ruído só na
+  avaliação.
+- O `/scan` continua com o agendamento antigo (`now >= próximo`); o plano propõe passá-lo
+  para o mesmo contador, o que pede repetir a rota do Nav2. Não mexi.
+
+**Como foi validado** (nuvem Linux, sem GPU)
+- Webots R2025a headless, ROS 2 Jazzy do RoboStack, `agrobot_description` e
+  `agrobot_webots` reconstruídos.
+- O `webots_ros2_driver` não existe no RoboStack. O código do `AgrobotDriver` rodou num
+  processo auxiliar que lê o URDF, passa as propriedades do `<plugin>` e chama `step()` a
+  cada passo, como o `webots_ros2_driver` faz; o `robot_state_publisher` publicou o TF.
+- Um verificador assinou os 4 tópicos, o `/clock`, o `/scan` e o TF e fez as contas da
+  tabela; o processo auxiliar gravou um hash da imagem a cada passo.
+- O `driver_urdf()` do launch foi rodado com `ekf` e `camera` em todas as combinações, com o
+  URDF do repositório e com uma cópia com período 64.
+- `ament_flake8` e `ament_pep257` nos arquivos Python alterados: nenhum erro novo (os 4 de
+  ordem de import já existiam).
+
+**Não testado:** o `webots_ros2_driver` de verdade (o `<device>` desligado e a passagem da
+propriedade), o launch completo, RViz, Windows/WSL e o `rgbd_sync` do RTAB-Map.

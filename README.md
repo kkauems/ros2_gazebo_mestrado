@@ -22,6 +22,7 @@ reactive obstacle avoidance and stability tests).
 | `/clock` from Webots sim time | Webots | New on 2026-10-07 |
 | Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route); the ellipse wasn't checked in RViz, not yet on Windows |
 | Crop-field test world (`plantation_field.wbt`): 6 plant rows, uneven ground, clods, stones and branches, `world:=plantation_field.wbt` | Webots | New on 2026-10-09, tested in Webots R2025a on Linux (headless) with the real driver, Nav2 and slam_toolbox, not yet on Windows. See [Plantation field](#plantation-field-world) |
+| RGB-D camera for VSLAM (`/vslam_camera/...`: color, registered depth, `camera_info`, one stamp), `camera:=false` turns it off | Webots | New on 2026-10-20, tested in Webots R2025a on Linux (headless) with the `AgrobotDriver` code run outside `webots_ros2_driver`; not yet with `webots_ros2_driver` itself, in RViz or on Windows. Nothing uses it yet; RTAB-Map comes next ([details](claude/manual.md#2026-10-20--câmera-rgb-d-do-vslam-etapas-1-e-2)) |
 | AMCL / GPS / VSLAM | — | Not done. Nav2 still plans in the `odom` frame. VSLAM study: [claude/estudo_vslam.md](claude/estudo_vslam.md) |
 | `cmd_vel` / `odom` / `scan` bridge | Gazebo | Works (from the earlier commits) |
 | Reactive obstacle avoidance node | Gazebo | Code exists, but see [Known issues](#known-issues) |
@@ -106,6 +107,7 @@ Launch arguments:
 | `nav` | `true` | Start the Nav2 servers (`navigation.launch.py`) |
 | `rviz` | `true` | Start RViz with `rviz/nav.rviz` (`rviz/nav_slam.rviz` with `slam:=true`) |
 | `ekf` | `false` | `true`: the `robot_localization` EKF fuses `/wheel/odom` + `/imu/data` and publishes `/odom` and TF `odom → base_link` (the driver stops publishing them). `goal_navigation.launch.py` takes the same argument |
+| `camera` | `true` | `false`: the driver doesn't enable the VSLAM RGB-D camera, so Webots doesn't render it and the `/vslam_camera/...` topics don't exist |
 | `slam` | `false` | `true`: `slam_toolbox` builds `/map` from `/scan` and publishes TF `map → odom` and `/pose`; `ekf_map_node` fuses `/wheel/odom` + `/imu/data` + `/pose` into `/odometry/map`. RViz shows the map and the `/odometry/map` covariance ellipse (magnified 20×); an `/odom` ellipse for comparison is in the Displays panel, off by default and meaningful only with `ekf:=true`. Nav2 still plans in `odom`. Works with `ekf:=true` or `false` |
 
 Examples:
@@ -228,7 +230,8 @@ ros2 lifecycle get /bt_navigator        # should be "active [3]"
                                                      │ subscribes /cmd_vel
                                                      │ publishes  /odom, TF odom→base_link (ekf:=false),
                                                      │            /wheel/odom, /imu/data, /clock,
-                                                     │            /scan, /joint_states
+                                                     │            /scan, /joint_states,
+                                                     │            /vslam_camera/... (camera:=true)
 ekf_filter_node (ekf:=true) ◄── /wheel/odom, /imu/data   ──► /odom, TF odom→base_link
 slam_toolbox (slam:=true)   ◄── /scan, TF odom→base_link ──► /map, /pose, TF map→odom
 ekf_map_node (slam:=true)   ◄── /wheel/odom, /imu/data, /pose ──► /odometry/map (no TF)
@@ -250,6 +253,10 @@ Nav2:  bt_navigator → planner_server (NavFn) → controller_server (Regulated 
 | `/clock` | `rosgraph_msgs/Clock` | AgrobotDriver | Webots sim time, every step |
 | `/scan` | `sensor_msgs/LaserScan` | AgrobotDriver | frame `front_lidar_link`, 300 rays, 3.0 rad FOV, 0.1–8 m, sensor-data QoS |
 | `/joint_states` | `sensor_msgs/JointState` | AgrobotDriver | 4 wheel positions |
+| `/vslam_camera/color/image_raw` | `sensor_msgs/Image` | AgrobotDriver (`camera:=true`) | `bgra8`, 424 × 240, every 96 ms (~10.4 Hz), frame `vslam_camera_optical_frame`, reliable QoS |
+| `/vslam_camera/color/camera_info` | `sensor_msgs/CameraInfo` | AgrobotDriver | pinhole, no distortion, fx = fy ≈ 223.5 px |
+| `/vslam_camera/aligned_depth_to_color/image_raw` | `sensor_msgs/Image` | AgrobotDriver | `32FC1`, planar depth in meters, registered to the color image; `+inf` outside 0.5–6 m. Same stamp as the color image |
+| `/vslam_camera/aligned_depth_to_color/camera_info` | `sensor_msgs/CameraInfo` | AgrobotDriver | same as the color one |
 | `/map` | `nav_msgs/OccupancyGrid` | slam_toolbox (`slam:=true`) | 0.05 m cells, transient local, every 5 s |
 | `/pose` | `geometry_msgs/PoseWithCovarianceStamped` | slam_toolbox (`slam:=true`) | frame `map`, one per processed scan, scan-matching covariance |
 | `/odometry/map` | `nav_msgs/Odometry` | ekf_map_node (`slam:=true`) | frame `map`: wheels + IMU + `/pose`; the ellipse shown in RViz |
@@ -270,6 +277,7 @@ Set in the URDF `<webots><plugin>` block ([agrobot.urdf](agrobot_description/urd
 | `wheelSeparation` | 0.96 m | geometric track width |
 | `wheelSeparationScale` | 1.33 | effective track = 0.96 × 1.33, calibrated for skid-steer slip in turns |
 | `publishOdom` | true | driver publishes `/odom` + TF; the launch sets it to false with `ekf:=true` |
+| `vslamCameraPeriod` | 96 ms | VSLAM camera period, a multiple of the 32 ms step; the launch sets it to 0 (off) with `camera:=false` |
 
 Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
 - `InertialUnit` `imu`, `Gyro` `gyro` and `Accelerometer` `accelerometer` at `imu_link`
@@ -279,6 +287,14 @@ Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
   in the arena's world frame, whose floor top is at z = 0.05). It sees the boxes (0.20 m
   above the floor) and the crates (0.30 m). Until 2026-10-09 it was 5 cm lower; see
   [claude/manual.md](claude/manual.md#2026-10-09--lidar-frontal-5-cm-mais-alto-13-cm-do-chão)
+- `VslamCamera` ([VslamCamera.proto](agrobot_webots/protos/VslamCamera.proto)): a `Camera`
+  `vslam_color` and a `RangeFinder` `vslam_depth` at the same pose, with the same 424 × 240
+  resolution and 87° horizontal FOV, so the depth is registered to the color image. It sits
+  at (0.45, 0, 0.38) from `base_link` (~0.61 m above the ground), pitched 15° down, like an
+  Intel RealSense D455 (depth 0.5–6 m). URDF frames: `vslam_camera_link` (x forward) and
+  `vslam_camera_optical_frame` (z forward, x right, y down). The old `camera_link` is left
+  as it was because the Gazebo package uses the same URDF. Only for VSLAM; the data
+  acquisition camera will be a separate RGB camera
 
 ### Nav2 configuration (summary)
 

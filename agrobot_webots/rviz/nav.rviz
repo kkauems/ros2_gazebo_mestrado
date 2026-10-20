@@ -30,6 +30,13 @@ Visualization Manager:
       Size (m): 0.04
       Color Transformer: FlatColor
       Color: 255; 0; 0
+    - Class: rviz_default_plugins/Image
+      Name: VSLAM Camera
+      Enabled: true
+      Topic:
+        Value: /vslam_camera/color/image_raw
+        Reliability Policy: Reliable
+      Normalize Range: true
     - Class: rviz_default_plugins/Map
       Name: Global Costmap
       Enabled: true
