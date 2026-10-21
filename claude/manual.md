@@ -139,6 +139,16 @@ New nodes alongside Webots and the driver:
 - **`camera`** (default `true`, 2026-10-20): with `camera:=false` the launch gives the driver
   a URDF with `vslamCameraPeriod` 0, so the VSLAM camera is not enabled and Webots doesn't
   render it.
+- **`vslam`** (default `false`, 2026-10-21): starts RTAB-Map (`rgbd_sync` and `rtabmap`, in
+  the `rtabmap` namespace, with [config/rtabmap.yaml](../agrobot_webots/config/rtabmap.yaml)),
+  which then owns TF `map → odom`. It needs `ekf:=true` and `camera:=true`, and the launch
+  stops with an error before starting Webots if either is missing. With `slam:=true` too,
+  slam_toolbox gets `transform_publish_period: 0.0`, `map_frame: slam_map` and
+  `map_name: /slam_toolbox/map`, and `ekf_map_node` is not started. `vslam_localization`
+  localizes on the saved database (a copy in the temp folder), `vslam_db` sets the database
+  (default `~/.ros/agrobot_vslam/<world>.db`) and `rtabmap_viz` opens the RTAB-Map window.
+  *Why one owner:* two nodes publishing `map → odom` make the robot jump between two
+  poses in the `map` frame.
 - **Shutdown handler:** when the Webots process exits, the whole launch shuts down.
   *Why:* otherwise closing Webots leaves Nav2 and RViz running with no simulation behind
   them.
@@ -178,6 +188,9 @@ odometry arrows. The **Nav2 Goal** tool (SetGoal) publishes to `/goal_pose`, and
 Since 2026-10-20, nav.rviz, nav_slam.rviz and goal.rviz also have an Image display, "VSLAM
 Camera", with `/vslam_camera/color/image_raw` (reliable QoS); it stays empty with
 `camera:=false`.
+Since 2026-10-21, `nav_vslam.rviz` (used with `vslam:=true`, with or without `slam:=true`)
+is nav_slam.rviz with `/rtabmap/map` ("VSLAM Map") and `/rtabmap/mapPath` ("VSLAM Path")
+in place of `/map` and the `map`-frame ellipse.
 
 ### 8. Packaging — [setup.py](../agrobot_webots/setup.py) and [package.xml](../agrobot_webots/package.xml)
 
@@ -187,6 +200,8 @@ Camera", with `/vslam_camera/color/image_raw` (reliable QoS); it stays empty wit
   `nav_msgs`, `navigation2`, `robot_state_publisher`, `rviz2`, `tf2_ros`. `sensor_msgs` is
   missing even though the driver imports it. It comes in through `navigation2`, but it
   should be listed explicitly.
+- Since 2026-10-21, `package.xml` also lists `rtabmap_slam`, `rtabmap_sync` and
+  `rtabmap_viz` (all from `ros-jazzy-rtabmap-ros`).
 
 ## How it was verified (2026-10-02)
 
@@ -1272,3 +1287,156 @@ painel "VSLAM Camera".
 
 **Não testado:** o `webots_ros2_driver` de verdade (o `<device>` desligado e a passagem da
 propriedade), o launch completo, RViz, Windows/WSL e o `rgbd_sync` do RTAB-Map.
+
+### 2026-10-21 — RTAB-Map (VSLAM) com `vslam:=true` (etapa 5)
+
+**Pedido.** Kauê perguntou como iniciar a simulação com o VSLAM ligado. Ainda não existia:
+esta mudança faz a etapa 5 do plano (`planejamento/camera_rgbd.md`, nos arquivos do
+projeto), o RTAB-Map em mapeamento com a câmera RGB-D das etapas 1 e 2, e já deixa a
+localização num mapa salvo. Como ele quer usar o VSLAM, isto veio antes da pose verdadeira
+no launch (etapa 3) e da medição no Windows (etapa 4); as variâncias da odometria foram
+medidas com a pose verdadeira só dentro deste teste.
+
+**Para usar**
+```bash
+sudo apt install ros-jazzy-rtabmap-ros
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+# mapeamento (apaga e refaz ~/.ros/agrobot_vslam/plantation_field.db):
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true
+# localização no mapa salvo (o arquivo não muda):
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true vslam_localization:=true
+```
+O RViz abre com o `nav_vslam.rviz`; ande com objetivos do Nav2, como antes. Deixe o RViz
+aberto durante o mapeamento: a grade `/rtabmap/map` só é montada enquanto alguém a assina.
+Para guardar um mapa, copie o `.db` antes de mapear de novo no mesmo mundo (ou use
+`vslam_db:=...`). Com `slam:=true` junto, o slam_toolbox continua rodando, sem TF, para
+comparar. `ros2 run tf2_ros tf2_monitor map odom` confere que só um nó publica `map → odom`.
+
+**O que mudou**
+- `agrobot_webots/config/rtabmap.yaml` (novo). `rgbd_sync` com sincronização exata (o driver
+  carimba cor, profundidade e `camera_info` com o mesmo tempo). `rtabmap`: odometria pelo TF
+  `odom → base_link` (do EKF), entradas `rgbd_image` + `/scan`, 1 Hz, x/y/yaw
+  (`Reg/Force3DoF`), GFTT/ORB fixos (o padrão muda conforme o OpenCV), features até 5 m,
+  `Vis/MinInliers` 25, **`Reg/Strategy` 2** (visual e depois ICP com o `/scan`),
+  **`Optimizer/Robust` true** com `RGBD/OptimizeMaxError` 0, variâncias da odometria
+  0,0005 m² e 0,0001 rad², grade de ocupação pelo LiDAR (5 cm, até 5 m, raios sem retorno
+  como espaço livre) e profundidade guardada em float (PNG) no banco.
+- `agrobot_webots/launch/simulation.launch.py`: argumentos `vslam`, `vslam_localization`,
+  `vslam_db` e `rtabmap_viz`. Com `vslam:=true` sobem o `rgbd_sync` e o `rtabmap` no
+  namespace `rtabmap` (e o `rtabmap_viz`, se pedido). O slam_toolbox passou para uma
+  `OpaqueFunction`: com `vslam:=true` ele recebe `transform_publish_period: 0.0`,
+  `map_frame: slam_map` e `map_name: /slam_toolbox/map`, e o `ekf_map_node` não sobe. Sem
+  `ekf:=true`, sem a câmera ou, na localização, sem o banco, o launch para com a mensagem
+  de erro antes de abrir o Webots. Banco: `~/.ros/agrobot_vslam/<mundo>.db` (a pasta é
+  criada); o mapeamento o apaga ao começar (`delete_db_on_start`); a localização copia o
+  banco para a pasta temporária e roda na cópia com `Mem/IncrementalMemory` false,
+  `Mem/InitWMWithAllNodes` true e `RGBD/StartAtOrigin` true. O RViz usa o
+  `nav_vslam.rviz` com `vslam:=true`.
+- `agrobot_webots/rviz/nav_vslam.rviz` (novo): o `nav_slam.rviz` com a grade
+  `/rtabmap/map` e o caminho `/rtabmap/mapPath` no lugar do `/map` e da elipse do `map`.
+- `agrobot_webots/package.xml`: `rtabmap_slam`, `rtabmap_sync` e `rtabmap_viz`.
+- `README.md` (estado, dependências, argumentos, seção VSLAM, arquitetura, tópicos) e este
+  manual (seções 4, 7 e 8).
+
+**Por quê**
+- *Só o EKF como odometria, sem odometria visual:* o RTAB-Map processa um quadro por
+  segundo e só corrige o `map → odom`; a odometria visual custaria CPU (risco R1 do plano).
+- *Um dono de `map → odom`:* dois nós publicando o mesmo TF fazem o robô pular entre duas
+  poses no `map`. O slam_toolbox fica para comparação, num frame que não está no TF.
+- *ICP e otimização robusta:* o primeiro teste, com os parâmetros do plano
+  (`Reg/Strategy` 0 e `RGBD/OptimizeMaxError` 3), aceitou 8 fechamentos falsos, todos de
+  exatamente 2,00 m. A textura do solo da plantação se repete a cada 2 m
+  (`scale 9 8` sobre 18 × 16 m) e ~63% da imagem é solo: a câmera vê o mesmo chão 2 m à
+  frente ou atrás (o risco R2 do plano). O erro da pose no `map` ficou em 1,38 m rms, pior
+  que o EKF sozinho (0,29 m). O mesmo banco foi reprocessado (`rtabmap-reprocess`) com 14
+  variações: variâncias realistas e `RGBD/OptimizeMaxError` 1,5 ou 2 deixaram 7 ou 8
+  falsos, porque 2 m espalhados por ~50 elos dão ~4 cm por elo, perto do desvio-padrão; o
+  ICP derrubou 7 dos 8 (no lugar errado, o `/scan` não casa); a otimização robusta
+  (Vertigo) desligou o que sobrou. Com ICP + robusta, o grafo final ficou com o erro
+  da odometria ou menor. O `Optimizer/Robust` não funciona com o
+  `RGBD/OptimizeMaxError` ligado, por isso o 0. Ele precisa de g2o ou GTSAM com o Vertigo:
+  o `package.xml` do rtabmap depende dos dois e o CMake liga o Vertigo por padrão (não
+  conferi no binário do apt; se faltar, o rtabmap avisa "Vertigo robust optimization is not
+  available").
+- *Variâncias 0,0005 e 0,0001:* com a pose verdadeira, cada elo de odometria (~0,42 m) do
+  EKF erra 2,0 cm rms (0,0002 m² por eixo, 13 cm no pior) e 0,04° rms. Os valores têm folga
+  para as curvas, onde o skid-steer escorrega. No reprocessamento, de 0,0002 a 0,001 deu o
+  mesmo resultado com ICP + robusta.
+- *Banco apagado no mapeamento e localização numa cópia:* o rtabmap só apaga o banco com
+  `delete_db_on_start`, e sem isso um mapeamento novo continuaria o anterior. Na localização
+  ele também escreve no banco (a cópia saiu com outro md5); a cópia deixa o mapa salvo
+  igual.
+- *`RGBD/StartAtOrigin` na localização:* sem ele, o rtabmap começa na última pose salva, que
+  é onde o mapeamento terminou; os mundos fixam a pose inicial do robô.
+
+**Medições** (nuvem, sem GPU; um robô Supervisor numa cópia do mundo grava a pose
+verdadeira e leva o robô por `/cmd_vel` a 0,4 m/s: na plantação, ida pela entrelinha y = 0 e
+volta pela y = 1,8, ~25 m por volta; na arena, 3 voltas de uma rota curta. "Erro no `map`":
+a pose `map → odom` ∘ `odom → base_link` contra a verdadeira, a cada `/rtabmap/info`; entre
+parênteses, só o EKF)
+
+| | Plantação, parâmetros do plano | Plantação, final | Localização na plantação (1 volta) | Arena, final |
+|---|---|---|---|---|
+| Fechamentos no banco: certos / falsos (> 0,3 m ou 10°) | 32 / 8 | 47 / 1 (desligado pela robusta) | 49 localizações, nenhuma a mais de 0,3 m | 17 / 0 |
+| Erro no `map`, rms | 1,38 m (0,29) | 0,11 m (0,28) | 0,10 m (0,15) | 0,06 m (0,07) |
+| Erro no `map`, máximo | 2,87 m (0,47) | 0,23 m (0,46) | 0,18 m (0,25) | 0,14 m (0,14) |
+| Erro no `map`, no fim | 1,98 m (0,43) | 0,08 m (0,45) | 0,12 m (0,18) | 0,09 m (0,13) |
+| Grafo otimizado no fim, rms | 1,95 m | 0,06 m | — | 0,04 m |
+| `Timing/Total` do `/rtabmap/info`, mediana / máximo | 147 / 280 ms | 174 / 512 ms | 180 / 283 ms | 17 / 82 ms |
+| Palavras visuais por quadro, mediana | 732 | 725 | 733 | 84 |
+| Nós / sessões (`rtabmap-info`) | 128 / 1 | 132 / 1 | o banco não mudou | 59 / 1 |
+
+- A primeira linha conta os elos do banco. Na coluna "final", a pose no `map` nunca passou
+  de 0,23 m do lugar certo: pelo que se vê, a otimização robusta desligou o elo falso.
+- O tempo por quadro fica bem abaixo de 1 s (1/`DetectionRate`). A grade não fica vazia
+  (533 células ocupadas na plantação) e, na localização, já existe desde o começo.
+- `slam:=true vslam:=true`, com o `webots_ros2_driver` de verdade, 40 s de simulação: o
+  slam_toolbox ativo com `transform_publish_period` 0.0, mapa em `/slam_toolbox/map`, sem
+  `/map` e sem `ekf_map_node`; `map → odom` a 20,0 Hz no relógio de parede, com um valor só
+  (dois donos dariam ~40 Hz).
+- Câmera: os quatro tópicos chegaram inteiros (584 de 584 quadros a 96 ms, arena). O
+  `/rtabmap/rgbd_image` chegou ao gravador com 4% (arena) a 21% (plantação) dos quadros
+  faltando, sem aviso de sincronização: o `rgbd_sync` publica com fila 1, e um assinante
+  lento perde quadros. O `rtabmap` usa um por segundo.
+- O banco salvo ficou igual depois da localização (mesmo md5).
+- `vslam:=true` com `ekf:=false`, com `camera:=false` e a localização sem banco: o launch
+  sai em até 1 s com a mensagem, sem abrir o Webots.
+- Velocidade da simulação na plantação: 0,37 a 0,43× o tempo real com câmera e RTAB-Map
+  no processo auxiliar do driver, que abre o Webots com `--no-rendering`; 0,06× com o
+  `webots_ros2_driver`, provavelmente porque o `WebotsLauncher` do launch abre a vista 3D,
+  e aqui ela é desenhada sem GPU.
+
+**Limites**
+- A correção é para os fechamentos falsos deste mundo, não para a causa. Na entrelinha
+  y = 0, todos os fechamentos achados foram os falsos de 2 m. O grafo depende dos
+  fechamentos certos das outras partes da rota; a etapa 6 do plano (mundo variante, sem a
+  textura repetida) ataca a causa.
+- A profundidade é perfeita (sem ruído). O Nav2 continua planejando no `odom` e não usa o
+  mapa do RTAB-Map. Com `vslam:=true` não há a elipse do `/odometry/map`.
+- A localização exige que o robô comece onde começou no mapeamento.
+- As duas voltas foram pelo robô Supervisor, não por objetivos do Nav2 como o plano pede.
+- O plano propõe o nome `<mundo>_<rótulo>.db`; o padrão ficou `<mundo>.db`, e `vslam_db`
+  escolhe outro.
+- Com o `webots_ros2_driver` de verdade, um Ctrl-C que chega ao processo do driver às vezes
+  imprime um `RCLError` (contexto inválido) do `agrobot_driver.py`, no `spin_once` ou no
+  `publish` da câmera. Não faz mal; não mexi.
+
+**Como foi validado** (nuvem Linux, sem GPU)
+- Webots R2025a headless, ROS 2 Jazzy do RoboStack. O `rtabmap_ros` 0.23.13 e o
+  `webots_ros2_driver` 2025.0.0 foram compilados do código-fonte (não há pacote no
+  RoboStack); no Ubuntu vêm do apt.
+- O `webots_ros2_driver` compilado rodou o launch: os tópicos da câmera saem só do
+  `agrobot_driver`, e com `camera:=false` não há tópicos `/vslam_camera/...`. Isso fecha o
+  que ficou sem teste na entrada de 2026-10-20. As voltas medidas usaram o processo auxiliar
+  daquela entrada, que roda o mesmo `AgrobotDriver`, por causa da velocidade acima.
+- Um gravador assinou `/rtabmap/info`, `/rtabmap/rgbd_image`, `/tf` e `/rtabmap/map`; um
+  script comparou a pose no `map` e cada fechamento do banco com a pose verdadeira.
+- `ament_flake8` e `ament_pep257` no launch: nenhum erro novo (os 3 de ordem de import já
+  existiam).
+
+**Não testado:** Windows/WSL (a velocidade com câmera, RTAB-Map e Nav2 é a etapa 4), RViz,
+o Nav2 com `vslam:=true`, o `rtabmap_viz`, as duas voltas com o `webots_ros2_driver` de
+verdade e o `ros-jazzy-rtabmap-ros` do apt (a nuvem usou o rtabmap 0.23 do conda-forge).

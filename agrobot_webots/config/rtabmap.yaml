@@ -1,0 +1,135 @@
+# RTAB-Map (rtabmap_ros 0.23.13, Jazzy) do Agrobot no Webots: VSLAM com a
+# câmera RGB-D. Usado pelo simulation.launch.py com vslam:=true (que exige
+# ekf:=true).
+#
+# Entra: cor + profundidade + camera_info (/vslam_camera/..., juntados pelo
+# rgbd_sync) e a odometria do TF odom -> base_link, que é do EKF. Sai: TF
+# map -> odom (o RTAB-Map é o dono com vslam:=true; identidade até o primeiro
+# quadro processado), /rtabmap/map (grade feita pelo LiDAR, não pela
+# profundidade), /rtabmap/mapPath, /rtabmap/info e /rtabmap/localization_pose.
+#
+# Os nós rodam no namespace rtabmap, por isso os nomes completos abaixo.
+# Os parâmetros do núcleo ("Grupo/Nome") são declarados pelo nó como texto:
+# os valores vão sempre entre aspas ("true", "25"), senão a declaração falha.
+# O banco (database_path, delete_db_on_start) e o modo mapeamento/localização
+# (Mem/IncrementalMemory, Mem/InitWMWithAllNodes) vêm do launch.
+
+/rtabmap/rgbd_sync:
+  ros__parameters:
+    use_sim_time: true
+    # O driver carimba cor, profundidade e camera_info com o mesmo tempo do
+    # passo: sincronização exata.
+    approx_sync: false
+    topic_queue_size: 10
+    sync_queue_size: 10
+    # 0 = padrão do sistema (confiável): os tópicos da câmera são confiáveis.
+    qos: 0
+    qos_camera_info: 0
+
+/rtabmap/rtabmap:
+  ros__parameters:
+    use_sim_time: true
+
+    # Frames: os mesmos do ekf.yaml e do slam_toolbox.yaml.
+    frame_id: base_link
+    odom_frame_id: odom          # odometria pelo TF (do EKF), sem tópico
+    map_frame_id: map
+    publish_tf: true             # dono de map -> odom com vslam:=true
+    tf_delay: 0.05               # 20 Hz, como o slam_toolbox
+    wait_for_transform: 0.2
+
+    # Entradas: rgbd_image do rgbd_sync e o /scan (grade e conferência dos
+    # fechamentos de laço).
+    subscribe_rgbd: true
+    subscribe_depth: false
+    subscribe_rgb: false
+    subscribe_scan: true         # o launch remapeia scan -> /scan
+    approx_sync: true            # rgbd_image (~10,4 Hz) + /scan (~10 Hz)
+    # Best effort, para casar com o /scan (qos_profile_sensor_data no driver)
+    # qualquer que seja o padrão do RMW.
+    qos_scan: 2
+    topic_queue_size: 10
+    sync_queue_size: 10
+
+    # Variância de cada elo de odometria (a odometria pelo TF não tem
+    # covariância). Medido com a pose verdadeira na plantação (2 voltas, elos
+    # de ~0,42 m): erro do EKF por elo de 2,0 cm rms (0,0002 m² por eixo) e
+    # 0,04° rms. Com folga para as curvas, onde o skid-steer escorrega mais.
+    odom_tf_linear_variance: 0.0005
+    odom_tf_angular_variance: 0.0001
+
+    # /rtabmap/localization_pose só em fechamento de laço, detecção por
+    # proximidade ou marco (para o ekf_map_node numa etapa seguinte). Como
+    # todo tópico do rtabmap fora o TF, só sai se alguém assina.
+    pub_loc_pose_only_when_localizing: true
+
+    # ---- Núcleo do RTAB-Map (texto) ----
+    Rtabmap/DetectionRate: "1"          # Hz; com odometria externa, 1 Hz basta
+    # 2 = visual e depois ICP com o /scan: o ICP derruba fechamentos em que a
+    # imagem bate e o LiDAR não (a textura do solo da plantação se repete a
+    # cada 2 m). Na plantação, 7 fechamentos falsos viraram 1.
+    Reg/Strategy: "2"
+    # O que o nó põe sozinho com ICP e /scan (e avisa): a detecção por
+    # proximidade também junta os scans dos 10 nós vizinhos.
+    RGBD/ProximityPathMaxNeighbors: "10"
+    Reg/Force3DoF: "true"               # x, y e yaw, como o two_d_mode do EKF
+    RGBD/LinearUpdate: "0.1"            # padrão: nó novo a cada 0,1 m...
+    RGBD/AngularUpdate: "0.1"           # ...ou 0,1 rad
+    RGBD/OptimizeFromGraphEnd: "false"  # padrão: o map fica preso ao primeiro nó (= origem do odom)
+
+    # Mesmo detector e descritor no Linux da nuvem e no WSL: GFTT/ORB, que
+    # não depende do xfeatures2d do OpenCV (o padrão muda conforme o build).
+    Kp/DetectorStrategy: "8"
+    Vis/FeatureType: "8"
+
+    # Escolha: descarta features a mais de 5 m (numa D455 o erro da
+    # profundidade cresce com z²). Os pixels +inf já são ignorados sem isso.
+    Vis/MaxDepth: "5.0"
+    Kp/MaxDepth: "5.0"
+
+    # Fileiras repetitivas: menos fechamentos de laço falsos.
+    Vis/MinInliers: "25"                # padrão 20
+    # Otimização robusta (Vertigo, com g2o ou GTSAM; o ros-jazzy-rtabmap
+    # depende dos dois): cada fechamento ganha uma chave que a otimização
+    # desliga se ele não bate com o resto do grafo. Na plantação, o falso que
+    # passou pelo ICP não estragou o mapa. O RGBD/OptimizeMaxError (padrão 3) não
+    # serve aqui: um falso de 2 m espalhado por ~50 elos passa abaixo do limite,
+    # e com ele ligado o Optimizer/Robust não funciona.
+    Optimizer/Robust: "true"
+    RGBD/OptimizeMaxError: "0"
+    RGBD/ProximityOdomGuess: "true"     # padrão false; procura por projeção perto da estimativa
+    # Padrão. Menor que os 1,8 m entre entrelinhas vizinhas: os caminhos da
+    # entrelinha ao lado ficam de fora da detecção por proximidade.
+    RGBD/ProximityPathFilteringRadius: "1.0"
+    # Padrão 10. Os ~30 nós mais recentes (~30 s andando) ficam fora do
+    # fechamento de laço: uma passada pela fileira não fecha consigo mesma.
+    Mem/STMSize: "30"
+    Rtabmap/LoopThr: "0.11"             # padrão; subir (0,15 a 0,25) se aparecerem fechamentos falsos
+
+    # Grade de ocupação pelo LiDAR em /rtabmap/map (para um static_layer do
+    # Nav2 depois). Cada nó guarda a grade local dele no banco; a grade
+    # global só é montada enquanto alguém assina /rtabmap/map (o RViz).
+    Grid/Sensor: "0"                    # 0 = scan do LiDAR (nada de profundidade)
+    Grid/CellSize: "0.05"               # mesma resolução do slam_toolbox
+    Grid/RangeMax: "5.0"                # obstacle_max_range do nav2_params.yaml
+                                        # (com subscribe_scan o nó poria 0 = infinito)
+    # Raios sem retorno (+inf) também marcam espaço livre até Grid/RangeMax;
+    # sem isso, a plantação aberta fica cheia de cunhas desconhecidas.
+    Grid/Scan2dUnknownSpaceFilled: "true"
+
+    # Profundidade guardada em float (PNG) no banco. Com o formato de 16 bits
+    # (mm), cada pixel +inf vira um aviso "Depth conversion error" por nó.
+    Mem/SaveDepth16Format: "false"
+    Mem/DepthCompressionFormat: ".png"
+
+# Interface gráfica do RTAB-Map (rtabmap_viz:=true): as mesmas entradas.
+/rtabmap/rtabmap_viz:
+  ros__parameters:
+    use_sim_time: true
+    frame_id: base_link
+    odom_frame_id: odom
+    subscribe_rgbd: true
+    subscribe_scan: true
+    approx_sync: true
+    qos_scan: 2
+    wait_for_transform: 0.2
