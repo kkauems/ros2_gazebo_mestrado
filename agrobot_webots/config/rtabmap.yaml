@@ -67,15 +67,15 @@
     Rtabmap/DetectionRate: "1"          # Hz; com odometria externa, 1 Hz basta
     # 2 = visual e depois ICP com o /scan: o ICP derruba fechamentos em que a
     # imagem bate e o LiDAR não (a textura do solo da plantação se repete a
-    # cada 2 m). Na plantação, 7 fechamentos falsos viraram 1.
+    # cada 2 m). Na plantação, 8 fechamentos falsos viraram 1.
     Reg/Strategy: "2"
     # O que o nó põe sozinho com ICP e /scan (e avisa): a detecção por
     # proximidade também junta os scans dos 10 nós vizinhos.
     RGBD/ProximityPathMaxNeighbors: "10"
     Reg/Force3DoF: "true"               # x, y e yaw, como o two_d_mode do EKF
-    RGBD/LinearUpdate: "0.1"            # padrão: nó novo a cada 0,1 m...
-    RGBD/AngularUpdate: "0.1"           # ...ou 0,1 rad
-    RGBD/OptimizeFromGraphEnd: "false"  # padrão: o map fica preso ao primeiro nó (= origem do odom)
+    RGBD/LinearUpdate: "0.1"            # padrão: nó novo só se andou 0,1 m...
+    RGBD/AngularUpdate: "0.1"           # ...ou girou 0,1 rad (a 1 Hz, ~0,4 m entre nós)
+    RGBD/OptimizeFromGraphEnd: "false"  # padrão: o map fica preso ao primeiro nó
 
     # Mesmo detector e descritor no Linux da nuvem e no WSL: GFTT/ORB, que
     # não depende do xfeatures2d do OpenCV (o padrão muda conforme o build).
@@ -92,14 +92,17 @@
     # Otimização robusta (Vertigo, com g2o ou GTSAM; o ros-jazzy-rtabmap
     # depende dos dois): cada fechamento ganha uma chave que a otimização
     # desliga se ele não bate com o resto do grafo. Na plantação, o falso que
-    # passou pelo ICP não estragou o mapa. O RGBD/OptimizeMaxError (padrão 3) não
-    # serve aqui: um falso de 2 m espalhado por ~50 elos passa abaixo do limite,
-    # e com ele ligado o Optimizer/Robust não funciona.
+    # passou pelo ICP não estragou o mapa. O RGBD/OptimizeMaxError (padrão 3)
+    # fica desligado: com 1,5 ou 2 ele não pegou os falsos de 2 m (o erro se
+    # espalha por dezenas de elos e cada um estica pouco); quem cuida deles é
+    # a otimização robusta.
     Optimizer/Robust: "true"
     RGBD/OptimizeMaxError: "0"
     RGBD/ProximityOdomGuess: "true"     # padrão false; procura por projeção perto da estimativa
-    # Padrão. Menor que os 1,8 m entre entrelinhas vizinhas: os caminhos da
-    # entrelinha ao lado ficam de fora da detecção por proximidade.
+    # Padrão. Menor que os 1,8 m entre entrelinhas vizinhas: a detecção por
+    # proximidade pela câmera deixa a entrelinha ao lado de fora. A detecção
+    # pelo LiDAR (ProximityPathMaxNeighbors) ainda tenta os nós a até 10 m
+    # (RGBD/LocalRadius), e o ICP decide.
     RGBD/ProximityPathFilteringRadius: "1.0"
     # Padrão 10. Os ~30 nós mais recentes (~30 s andando) ficam fora do
     # fechamento de laço: uma passada pela fileira não fecha consigo mesma.

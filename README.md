@@ -202,7 +202,9 @@ ros2 run tf2_ros tf2_monitor map odom     # map → odom must come from one node
 
 - **Mapping** (`vslam:=true`). RTAB-Map takes the RGB-D camera and the EKF odometry
   (TF `odom → base_link`), adds a node about every second while the robot moves, looks for
-  loop closures with the camera and checks each one with the lidar (ICP). It publishes TF
+  loop closures by appearance with the camera and checks each one with the lidar (ICP).
+  Near its current estimate it also matches the lidar scan against the scans of nearby
+  nodes (proximity detection). It publishes TF
   `map → odom` at 20 Hz (identity until the first frame), the lidar occupancy grid
   `/rtabmap/map` and the graph path `/rtabmap/mapPath`, both shown by `rviz/nav_vslam.rviz`.
   The grid is assembled only while someone subscribes to `/rtabmap/map`, so keep RViz open
@@ -211,9 +213,10 @@ ros2 run tf2_ros tf2_monitor map odom     # map → odom must come from one node
   the path given in `vslam_db`. Mapping **erases it when it starts**, so copy the file to
   keep a map. Inspect it with `rtabmap-info <file>`.
 - **Localization** (`vslam_localization:=true`). RTAB-Map loads the saved map (a copy in
-  `/tmp`, the file itself isn't changed), adds nothing to it and publishes `map → odom` when
-  it recognizes a place. The robot has to start where it started when mapping (the worlds
-  fix the spawn pose).
+  `/tmp`, the file itself isn't changed) and adds nothing to it. It starts with the robot on
+  the map's first node and corrects `map → odom` (still published at 20 Hz) when it
+  recognizes places; the first correction waits for a second recognition. The robot has to
+  start where it started when mapping (the worlds fix the spawn pose).
 - **With `slam:=true` too.** slam_toolbox keeps running for comparison, without TF: its map
   goes to `/slam_toolbox/map` in frame `slam_map`, which isn't in the TF tree (RViz can't
   show it). Save it with `ros2 run nav2_map_server map_saver_cli -t /slam_toolbox/map`.
@@ -312,7 +315,7 @@ Nav2:  bt_navigator → planner_server (NavFn) → controller_server (Regulated 
 | `/rtabmap/map` | `nav_msgs/OccupancyGrid` | rtabmap (`vslam:=true`) | from the lidar, 0.05 m cells, transient local; built only while someone subscribes |
 | `/rtabmap/mapPath` | `nav_msgs/Path` | rtabmap (`vslam:=true`) | one pose per node of the optimized graph |
 | `/rtabmap/info` | `rtabmap_msgs/Info` | rtabmap (`vslam:=true`) | per processed frame: loop closures, timing |
-| `/rtabmap/localization_pose` | `geometry_msgs/PoseWithCovarianceStamped` | rtabmap (`vslam_localization:=true`) | when it localizes on the saved map |
+| `/rtabmap/localization_pose` | `geometry_msgs/PoseWithCovarianceStamped` | rtabmap (`vslam:=true`) | only in iterations with a loop closure or proximity link (a localization, with `vslam_localization:=true`), and only while subscribed |
 | `/tf` | | AgrobotDriver or EKF, robot_state_publisher, slam_toolbox or rtabmap | `map → odom` (slam_toolbox with `slam:=true`, rtabmap with `vslam:=true`) and `odom → base_link` are dynamic, the rest is static |
 
 All messages are stamped with **Webots simulation time** (`robot.getTime()`), and the
@@ -374,10 +377,13 @@ In Gazebo, the robot uses the `gz-sim-diff-drive-system` plugin and the tall `li
 
 ## Known issues
 
-- **Odometry drift.** Skid-steer wheels slip sideways in turns, and the encoders can't
-  see it. Expect about 0.3 m position error per goal and about 0.4 m after a round trip.
-  The EKF (`ekf:=true`) doesn't remove this: slip is invisible to wheels and IMU alike.
-  `slam:=true` corrects it in the `map` frame (`map → odom`), but Nav2 still plans and
+- **Odometry drift.** Skid-steer wheels slip, and the encoders can't see it. With the
+  driver odometry (2026-10-02) the error was about 0.3 m per goal and about 0.4 m after a
+  round trip; with the EKF, 0.28 m RMS and 0.45 m at the end of 2 laps (~50 m) on the crop
+  field (2026-10-21). The EKF (`ekf:=true`) doesn't remove this: the IMU fixes the heading,
+  but nothing it fuses measures the distance traveled. `slam:=true` or `vslam:=true`
+  corrects it in the `map` frame (`map → odom`; 0.11 m RMS with `vslam:=true` in the same
+  test), but Nav2 still plans and
   takes goals in `odom`: a goal clicked in the `map` frame is converted to `odom` once,
   when Nav2 accepts it.
 - **`odom` is relative to the spawn point.** Goals don't refer to fixed world positions.

@@ -1349,18 +1349,20 @@ comparar. `ros2 run tf2_ros tf2_monitor map odom` confere que só um nó publica
 - *ICP e otimização robusta:* o primeiro teste, com os parâmetros do plano
   (`Reg/Strategy` 0 e `RGBD/OptimizeMaxError` 3), aceitou 8 fechamentos falsos, todos de
   exatamente 2,00 m. A textura do solo da plantação se repete a cada 2 m
-  (`scale 9 8` sobre 18 × 16 m) e ~63% da imagem é solo: a câmera vê o mesmo chão 2 m à
+  (`scale 9 8` sobre 18 × 16 m) e boa parte da imagem é solo (pelo cálculo do plano, ~63%
+  das linhas da imagem veem chão a até 5 m): a câmera vê o mesmo chão 2 m à
   frente ou atrás (o risco R2 do plano). O erro da pose no `map` ficou em 1,38 m rms, pior
   que o EKF sozinho (0,29 m). O mesmo banco foi reprocessado (`rtabmap-reprocess`) com 14
   variações: variâncias realistas e `RGBD/OptimizeMaxError` 1,5 ou 2 deixaram 7 ou 8
-  falsos, porque 2 m espalhados por ~50 elos dão ~4 cm por elo, perto do desvio-padrão; o
+  falsos, porque o erro de 2 m se espalha por dezenas de elos e cada um estica pouco; o
   ICP derrubou 7 dos 8 (no lugar errado, o `/scan` não casa); a otimização robusta
   (Vertigo) desligou o que sobrou. Com ICP + robusta, o grafo final ficou com o erro
-  da odometria ou menor. O `Optimizer/Robust` não funciona com o
-  `RGBD/OptimizeMaxError` ligado, por isso o 0. Ele precisa de g2o ou GTSAM com o Vertigo:
-  o `package.xml` do rtabmap depende dos dois e o CMake liga o Vertigo por padrão (não
-  conferi no binário do apt; se faltar, o rtabmap avisa "Vertigo robust optimization is not
-  available").
+  da odometria ou menor. O `RGBD/OptimizeMaxError` ficou em 0: sozinho ele não pegou os
+  falsos, e quem cuida deles é a otimização robusta. Ela precisa de g2o ou GTSAM com o
+  Vertigo: o `package.xml` do rtabmap depende dos dois e o CMake liga o Vertigo por padrão.
+  O rtabmap 0.23.13 do conda-forge, usado nos testes, tem os três (`Version.h`), e nele o
+  otimizador padrão é o GTSAM. O binário do apt não conferi; se faltar, o rtabmap avisa
+  "Vertigo robust optimization is not available".
 - *Variâncias 0,0005 e 0,0001:* com a pose verdadeira, cada elo de odometria (~0,42 m) do
   EKF erra 2,0 cm rms (0,0002 m² por eixo, 13 cm no pior) e 0,04° rms. Os valores têm folga
   para as curvas, onde o skid-steer escorrega. No reprocessamento, de 0,0002 a 0,001 deu o
@@ -1440,3 +1442,55 @@ parênteses, só o EKF)
 **Não testado:** Windows/WSL (a velocidade com câmera, RTAB-Map e Nav2 é a etapa 4), RViz,
 o Nav2 com `vslam:=true`, o `rtabmap_viz`, as duas voltas com o `webots_ros2_driver` de
 verdade e o `ros-jazzy-rtabmap-ros` do apt (a nuvem usou o rtabmap 0.23 do conda-forge).
+
+### 2026-10-22 — Correções na documentação do VSLAM
+
+**Pedido.** Kauê perguntou como o VSLAM funciona e qual a diferença entre os algoritmos. A
+resposta é uma página publicada fora do repositório ("Como o robô sabe onde está", com o
+link na conversa). Para escrevê-la, o código do rtabmap 0.23.13, do slam_toolbox 2.8.5 e
+do robot_localization foi conferido contra a documentação do projeto, e algumas frases da
+entrada de 2026-10-21 e do README estavam erradas ou incompletas. Nenhum parâmetro nem
+código mudou.
+
+**O que mudou**
+- `agrobot_webots/config/rtabmap.yaml`, só comentários:
+  - o ICP fez 8 fechamentos falsos virarem 1 (estava "7 viraram 1"; o manual dizia 7 dos 8);
+  - `RGBD/LinearUpdate` e `RGBD/AngularUpdate` são o deslocamento mínimo para criar um nó,
+    não a distância entre nós: a 1 Hz e 0,4 m/s, os nós ficam a ~0,4 m;
+  - o `RGBD/OptimizeMaxError` ficou em 0 porque não pegou os falsos, e não porque o
+    `Optimizer/Robust` deixe de funcionar com ele;
+  - o `RGBD/ProximityPathFilteringRadius` só deixa a entrelinha ao lado de fora da detecção
+    por proximidade pela câmera; a detecção pelo LiDAR ainda tenta os nós a até 10 m.
+- `README.md`:
+  - seção VSLAM: o mapeamento também acha fechamentos por proximidade, pelo LiDAR; na
+    localização o `map → odom` sai a 20 Hz o tempo todo, começa com o robô no primeiro nó do
+    mapa, e a primeira correção espera um segundo reconhecimento;
+  - tópicos: o `/rtabmap/localization_pose` sai também no mapeamento, em quadros com
+    fechamento de laço ou proximidade;
+  - "Known issues": a deriva diz de que teste vem cada número (0,3 m por objetivo era a
+    odometria do driver, antes do EKF; com o EKF, 0,28 m rms em 2 voltas), que o IMU acerta
+    o ângulo e que `vslam:=true` também corrige.
+- Este manual, entrada de 2026-10-21: "~63% da imagem é solo" era um cálculo do plano, não
+  uma medida; saiu a conta "~4 cm por elo, perto do desvio-padrão"; a frase sobre o
+  `Optimizer/Robust` com o `RGBD/OptimizeMaxError` foi corrigida; o Vertigo no rtabmap do
+  conda-forge usado nos testes ficou conferido.
+
+**Por quê**
+- *`Optimizer/Robust` com `RGBD/OptimizeMaxError`:* o rtabmap não avisa que os dois não
+  funcionam juntos, e a descrição do parâmetro diz que, com o `Optimizer/Robust`, os
+  fechamentos desligados são removidos. Com os dois ligados, a conferência do erro mede
+  também o fechamento que a otimização robusta desligou e, se ele passar do limite, desfaz
+  os fechamentos novos daquele quadro (`Rtabmap.cpp`, perto da linha 3965;
+  `computeMaxGraphErrors` em `Graph.cpp`). O motivo do 0 é o medido: com 1,5 ou 2 sobraram
+  7 a 8 falsos.
+- *Detecção por proximidade:* com `RGBD/ProximityPathMaxNeighbors` 10, o rtabmap junta as
+  varreduras dos nós perto da pose estimada (até `RGBD/LocalRadius`, 10 m) e encaixa a
+  atual por ICP, sem a câmera e sem o raio de 1 m (`Rtabmap.cpp`, a partir da linha 2953).
+- *Localização:* `RGBD/StartAtOrigin` põe o robô no primeiro nó do mapa; uma localização
+  só muda o `map → odom` quando o cache de 10 nós da odometria já tem outra
+  (`Rtabmap.cpp`, linha 3911: "Localization was good, but waiting for another one").
+- *Deriva:* o EKF funde o ângulo e o giro do IMU, então o giro da derrapagem aparece; o que
+  nenhum sensor fundido mede é o deslocamento (as rodas são a única fonte de velocidade).
+
+**Como foi conferido:** leitura do código-fonte nas versões instaladas na nuvem; nada foi
+rodado de novo.
