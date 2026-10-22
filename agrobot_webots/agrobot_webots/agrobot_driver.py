@@ -1,12 +1,15 @@
+import array
+import ctypes
 import math
+import time
 
 import rclpy
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
-from sensor_msgs.msg import Imu, JointState, LaserScan
+from sensor_msgs.msg import CameraInfo, Image, Imu, JointState, LaserScan
 from tf2_ros import TransformBroadcaster
 
 # Variâncias da /imu/data. O IMU do Webots não tem ruído; estes valores só
@@ -23,6 +26,18 @@ WHEEL_STD_FLOOR = 0.002             # m/s
 WHEEL_VX_STD_PER_SPEED = 0.10       # 10% de |v|
 WHEEL_VY_STD_PER_SPEED = 0.05       # deriva lateral: 5% de |v| ...
 WHEEL_VY_STD_PER_TURN = 0.05        # ... + 0,05 m/s por rad/s (skid-steer)
+
+# Câmera RGB-D do VSLAM (VslamCamera.proto). Nomes de tópico como os do
+# realsense-ros; a profundidade já sai registrada à cor.
+VSLAM_COLOR_DEVICE = 'vslam_color'
+VSLAM_DEPTH_DEVICE = 'vslam_depth'
+VSLAM_FRAME = 'vslam_camera_optical_frame'
+VSLAM_COLOR_TOPIC = '/vslam_camera/color/image_raw'
+VSLAM_COLOR_INFO_TOPIC = '/vslam_camera/color/camera_info'
+VSLAM_DEPTH_TOPIC = '/vslam_camera/aligned_depth_to_color/image_raw'
+VSLAM_DEPTH_INFO_TOPIC = '/vslam_camera/aligned_depth_to_color/camera_info'
+# Média do custo de publicação no log a cada tantos segundos de simulação.
+VSLAM_LOG_PERIOD = 60.0
 
 WHEEL_JOINTS = [
     'front_left_wheel_joint',
@@ -86,6 +101,8 @@ class AgrobotDriver:
         # Ler a range image antes da primeira amostra derruba o controlador.
         self.next_scan_time = 2 * self.lidar_period / 1000.0
 
+        self.init_vslam_camera(properties)
+
         self.x = 0.0
         self.y = 0.0
         self.yaw = 0.0
@@ -121,7 +138,87 @@ class AgrobotDriver:
             LaserScan, '/scan', qos_profile_sensor_data)
         self.joint_state_publisher = self.node.create_publisher(
             JointState, '/joint_states', 10)
+        if self.vslam_period_ms > 0:
+            # Reliable: é o padrão do rgbd_sync do RTAB-Map; best effort,
+            # como no /scan, não casaria com ele.
+            camera_qos = QoSProfile(
+                depth=5, reliability=ReliabilityPolicy.RELIABLE)
+            self.vslam_color_publisher = self.node.create_publisher(
+                Image, VSLAM_COLOR_TOPIC, camera_qos)
+            self.vslam_color_info_publisher = self.node.create_publisher(
+                CameraInfo, VSLAM_COLOR_INFO_TOPIC, camera_qos)
+            self.vslam_depth_publisher = self.node.create_publisher(
+                Image, VSLAM_DEPTH_TOPIC, camera_qos)
+            self.vslam_depth_info_publisher = self.node.create_publisher(
+                CameraInfo, VSLAM_DEPTH_INFO_TOPIC, camera_qos)
+            self.node.get_logger().info(
+                f'Câmera do VSLAM: {self.vslam_width} x {self.vslam_height} '
+                f'a cada {self.vslam_period_ms} ms.')
+        elif self.vslam_missing:
+            self.node.get_logger().warn(
+                f'{VSLAM_COLOR_DEVICE} ou {VSLAM_DEPTH_DEVICE} não existe no '
+                'robô; a câmera do VSLAM fica desligada.')
         self.node.get_logger().info('Controlador Webots do agrobot iniciado.')
+
+    def init_vslam_camera(self, properties):
+        # O Ros2Camera e o Ros2RangeFinder do webots_ros2_driver carimbam com
+        # o relógio do nó deles e rodam antes do /clock deste passo; cor e
+        # profundidade são publicadas aqui, como o /scan, com um só carimbo.
+        period = int(properties.get('vslamCameraPeriod', 96))
+        self.vslam_period_ms = 0
+        self.vslam_missing = False
+        if period <= 0:
+            return
+        self.vslam_color = self.robot.getDevice(VSLAM_COLOR_DEVICE)
+        self.vslam_depth = self.robot.getDevice(VSLAM_DEPTH_DEVICE)
+        if self.vslam_color is None or self.vslam_depth is None:
+            self.vslam_missing = True
+            return
+        if period % self.time_step != 0:
+            raise ValueError(
+                f'vslamCameraPeriod ({period} ms) tem que ser múltiplo do '
+                f'passo da simulação ({self.time_step} ms).')
+        width = self.vslam_color.getWidth()
+        height = self.vslam_color.getHeight()
+        fov = self.vslam_color.getFov()
+        # Com resolução e FOV iguais, a profundidade fica registrada à cor.
+        if (self.vslam_depth.getWidth(), self.vslam_depth.getHeight()) != (
+                width, height) or abs(self.vslam_depth.getFov() - fov) > 1e-6:
+            raise ValueError(
+                'vslam_color e vslam_depth precisam ter a mesma resolução e '
+                'o mesmo FOV.')
+        self.vslam_period_ms = period
+        self.vslam_width = width
+        self.vslam_height = height
+        self.vslam_camera_info = self.make_camera_info(width, height, fov)
+        self.vslam_color.enable(period)
+        self.vslam_depth.enable(period)
+        # Os dois sensores atualizam a cada período contado de agora. Publicar
+        # pelo tempo inteiro em ms (e não por "now >= próximo", que acumula
+        # erro de ponto flutuante) garante que a imagem é a do carimbo.
+        self.vslam_enable_ms = round(self.robot.getTime() * 1000.0)
+        self.vslam_frames = 0
+        self.vslam_cost = 0.0
+        self.vslam_next_log = VSLAM_LOG_PERIOD
+
+    @staticmethod
+    def make_camera_info(width, height, fov):
+        # Câmera pinhole sem distorção. O FOV do Webots é o horizontal e os
+        # pixels são quadrados. Centro óptico na convenção do OpenCV (centro
+        # do pixel 0 na coordenada 0): (w - 1) / 2.
+        focal = width / (2.0 * math.tan(fov / 2.0))
+        cx = (width - 1) / 2.0
+        cy = (height - 1) / 2.0
+        info = CameraInfo()
+        info.header.frame_id = VSLAM_FRAME
+        info.width = width
+        info.height = height
+        info.distortion_model = 'plumb_bob'
+        info.d = [0.0, 0.0, 0.0, 0.0, 0.0]
+        info.k = [focal, 0.0, cx, 0.0, focal, cy, 0.0, 0.0, 1.0]
+        info.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        info.p = [focal, 0.0, cx, 0.0, 0.0, focal, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
+        return info
 
     def get_motor(self, name):
         motor = self.robot.getDevice(name)
@@ -168,6 +265,68 @@ class AgrobotDriver:
         if now >= self.next_scan_time:
             self.next_scan_time = now + self.lidar_period / 1000.0
             self.publish_scan(stamp)
+        if self.vslam_period_ms > 0:
+            elapsed = round(now * 1000.0) - self.vslam_enable_ms
+            # Como no LiDAR, só depois de 2 períodos: antes da primeira
+            # amostra a imagem ainda não existe.
+            if (elapsed >= 2 * self.vslam_period_ms
+                    and elapsed % self.vslam_period_ms == 0):
+                self.publish_vslam_camera(now, stamp)
+
+    def publish_vslam_camera(self, now, stamp):
+        start = time.perf_counter()
+        try:
+            color = self.vslam_color.getImage()
+        except ValueError:
+            # Ponteiro nulo: o Webots ainda não entregou imagem.
+            return
+        depth_pointer = self.vslam_depth.getRangeImage(data_type='buffer')
+        if not color or not depth_pointer:
+            return
+        width = self.vslam_width
+        height = self.vslam_height
+        # array('B') copia os bytes de uma vez; por lista custaria vários ms.
+        color = array.array('B', color)
+        depth = array.array(
+            'B', ctypes.string_at(depth_pointer, 4 * width * height))
+
+        color_message = Image()
+        color_message.header.stamp = stamp
+        color_message.header.frame_id = VSLAM_FRAME
+        color_message.width = width
+        color_message.height = height
+        color_message.encoding = 'bgra8'
+        color_message.step = 4 * width
+        color_message.data = color
+
+        # Profundidade planar em metros (float32); fora de [minRange,
+        # maxRange] o Webots devolve +inf, que o RTAB-Map trata como inválido.
+        depth_message = Image()
+        depth_message.header.stamp = stamp
+        depth_message.header.frame_id = VSLAM_FRAME
+        depth_message.width = width
+        depth_message.height = height
+        depth_message.encoding = '32FC1'
+        depth_message.step = 4 * width
+        depth_message.data = depth
+
+        info = self.vslam_camera_info
+        info.header.stamp = stamp
+        self.vslam_color_publisher.publish(color_message)
+        self.vslam_color_info_publisher.publish(info)
+        self.vslam_depth_publisher.publish(depth_message)
+        self.vslam_depth_info_publisher.publish(info)
+
+        self.vslam_frames += 1
+        self.vslam_cost += time.perf_counter() - start
+        if now >= self.vslam_next_log:
+            self.vslam_next_log = now + VSLAM_LOG_PERIOD
+            self.node.get_logger().info(
+                f'Câmera do VSLAM: {self.vslam_frames} quadros, '
+                f'{1000.0 * self.vslam_cost / self.vslam_frames:.1f} ms '
+                'por quadro para ler e publicar.')
+            self.vslam_frames = 0
+            self.vslam_cost = 0.0
 
     def publish_joint_states(self, stamp):
         sensors = [

@@ -1,4 +1,6 @@
 import os
+import re
+import shutil
 import tempfile
 
 from launch import LaunchDescription
@@ -23,23 +25,75 @@ from webots_ros2_driver.webots_launcher import WebotsLauncher
 from webots_ros2_driver.webots_controller import WebotsController
 
 
-ODOM_FROM_DRIVER = '<publishOdom>true</publishOdom>'
+ODOM_FROM_DRIVER = re.escape('<publishOdom>true</publishOdom>')
 ODOM_FROM_EKF = '<publishOdom>false</publishOdom>'
+# Qualquer período (o URDF pode ter outro múltiplo de 32 ms).
+CAMERA_ON = r'<vslamCameraPeriod>\s*\d+\s*</vslamCameraPeriod>'
+CAMERA_OFF = '<vslamCameraPeriod>0</vslamCameraPeriod>'
 
 
-def driver_urdf(robot_description, ekf):
-    """Caminho do URDF para o driver; com ekf, o driver não publica /odom."""
-    if not ekf:
+def driver_urdf(robot_description, ekf, camera):
+    """
+    Caminho do URDF para o driver, com as trocas pedidas no launch.
+
+    Com ekf, o driver não publica /odom; sem camera, não liga a câmera do
+    VSLAM (o Webots também deixa de renderizá-la).
+    """
+    replacements = []
+    if ekf:
+        replacements.append((ODOM_FROM_DRIVER, ODOM_FROM_EKF))
+    if not camera:
+        replacements.append((CAMERA_ON, CAMERA_OFF))
+    if not replacements:
         return robot_description
     with open(robot_description) as urdf_file:
         content = urdf_file.read()
-    if ODOM_FROM_DRIVER not in content:
-        raise RuntimeError(
-            f'{ODOM_FROM_DRIVER} não encontrado em {robot_description}')
-    path = os.path.join(tempfile.gettempdir(), 'agrobot_webots_ekf.urdf')
+    for pattern, new in replacements:
+        content, count = re.subn(pattern, new, content)
+        if count == 0:
+            raise RuntimeError(
+                f'{pattern} não encontrado em {robot_description}')
+    path = os.path.join(tempfile.gettempdir(), 'agrobot_webots_driver.urdf')
     with open(path, 'w') as urdf_file:
-        urdf_file.write(content.replace(ODOM_FROM_DRIVER, ODOM_FROM_EKF))
+        urdf_file.write(content)
     return path
+
+
+VSLAM_DB_DIR = os.path.join('~', '.ros', 'agrobot_vslam')
+VSLAM_CAMERA = [
+    ('rgb/image', '/vslam_camera/color/image_raw'),
+    ('rgb/camera_info', '/vslam_camera/color/camera_info'),
+    ('depth/image', '/vslam_camera/aligned_depth_to_color/image_raw'),
+]
+
+
+def flag(context, name):
+    return LaunchConfiguration(name).perform(context).lower() == 'true'
+
+
+def vslam_database(context):
+    """
+    Banco do RTAB-Map e se ele é de mapeamento.
+
+    O padrão é ~/.ros/agrobot_vslam/<mundo>.db. O mapeamento apaga o banco ao
+    começar; a localização roda numa cópia, para o mapa salvo não mudar.
+    """
+    path = LaunchConfiguration('vslam_db').perform(context)
+    if not path:
+        world = LaunchConfiguration('world').perform(context)
+        name = os.path.splitext(os.path.basename(world))[0]
+        path = os.path.join(VSLAM_DB_DIR, name + '.db')
+    path = os.path.abspath(os.path.expanduser(path))
+    if not flag(context, 'vslam_localization'):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return path, True
+    if not os.path.isfile(path):
+        raise RuntimeError(
+            f'vslam_localization:=true precisa de um mapa salvo, e {path} '
+            'não existe. Rode antes com vslam:=true.')
+    copy = os.path.join(tempfile.gettempdir(), 'agrobot_vslam_localization.db')
+    shutil.copyfile(path, copy)
+    return copy, False
 
 
 def generate_launch_description():
@@ -67,10 +121,13 @@ def generate_launch_description():
 
     def start_driver(context):
         ekf = LaunchConfiguration('ekf').perform(context).lower() == 'true'
+        camera = (
+            LaunchConfiguration('camera').perform(context).lower() == 'true')
         return [WebotsController(
             robot_name='agrobot',
             parameters=[
-                {'robot_description': driver_urdf(robot_description, ekf)},
+                {'robot_description':
+                    driver_urdf(robot_description, ekf, camera)},
                 {'use_sim_time': True},
             ],
             output='screen',
@@ -104,59 +161,137 @@ def generate_launch_description():
 
     # SLAM com o LiDAR: /map, map -> odom e /pose (com covariância do scan
     # matching). O nó é lifecycle: o launch o configura e ativa.
-    slam = IfCondition(LaunchConfiguration('slam'))
-    slam_toolbox = LifecycleNode(
-        package='slam_toolbox',
-        executable='async_slam_toolbox_node',
-        name='slam_toolbox',
-        namespace='',
-        output='screen',
-        parameters=[
+    def start_slam(context):
+        if not flag(context, 'slam'):
+            return []
+        vslam_on = flag(context, 'vslam')
+        slam_parameters = [
             os.path.join(webots_share, 'config', 'slam_toolbox.yaml'),
             {'use_sim_time': True},
-        ],
-        condition=slam,
-    )
-    slam_configure = EmitEvent(
-        event=ChangeState(
-            lifecycle_node_matcher=matches_action(slam_toolbox),
-            transition_id=Transition.TRANSITION_CONFIGURE,
-        ),
-        condition=slam,
-    )
-    slam_activate = RegisterEventHandler(
-        OnStateTransition(
-            target_lifecycle_node=slam_toolbox,
-            start_state='configuring',
-            goal_state='inactive',
-            entities=[EmitEvent(event=ChangeState(
+        ]
+        if vslam_on:
+            # Com vslam:=true o dono de map -> odom é o RTAB-Map. O
+            # slam_toolbox continua, para comparação: sem TF, com o mapa em
+            # /slam_toolbox/map e num frame (slam_map) que não existe no TF.
+            slam_parameters.append({
+                'transform_publish_period': 0.0,
+                'map_frame': 'slam_map',
+                'map_name': '/slam_toolbox/map',
+            })
+        slam_toolbox = LifecycleNode(
+            package='slam_toolbox',
+            executable='async_slam_toolbox_node',
+            name='slam_toolbox',
+            namespace='',
+            output='screen',
+            parameters=slam_parameters,
+        )
+        slam_configure = EmitEvent(
+            event=ChangeState(
                 lifecycle_node_matcher=matches_action(slam_toolbox),
-                transition_id=Transition.TRANSITION_ACTIVATE,
-            ))],
-        ),
-        condition=slam,
-    )
+                transition_id=Transition.TRANSITION_CONFIGURE,
+            ),
+        )
+        slam_activate = RegisterEventHandler(
+            OnStateTransition(
+                target_lifecycle_node=slam_toolbox,
+                start_state='configuring',
+                goal_state='inactive',
+                entities=[EmitEvent(event=ChangeState(
+                    lifecycle_node_matcher=matches_action(slam_toolbox),
+                    transition_id=Transition.TRANSITION_ACTIVATE,
+                ))],
+            ),
+        )
+        actions = [slam_toolbox, slam_configure, slam_activate]
+        if vslam_on:
+            # A elipse no frame map vem do /pose do slam_toolbox, que com o
+            # VSLAM fica em slam_map. Ela volta, com a pose do RTAB-Map, numa
+            # etapa seguinte.
+            return actions
+        # Rodas + IMU + pose do slam_toolbox -> /odometry/map (a elipse no
+        # frame map). Os serviços ganham prefixo para não colidir com o
+        # ekf_filter_node.
+        actions.append(Node(
+            package='robot_localization',
+            executable='ekf_node',
+            name='ekf_map_node',
+            output='screen',
+            parameters=[
+                os.path.join(webots_share, 'config', 'ekf_map.yaml'),
+                {'use_sim_time': True},
+            ],
+            remappings=[
+                ('odometry/filtered', '/odometry/map'),
+                ('set_pose', '/ekf_map_node/set_pose'),
+                ('enable', '/ekf_map_node/enable'),
+                ('reset', '/ekf_map_node/reset'),
+                ('toggle', '/ekf_map_node/toggle'),
+            ],
+        ))
+        return actions
 
-    # Rodas + IMU + pose do slam_toolbox -> /odometry/map (a elipse no frame
-    # map). Os serviços ganham prefixo para não colidir com o ekf_filter_node.
-    ekf_map_node = Node(
-        package='robot_localization',
-        executable='ekf_node',
-        name='ekf_map_node',
-        output='screen',
-        parameters=[
-            os.path.join(webots_share, 'config', 'ekf_map.yaml'),
-            {'use_sim_time': True},
-        ],
-        remappings=[
-            ('odometry/filtered', '/odometry/map'),
-            ('set_pose', '/ekf_map_node/set_pose'),
-            ('enable', '/ekf_map_node/enable'),
-            ('reset', '/ekf_map_node/reset'),
-            ('toggle', '/ekf_map_node/toggle'),
-        ],
-        condition=slam,
-    )
+    slam = OpaqueFunction(function=start_slam)
+
+    # VSLAM com a câmera RGB-D: o rgbd_sync junta cor, profundidade e
+    # camera_info numa mensagem só, e o rtabmap publica map -> odom, lendo a
+    # odometria do TF odom -> base_link (do EKF).
+    def start_vslam(context):
+        if not flag(context, 'vslam'):
+            return []
+        if not flag(context, 'ekf'):
+            raise RuntimeError(
+                'vslam:=true precisa de ekf:=true: o RTAB-Map usa a odometria '
+                'do EKF.')
+        if not flag(context, 'camera'):
+            raise RuntimeError('vslam:=true precisa da câmera (camera:=true).')
+        database, mapping = vslam_database(context)
+        config = os.path.join(webots_share, 'config', 'rtabmap.yaml')
+        rtabmap_parameters = {
+            'database_path': database,
+            'delete_db_on_start': mapping,
+            'Mem/IncrementalMemory': 'true' if mapping else 'false',
+            'Mem/InitWMWithAllNodes': 'false' if mapping else 'true',
+        }
+        if not mapping:
+            # O robô nasce no mesmo lugar do mundo que no mapeamento, isto é,
+            # no primeiro nó do mapa. Sem isso, a localização começaria onde
+            # o mapeamento terminou.
+            rtabmap_parameters['RGBD/StartAtOrigin'] = 'true'
+        nodes = [
+            Node(
+                package='rtabmap_sync',
+                executable='rgbd_sync',
+                name='rgbd_sync',
+                namespace='rtabmap',
+                output='screen',
+                parameters=[config, {'use_sim_time': True}],
+                remappings=VSLAM_CAMERA,
+            ),
+            Node(
+                package='rtabmap_slam',
+                executable='rtabmap',
+                name='rtabmap',
+                namespace='rtabmap',
+                output='screen',
+                parameters=[config, rtabmap_parameters,
+                            {'use_sim_time': True}],
+                remappings=[('scan', '/scan')],
+            ),
+        ]
+        if flag(context, 'rtabmap_viz'):
+            nodes.append(Node(
+                package='rtabmap_viz',
+                executable='rtabmap_viz',
+                name='rtabmap_viz',
+                namespace='rtabmap',
+                output='screen',
+                parameters=[config, {'use_sim_time': True}],
+                remappings=[('scan', '/scan')],
+            ))
+        return nodes
+
+    vslam = OpaqueFunction(function=start_vslam)
 
     navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -165,9 +300,14 @@ def generate_launch_description():
     )
 
     def start_rviz(context):
-        # Com slam, o RViz usa o frame map e mostra o /map e as elipses.
-        slam_on = LaunchConfiguration('slam').perform(context).lower() == 'true'
-        config = 'nav_slam.rviz' if slam_on else 'nav.rviz'
+        # Com slam ou vslam, o RViz usa o frame map; com slam, mostra o /map
+        # e as elipses, e com vslam, a grade e o caminho do RTAB-Map.
+        if flag(context, 'vslam'):
+            config = 'nav_vslam.rviz'
+        elif flag(context, 'slam'):
+            config = 'nav_slam.rviz'
+        else:
+            config = 'nav.rviz'
         return [Node(
             package='rviz2',
             executable='rviz2',
@@ -192,14 +332,19 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('ekf', default_value='false'),
         DeclareLaunchArgument('slam', default_value='false'),
+        DeclareLaunchArgument('camera', default_value='true'),
+        DeclareLaunchArgument('vslam', default_value='false'),
+        DeclareLaunchArgument('vslam_localization', default_value='false'),
+        DeclareLaunchArgument('vslam_db', default_value=''),
+        DeclareLaunchArgument('rtabmap_viz', default_value='false'),
+        # Antes do Webots: se faltar o ekf, a câmera ou o mapa salvo, o launch
+        # para com o erro sem abrir o Webots.
+        vslam,
         webots,
         agrobot_driver,
         robot_state_publisher,
         ekf_node,
-        slam_toolbox,
-        slam_configure,
-        slam_activate,
-        ekf_map_node,
+        slam,
         navigation,
         rviz,
         shutdown_on_webots_exit,
