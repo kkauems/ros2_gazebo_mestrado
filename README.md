@@ -233,8 +233,8 @@ compares directly with `odom`/`map`.
 
 To compare runs, [summarize_missions.py](agrobot_webots/scripts/summarize_missions.py)
 prints one Markdown table row per run: waypoints reached, time, true distance, true error at
-the last waypoint, ATE (RMS of the localization error along the trajectory) and the largest
-localization error:
+the last waypoint, ATE (RMS of the localization error along the trajectory), and the largest
+position and heading errors:
 
 ```bash
 python3 agrobot_webots/scripts/summarize_missions.py ~/.ros/agrobot_missions

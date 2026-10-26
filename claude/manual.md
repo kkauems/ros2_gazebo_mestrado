@@ -1199,7 +1199,8 @@ perdido). Os CSVs ficam em `~/.ros/agrobot_missions/`.
   e o nome do mundo.
 - `agrobot_webots/config/waypoints/` (novo): as três listas dos casos de estudo.
 - `agrobot_webots/scripts/summarize_missions.py` (novo): lê os CSVs e imprime uma linha de
-  tabela Markdown por rodada (as tabelas abaixo saíram dele).
+  tabela Markdown por rodada: waypoints atingidos, tempo, distância verdadeira, erro final,
+  ATE, maior erro de posição e maior erro de yaw (as tabelas abaixo saíram dele).
 - `agrobot_webots/rviz/nav.rviz` e `nav_slam.rviz`: display "Waypoints".
 - `agrobot_webots/setup.py` e `package.xml`: instala as listas, entry point
   `waypoint_mission`, dependências `nav2_common`, `nav2_msgs`, `python3-yaml` e
