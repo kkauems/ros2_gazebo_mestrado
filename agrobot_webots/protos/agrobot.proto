@@ -40,6 +40,45 @@ PROTO agrobot [
         translation 0 0 0.35
         name "accelerometer"
       }
+      # Câmera RGB-D do VSLAM (RTAB-Map): cor e profundidade na mesma pose,
+      # mesma resolução e mesmo FOV, então a profundidade já sai registrada à
+      # cor (um só camera_info). Pose do vslam_camera_link do URDF: (0,45; 0;
+      # 0,38) do base_link, 15° para baixo. FOV de 87° x 56°, como a
+      # profundidade da Intel RealSense D455; 0,5 a 6 m. Sem ruído por ora.
+      # O driver só liga os dois com a propriedade enableVslamCamera (vslam:=true).
+      Pose {
+        translation 0.45 0 0.38
+        rotation 0 1 0 0.2618
+        children [
+          Camera {
+            name "vslam_color"
+            fieldOfView 1.518
+            width 424
+            height 240
+            near 0.05
+          }
+          RangeFinder {
+            name "vslam_depth"
+            fieldOfView 1.518
+            width 424
+            height 240
+            near 0.05
+            minRange 0.5
+            maxRange 6.0
+            resolution 0.001
+          }
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.02 0.02 0.02
+              roughness 1
+              metalness 0
+            }
+            geometry Box {
+              size 0.03 0.12 0.03
+            }
+          }
+        ]
+      }
       Lidar {
         translation 0.650000 0.000000 -0.100000
         name "front_lidar"

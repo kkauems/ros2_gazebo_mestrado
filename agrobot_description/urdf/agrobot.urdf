@@ -9,6 +9,18 @@
         <enabled>false</enabled>
       </ros>
     </device>
+    <!-- Câmera RGB-D do VSLAM: cor e profundidade são publicadas pelo
+         AgrobotDriver (mesmo carimbo do /scan), não pelos plugins -->
+    <device reference="vslam_color" type="Camera">
+      <ros>
+        <enabled>false</enabled>
+      </ros>
+    </device>
+    <device reference="vslam_depth" type="RangeFinder">
+      <ros>
+        <enabled>false</enabled>
+      </ros>
+    </device>
     <plugin type="agrobot_webots.agrobot_driver.AgrobotDriver">
       <wheelRadius>0.22</wheelRadius>
       <wheelSeparation>0.96</wheelSeparation>
@@ -16,6 +28,9 @@
       <!-- /odom + TF odom->base_link pelo driver; o simulation.launch.py
            troca para false com ekf:=true (quem publica é o EKF) -->
       <publishOdom>true</publishOdom>
+      <!-- liga a câmera RGB-D (/vslam_camera/...); o simulation.launch.py
+           troca para true com vslam:=true -->
+      <enableVslamCamera>false</enableVslamCamera>
     </plugin>
   </webots>
 
@@ -339,6 +354,25 @@
     <parent link="base_link"/>
     <child link="camera_link"/>
     <origin xyz="0.45 0 0.38" rpy="0 0 0"/>
+  </joint>
+
+  <!-- SENSOR: CÂMERA RGB-D DO VSLAM (Webots/RTAB-Map). Mesma pose do
+       Pose com vslam_color e vslam_depth no agrobot.proto: 15° para baixo. -->
+  <link name="vslam_camera_link"/>
+
+  <joint name="vslam_camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="vslam_camera_link"/>
+    <origin xyz="0.45 0 0.38" rpy="0 0.2618 0"/>
+  </joint>
+
+  <!-- Frame óptico (REP 103): z para a frente, x para a direita, y para baixo -->
+  <link name="vslam_camera_optical_frame"/>
+
+  <joint name="vslam_camera_optical_joint" type="fixed">
+    <parent link="vslam_camera_link"/>
+    <child link="vslam_camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
   </joint>
 
   <!-- SENSOR: LIDAR FRONTAL BAIXO (Webots/Nav2). Plano do scan a ~13 cm do

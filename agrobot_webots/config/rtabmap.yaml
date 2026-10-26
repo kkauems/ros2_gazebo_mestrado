@@ -1,0 +1,87 @@
+# RTAB-Map (rtabmap_ros 0.23, Jazzy) para o Agrobot no Webots: VSLAM com a
+# câmera RGB-D (vslam_color + vslam_depth). Usado com vslam:=true, que exige
+# ekf:=true.
+#
+# Entradas: cor + profundidade + camera_info (/vslam_camera/..., publicados
+# pelo AgrobotDriver com o mesmo carimbo), juntados pelo rgbd_sync; a
+# odometria vem do TF odom -> base_link (o EKF); o /scan só monta a grade.
+# Saídas: TF map -> odom (dono do frame map com vslam:=true), /rtabmap/map
+# (grade 2D feita com o LiDAR, não com a profundidade) e
+# /rtabmap/localization_pose.
+#
+# Os nós rodam no namespace rtabmap, por isso os nomes completos abaixo.
+# Os parâmetros do núcleo ("Grupo/Nome") são declarados pelo nó como texto:
+# os valores vão sempre entre aspas ("true", "25").
+
+/rtabmap/rgbd_sync:
+  ros__parameters:
+    use_sim_time: true
+    # Sincronismo exato: o driver carimba cor e profundidade com o mesmo
+    # robot.getTime().
+    approx_sync: false
+    topic_queue_size: 10
+    sync_queue_size: 10
+    qos: 0              # padrão do sistema (reliable), como o driver publica
+    qos_camera_info: 0
+
+/rtabmap/rtabmap:
+  ros__parameters:
+    use_sim_time: true
+
+    frame_id: base_link
+    odom_frame_id: odom         # odometria pelo TF (o EKF)
+    map_frame_id: map
+    publish_tf: true            # dono de map -> odom com vslam:=true
+    tf_delay: 0.05              # 20 Hz, como o slam_toolbox
+    wait_for_transform: 0.2
+
+    subscribe_rgbd: true        # /rtabmap/rgbd_image, do rgbd_sync
+    subscribe_depth: false
+    subscribe_rgb: false
+    subscribe_scan: true        # só para a grade (Grid/Sensor 0)
+    approx_sync: true           # rgbd_image + /scan não têm o mesmo carimbo
+    qos_scan: 2                 # best effort: o /scan sai com sensor_data;
+                                # reliable (o padrão) nunca casaria
+    topic_queue_size: 10
+    sync_queue_size: 10
+
+    # Variância de cada elo de odometria (o TF não tem covariância).
+    # Valores padrão; calibrar com a pose verdadeira (/ground_truth/odom).
+    odom_tf_linear_variance: 0.001
+    odom_tf_angular_variance: 0.001
+
+    # /rtabmap/localization_pose só em fechamento de laço ou proximidade.
+    pub_loc_pose_only_when_localizing: true
+
+    # database_path e delete_db_on_start vêm do launch (argumento vslam_db).
+
+    # ---- Núcleo do RTAB-Map (texto) ----
+    Rtabmap/DetectionRate: "1"          # Hz; com odometria externa basta
+    Reg/Strategy: "0"                   # 0 = só visual (VSLAM puro, sem ICP do LiDAR)
+    Reg/Force3DoF: "true"               # x, y, yaw, como o two_d_mode do EKF
+    Optimizer/GravitySigma: "0"         # sem elos de IMU num grafo 3DoF
+    RGBD/LinearUpdate: "0.1"
+    RGBD/AngularUpdate: "0.1"
+    RGBD/OptimizeFromGraphEnd: "false"  # mapa ancorado no 1o nó (= origem do odom)
+    Mem/IncrementalMemory: "true"       # mapeamento
+    Mem/InitWMWithAllNodes: "false"
+
+    # A profundidade vai até 6 m (+Inf depois); pontos longe pioram o registro.
+    Vis/MaxDepth: "5.0"
+    Kp/MaxDepth: "5.0"
+
+    # Fileiras repetitivas: exigir mais pontos casados para aceitar um laço.
+    Vis/MinInliers: "25"                # padrão 20
+    RGBD/OptimizeMaxError: "3.0"        # rejeita laços incoerentes com o grafo
+    RGBD/ProximityOdomGuess: "true"
+    # Menor que os 1,8 m entre entrelinhas: não procura proximidade na vizinha.
+    RGBD/ProximityPathFilteringRadius: "1.0"
+    Mem/STMSize: "30"                   # padrão 10
+
+    # Grade de ocupação pelo LiDAR em /rtabmap/map (para um Nav2 com mapa
+    # depois). Nada de profundidade na grade.
+    Grid/Sensor: "0"                    # 0 = laser scan
+    Grid/CellSize: "0.05"               # mesma resolução do slam_toolbox
+    Grid/RangeMax: "5.0"                # obstacle_max_range do nav2_params.yaml
+
+    Mem/SaveDepth16Format: "true"       # banco menor (profundidade em mm)

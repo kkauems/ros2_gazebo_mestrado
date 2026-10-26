@@ -1324,3 +1324,147 @@ para um trabalho separado.
 
 **Não testado:** Windows/WSL, RViz (os marcadores foram conferidos pelo tópico, não na tela),
 VSLAM (próximo PR).
+
+### 2026-10-26 — RTAB-Map (VSLAM) no launch, com uma câmera RGB-D simulada
+
+**Pedido.** Kauê notou que o RTAB-Map (VSLAM) só existia como estudo
+([estudo_vslam.md](estudo_vslam.md)) e pediu para colocá-lo no launch. É o segundo PR do
+trabalho dos waypoints: os casos de estudo do registro anterior agora rodam também com VSLAM.
+
+**Para usar**
+```bash
+sudo apt install ros-jazzy-rtabmap-ros
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots simulation.launch.py ekf:=true vslam:=true
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
+    waypoints:=caso2_plantacao_ida_volta
+ros2 launch agrobot_webots simulation.launch.py ekf:=true slam:=true vslam:=true   # os dois SLAMs
+```
+`rtabmap_viz:=true` abre a janela do RTAB-Map. O banco fica em
+`~/.ros/agrobot_vslam/<mundo>.db` (ou em `vslam_db:=<caminho>`) e é apagado a cada início:
+por enquanto o RTAB-Map só mapeia.
+
+**O que mudou**
+- `agrobot_webots/protos/agrobot.proto`: câmera RGB-D, um `Camera` (`vslam_color`) e um
+  `RangeFinder` (`vslam_depth`) na mesma pose, (0,45; 0; 0,38) do `base_link`, inclinados
+  15° para baixo. 424 × 240, campo de visão horizontal de 1,518 rad (87°, como a
+  profundidade da RealSense D455), profundidade de 0,5 a 6 m, sem ruído. Uma caixinha preta
+  marca a câmera no modelo.
+- `agrobot_description/urdf/agrobot.urdf`: links `vslam_camera_link` (mesma pose) e
+  `vslam_camera_optical_frame` (REP 103: z para a frente, x para a direita, y para baixo).
+  Os dois dispositivos ficam com `<enabled>false</enabled>`, para os plugins do
+  `webots_ros2_driver` não publicarem nada deles. Propriedade nova do plugin:
+  `enableVslamCamera` (`false`).
+- `agrobot_webots/agrobot_webots/agrobot_driver.py`: com `enableVslamCamera`, liga os dois
+  dispositivos a cada 3 passos (96 ms, o período do LiDAR) e publica, com o mesmo carimbo:
+  - `/vslam_camera/color/image_raw` (`bgra8`) e `/vslam_camera/color/camera_info`;
+  - `/vslam_camera/aligned_depth_to_color/image_raw` (`32FC1`, metros, +Inf fora do
+    alcance) e o `camera_info` dela.
+
+  O `camera_info` sai do campo de visão: f = largura / (2 tan(fov/2)), centro no meio da
+  imagem, sem distorção. O driver confere que cor e profundidade têm o mesmo tamanho e o
+  mesmo campo de visão. A profundidade é copiada direto do buffer do Webots
+  (`ctypes.string_at`); ler como lista custava ~5 ms por quadro.
+- `agrobot_webots/config/rtabmap.yaml` (novo): parâmetros do `rgbd_sync` e do `rtabmap`
+  (motivos abaixo).
+- `agrobot_webots/launch/simulation.launch.py`:
+  - argumentos `vslam`, `vslam_db` e `rtabmap_viz`. `vslam:=true` sem `ekf:=true` para o
+    launch com erro;
+  - liga a câmera trocando `enableVslamCamera` no URDF entregue ao driver (o mesmo
+    mecanismo do `publishOdom` com o EKF);
+  - sobe `rgbd_sync` e `rtabmap` no namespace `rtabmap` (e o `rtabmap_viz`, se pedido);
+  - Nav2 em `map` também com `vslam:=true`; o modo nos CSVs das missões vira `ekf+vslam`
+    ou `ekf+slam+vslam`;
+  - modo combinado (`slam:=true vslam:=true`): o slam_toolbox sobe com
+    `transform_publish_period: 0`, `map_frame: slam_map` e o mapa em `/slam_toolbox/map`.
+    O `ekf_map_node` não sobe, porque a pose dele viria do `/pose`, que fica em
+    `slam_map`;
+  - o RViz usa `nav_vslam.rviz` com `vslam:=true`.
+- `agrobot_webots/rviz/nav_vslam.rviz` (novo): o `nav_slam.rviz` com `/rtabmap/map`, a
+  imagem da câmera e os waypoints.
+- `agrobot_webots/package.xml`: `rtabmap_ros`.
+- `README.md`: seção "Visual SLAM (RTAB-Map)", argumentos, dependência, tópicos, sensores,
+  arquitetura, problema conhecido e próximos passos.
+
+**Por quê**
+- **A câmera publicada pelo nosso driver**, e não pelos plugins do `webots_ros2_driver`:
+  assim cor, profundidade, `/scan` e odometria saem com o mesmo carimbo (o tempo do Webots
+  naquele passo), e o `rgbd_sync` pode usar sincronismo exato.
+- **424 × 240 a ~10 Hz**: o estudo sugeria começar baixo por causa da banda entre o Webots
+  no Windows e o controlador no WSL. 424 × 240 é uma das resoluções da RealSense.
+- **Profundidade já registrada**: cor e profundidade na mesma pose, com o mesmo tamanho e o
+  mesmo campo de visão, então um `camera_info` serve para as duas e não há reprojeção.
+- **Odometria do EKF pelo TF, sem odometria visual**: o EKF (rodas + IMU) já é bom na
+  simulação, e uma odometria visual a mais disputaria CPU. O RTAB-Map só corrige a pose
+  quando fecha um laço. Por isso `vslam:=true` exige `ekf:=true`.
+- **`Reg/Strategy 0` (só visual)**: para o estudo separar VSLAM de SLAM com LiDAR, o
+  RTAB-Map não usa o LiDAR para registrar os laços. O `/scan` só monta a grade
+  (`Grid/Sensor 0`), que assim sai comparável à do slam_toolbox e não marca o chão como
+  obstáculo.
+- **`Reg/Force3DoF`**: x, y e yaw, como o EKF (`two_d_mode`).
+- **Defesas contra laços errados entre fileiras iguais**: `Vis/MinInliers 25` (padrão 20),
+  `RGBD/OptimizeMaxError 3` (rejeita um laço que deixa o grafo incoerente) e
+  `RGBD/ProximityPathFilteringRadius 1.0` (menor que os 1,8 m entre entrelinhas).
+- **Um só dono de `map → odom`**: no modo combinado é o RTAB-Map; o slam_toolbox continua
+  mapeando e publicando `/pose` num frame fora da árvore de TF, para gravar e comparar.
+
+**Como foi validado** (nuvem Linux, sem GPU; Webots R2025a headless, driver real,
+rtabmap_ros 0.23 do RoboStack, Nav2 1.3.13)
+- Tópicos da câmera, conferidos com o robô andando na plantação: cor, profundidade e
+  `camera_info` com o mesmo carimbo (30 de 30 mensagens), 96 ms de tempo de simulação entre
+  quadros (10,4 Hz), 424 × 240, `bgra8` e `32FC1`, frame `vslam_camera_optical_frame`.
+- `/rtabmap/map` não vazio (277 × 232 células na plantação, 123 × 124 na arena). O
+  RTAB-Map adiciona ~1 nó por segundo de simulação, com 10 a 240 ms por iteração.
+- TF: no modo combinado, o `/tf` só tem `map → odom` e `odom → base_link` como transformações
+  dinâmicas (nenhum `slam_map → odom`); `/pose` e `/slam_toolbox/map` saem em `slam_map`.
+- Fator de tempo real (tempo de simulação / tempo de relógio durante a missão):
+
+| Mundo | Sem câmera | Com câmera e RTAB-Map |
+|---|---|---|
+| Arena | 0,99 | 0,94 |
+| Plantação | 0,93 | 0,45 |
+
+  Na plantação, renderizar as plantas custa mais que o RTAB-Map. No WSL a banda da imagem
+  ainda vai somar a isso.
+- `ament_flake8` e `ament_pep257` sem erros novos nos arquivos alterados (os avisos de
+  ordem de import do `agrobot_driver.py` e do `simulation.launch.py` já existiam); o
+  `rtabmap.yaml` e o `nav_vslam.rviz` carregam como YAML.
+
+**Missões com VSLAM** (mesmas colunas do registro anterior)
+
+| Caso | Modo | Atingidos | Tempo (s) | Distância (m) | Erro final (m) | ATE (m) | Erro máx. (m) | Yaw máx. (°) |
+|---|---|---|---|---|---|---|---|---|
+| 1 arena | EKF + VSLAM | 5/5 | 77 | 10,5 | 0,19 | 0,08 | 0,14 | 3,5 |
+| 1 arena | EKF + SLAM + VSLAM | 5/5 | 76 | 10,6 | 0,22 | 0,08 | 0,16 | 6,1 |
+| 2 ida e volta | EKF + VSLAM, 1ª rodada | 3/5 | 239 | 25,9 | 7,87 | 0,53 | 3,70 | 10,7 |
+| 2 ida e volta | EKF + VSLAM, 2ª rodada | 5/5 | 116 | 25,9 | 0,09 | 0,14 | 0,27 | 5,6 |
+| 3 serpentina | EKF + VSLAM | 9/11 | 339 | 59,4 | 6,80 | 5,84 | 9,70 | 16,7 |
+
+Para comparar, com EKF sozinho (registro anterior): arena ATE 0,08 m, caso 2 0,10 m, caso 3
+0,16 m, todos os waypoints atingidos.
+
+- **Arena:** o RTAB-Map acha poucos pontos visuais nas paredes e no chão lisos e rejeita os
+  laços ("Not enough inliers 0/25"). O `map → odom` fica na identidade e a pose é a do EKF.
+- **Caso 2, 2ª rodada:** só laços entre nós vizinhos (o robô parado no mesmo lugar). Mesmo
+  resultado do EKF.
+- **Caso 2, 1ª rodada:** na cabeceira leste o robô entrou na entrelinha y = 3,6 em vez da
+  1,8 (navegação: o EKF estava 0,3 a 0,5 m errado para o lado ali), e o waypoint seguinte ficou sem
+  caminho. O RTAB-Map rejeitou 7 laços errados (o grafo ficava 46° a 79° incoerente), mas no
+  fim aceitou um entre a cabeceira leste e o meio da entrelinha 3,6, a 4 m dali. A pose pulou
+  3,7 m ao longo da entrelinha.
+- **Caso 3:** na cabeceira oeste (t ≈ 140 s), um laço errado ligou a vista da cabeceira ao
+  meio da entrelinha y = 0, e a pose pulou ~6 m. O robô "atingiu" 9 waypoints pela pose
+  estimada, mas terminou a 6,8 m da partida. Foram 26 laços rejeitados nessa rodada.
+- **Conclusão para o estudo:** na plantação, os laços visuais confundem lugares parecidos
+  (fileiras e cabeceiras iguais). Em 2 de 3 rodadas um laço errado passou pelas defesas do
+  `rtabmap.yaml`. Também mostra por que olhar o erro verdadeiro e não só os waypoints
+  "atingidos". Ajustes que valem testar (nenhum testado aqui): exigir mais pontos casados
+  (`Vis/MinInliers`), subir o limiar de hipótese de laço (`Rtabmap/LoopThr`, padrão 0,11) ou
+  validar os laços também com o LiDAR (`Reg/Strategy 2`, visual + ICP). O último mistura o
+  LiDAR no VSLAM, o que muda a comparação.
+
+**Não testado:** Windows/WSL (banda e fator de tempo real com a câmera), RViz (o
+`nav_vslam.rviz` não foi aberto), `rtabmap_viz`, modo de localização num mapa salvo.

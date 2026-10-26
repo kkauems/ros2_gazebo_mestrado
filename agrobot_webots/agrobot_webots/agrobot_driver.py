@@ -1,12 +1,13 @@
+import ctypes
 import math
 
 import rclpy
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import qos_profile_sensor_data, QoSProfile
 from rosgraph_msgs.msg import Clock
-from sensor_msgs.msg import Imu, JointState, LaserScan
+from sensor_msgs.msg import CameraInfo, Image, Imu, JointState, LaserScan
 from tf2_ros import TransformBroadcaster
 
 # Variâncias da /imu/data. O IMU do Webots não tem ruído; estes valores só
@@ -104,6 +105,28 @@ class AgrobotDriver:
         # Ler a range image antes da primeira amostra derruba o controlador.
         self.next_scan_time = 2 * self.lidar_period / 1000.0
 
+        # Câmera RGB-D do VSLAM (vslam_color + vslam_depth no agrobot.proto),
+        # ligada só com enableVslamCamera (vslam:=true): renderizar custa.
+        # Publicada aqui, e não pelos plugins do webots_ros2_driver, para ter
+        # o mesmo carimbo do /scan e da odometria.
+        self.vslam_color = None
+        self.vslam_depth = None
+        if properties.get(
+                'enableVslamCamera', 'false').strip().lower() == 'true':
+            self.vslam_color = self.robot.getDevice('vslam_color')
+            self.vslam_depth = self.robot.getDevice('vslam_depth')
+        if self.vslam_color is not None and self.vslam_depth is not None:
+            # Mesmo período do LiDAR (3 passos de 32 ms, ~10,4 Hz), contado
+            # em passos inteiros: com tempo em ponto flutuante a conta às
+            # vezes espera 4 passos e sai de fase com o sensor.
+            self.camera_steps = 3
+            self.vslam_color.enable(self.camera_steps * self.time_step)
+            self.vslam_depth.enable(self.camera_steps * self.time_step)
+            self.camera_info = self.make_camera_info()
+        else:
+            self.vslam_color = self.vslam_depth = None
+        self.step_count = 0
+
         # Pose verdadeira pelo Supervisor (supervisor TRUE no agrobot.proto),
         # só para medir erros: nada da localização a usa.
         self.robot_node = (self.robot.getSelf()
@@ -147,6 +170,19 @@ class AgrobotDriver:
         if self.robot_node is not None:
             self.ground_truth_publisher = self.node.create_publisher(
                 Odometry, '/ground_truth/odom', 10)
+        if self.vslam_color is not None:
+            # Reliable: o rgbd_sync do RTAB-Map assina reliable por padrão.
+            camera_qos = QoSProfile(depth=5)
+            self.color_publisher = self.node.create_publisher(
+                Image, '/vslam_camera/color/image_raw', camera_qos)
+            self.color_info_publisher = self.node.create_publisher(
+                CameraInfo, '/vslam_camera/color/camera_info', camera_qos)
+            self.depth_publisher = self.node.create_publisher(
+                Image, '/vslam_camera/aligned_depth_to_color/image_raw',
+                camera_qos)
+            self.depth_info_publisher = self.node.create_publisher(
+                CameraInfo, '/vslam_camera/aligned_depth_to_color/camera_info',
+                camera_qos)
         self.node.get_logger().info('Controlador Webots do agrobot iniciado.')
 
     def get_motor(self, name):
@@ -195,6 +231,73 @@ class AgrobotDriver:
         if now >= self.next_scan_time:
             self.next_scan_time = now + self.lidar_period / 1000.0
             self.publish_scan(stamp)
+        self.step_count += 1
+        # Espera 2 períodos antes da 1a leitura, como o LiDAR.
+        if (self.vslam_color is not None
+                and self.step_count >= 2 * self.camera_steps
+                and self.step_count % self.camera_steps == 0):
+            self.publish_rgbd(stamp)
+
+    def make_camera_info(self):
+        """Intrínsecos da câmera pinhole do Webots (sem distorção)."""
+        width = self.vslam_color.getWidth()
+        height = self.vslam_color.getHeight()
+        fov = self.vslam_color.getFov()
+        if (width, height) != (self.vslam_depth.getWidth(),
+                               self.vslam_depth.getHeight()) \
+                or abs(fov - self.vslam_depth.getFov()) > 1e-6:
+            raise RuntimeError(
+                'vslam_color e vslam_depth precisam de mesma resolução e FOV')
+        # fieldOfView do Webots é o horizontal; pixels quadrados.
+        f = width / (2.0 * math.tan(fov / 2.0))
+        cx = (width - 1) / 2.0
+        cy = (height - 1) / 2.0
+        info = CameraInfo()
+        info.header.frame_id = 'vslam_camera_optical_frame'
+        info.width = width
+        info.height = height
+        info.distortion_model = 'plumb_bob'
+        info.d = [0.0] * 5
+        info.k = [f, 0.0, cx, 0.0, f, cy, 0.0, 0.0, 1.0]
+        info.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        info.p = [f, 0.0, cx, 0.0, 0.0, f, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
+        return info
+
+    def publish_rgbd(self, stamp):
+        """Cor (bgra8), profundidade (32FC1, m) e camera_info, mesmo carimbo."""
+        width = self.camera_info.width
+        height = self.camera_info.height
+        color_data = self.vslam_color.getImage()
+        depth_pointer = self.vslam_depth.getRangeImage(data_type='buffer')
+        if not color_data or not depth_pointer:
+            return
+        # Cópia direta do buffer do Webots: ler como lista custa ~5 ms.
+        depth_data = ctypes.string_at(depth_pointer, width * height * 4)
+        frame = 'vslam_camera_optical_frame'
+        color = Image()
+        color.header.stamp = stamp
+        color.header.frame_id = frame
+        color.height = height
+        color.width = width
+        color.encoding = 'bgra8'
+        color.step = 4 * width
+        color.data = color_data
+        depth = Image()
+        depth.header.stamp = stamp
+        depth.header.frame_id = frame
+        depth.height = height
+        depth.width = width
+        # Profundidade planar (ao longo do eixo óptico) em metros; +Inf fora
+        # do alcance (0,5 a 6 m), que o RTAB-Map trata como inválido.
+        depth.encoding = '32FC1'
+        depth.is_bigendian = 0
+        depth.step = 4 * width
+        depth.data = depth_data
+        self.camera_info.header.stamp = stamp
+        self.color_publisher.publish(color)
+        self.depth_publisher.publish(depth)
+        self.color_info_publisher.publish(self.camera_info)
+        self.depth_info_publisher.publish(self.camera_info)
 
     def publish_ground_truth(self, stamp):
         """Pose e velocidade verdadeiras do base_link no frame do mundo."""
