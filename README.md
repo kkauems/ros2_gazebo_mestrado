@@ -22,7 +22,7 @@ reactive obstacle avoidance and stability tests).
 | `/clock` from Webots sim time | Webots | New on 2026-10-07 |
 | Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route); the ellipse wasn't checked in RViz, not yet on Windows |
 | Crop-field test world (`plantation_field.wbt`): 6 plant rows, uneven ground, clods, stones and branches, `world:=plantation_field.wbt` | Webots | New on 2026-10-09, tested in Webots R2025a on Linux (headless) with the real driver, Nav2 and slam_toolbox, not yet on Windows. See [Plantation field](#plantation-field-world) |
-| Waypoint missions: a YAML list of waypoints driven in sequence with Nav2 `FollowWaypoints`, a 3 s stop at each one, markers in RViz and a CSV log with the estimated and true pose, `waypoints:=<case>` | Webots | New on 2026-10-26. Three study cases for comparing EKF, SLAM and VSLAM. Run in Webots R2025a on Linux (headless), not yet on Windows. See [Waypoint missions](#waypoint-missions) |
+| Waypoint missions: a YAML list of waypoints driven in sequence with Nav2 `FollowWaypoints`, a 3 s stop at each one, markers in RViz and a CSV log with the estimated and true pose, `waypoints:=<case>`, or clicked in RViz with `waypoints:=rviz` | Webots | New on 2026-10-26. Three study cases for comparing EKF, SLAM and VSLAM. Run in Webots R2025a on Linux (headless), not yet on Windows. See [Waypoint missions](#waypoint-missions) |
 | Ground truth from the Webots Supervisor (`/ground_truth/odom`), for measuring errors only | Webots | New on 2026-10-26 |
 | Nav2 plans in `map` when SLAM is on (`slam:=true`); local costmap and controller stay in `odom` | Webots | New on 2026-10-26 |
 | AMCL / GPS / VSLAM | — | Not done. VSLAM study: [claude/estudo_vslam.md](claude/estudo_vslam.md) |
@@ -113,7 +113,7 @@ Launch arguments:
 | `rviz` | `true` | Start RViz with `rviz/nav.rviz` (`rviz/nav_slam.rviz` with `slam:=true`) |
 | `ekf` | `false` | `true`: the `robot_localization` EKF fuses `/wheel/odom` + `/imu/data` and publishes `/odom` and TF `odom → base_link` (the driver stops publishing them). `goal_navigation.launch.py` takes the same argument |
 | `slam` | `false` | `true`: `slam_toolbox` builds `/map` from `/scan` and publishes TF `map → odom` and `/pose`; `ekf_map_node` fuses `/wheel/odom` + `/imu/data` + `/pose` into `/odometry/map`. RViz shows the map and the `/odometry/map` covariance ellipse (magnified 20×); an `/odom` ellipse for comparison is in the Displays panel, off by default and meaningful only with `ekf:=true`. Nav2 plans in `map` (bt_navigator, global costmap, behaviors); the controller and the local costmap stay in `odom`. Works with `ekf:=true` or `false` |
-| `waypoints` | (empty) | Name of a waypoint list in `config/waypoints/` (without `.yaml`) or a path to a `.yaml`. Starts `waypoint_mission`, which drives the robot through the list once Nav2 is up ([below](#waypoint-missions)) |
+| `waypoints` | (empty) | Name of a waypoint list in `config/waypoints/` (without `.yaml`), a path to a `.yaml`, or `rviz` to click the waypoints in RViz. Starts `waypoint_mission`, which drives the robot through the list once Nav2 is up ([below](#waypoint-missions)) |
 
 Examples:
 
@@ -240,6 +240,30 @@ position and heading errors:
 python3 agrobot_webots/scripts/summarize_missions.py ~/.ros/agrobot_missions
 ```
 
+**Waypoints clicked in RViz** (`waypoints:=rviz`):
+
+```bash
+ros2 launch agrobot_webots simulation.launch.py ekf:=true waypoints:=rviz
+```
+
+Pick the **Publish Point** tool in the RViz toolbar and click the map: each click adds a
+waypoint (`wp1`, `wp2`, ...) to the end of the list, and the Waypoints display shows it. Then,
+in another terminal:
+
+```bash
+ros2 service call /waypoint_mission/start std_srvs/srv/Trigger   # drive the list
+ros2 service call /waypoint_mission/undo std_srvs/srv/Trigger    # remove the last waypoint
+ros2 service call /waypoint_mission/clear std_srvs/srv/Trigger   # remove all of them
+ros2 service call /waypoint_mission/save std_srvs/srv/Trigger    # write the list to a YAML file
+```
+
+- Clicks are converted to the mission frame (`odom`, or `map` with SLAM) and ignored while a
+  mission runs.
+- After a mission ends, `start` drives the same list again, and new clicks add to it.
+- `save` writes `~/.ros/agrobot_missions/rviz_<date>.yaml` in the format above, with the
+  world, so the list can be run again with `waypoints:=<that file>`.
+- The CSV files are named `rviz_<mode>_<date>_*.csv`.
+
 **Study cases** for comparing EKF, SLAM and VSLAM (each starts and ends at the start pose):
 
 | List | World | Route | Length |
@@ -332,6 +356,7 @@ waypoint_mission (waypoints:=...) ─FollowWaypoints─► waypoint_follower ─
 | `/odometry/map` | `nav_msgs/Odometry` | ekf_map_node (`slam:=true`) | frame `map`: wheels + IMU + `/pose`; the ellipse shown in RViz |
 | `/ground_truth/odom` | `nav_msgs/Odometry` | AgrobotDriver | true pose of `base_link` from the Webots Supervisor, frame `world`, child `base_link_gt`, no TF. For measuring only |
 | `/waypoints/markers` | `visualization_msgs/MarkerArray` | waypoint_mission | waypoints, names and route, transient local |
+| `/clicked_point` | `geometry_msgs/PointStamped` | RViz (Publish Point tool) | with `waypoints:=rviz`, each click adds a waypoint |
 | `/tf` | | AgrobotDriver or EKF, robot_state_publisher, slam_toolbox | `map → odom` (slam) and `odom → base_link` are dynamic, the rest is static |
 
 All messages are stamped with **Webots simulation time** (`robot.getTime()`), and the

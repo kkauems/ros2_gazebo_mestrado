@@ -2,8 +2,9 @@
 """
 Percorre uma lista de waypoints com o Nav2 e grava o resultado em CSV.
 
-Lê os waypoints de um arquivo YAML (config/waypoints/), espera o Nav2 e o TF
-do frame global até o base_link e manda tudo de uma vez para a ação
+Lê os waypoints de um arquivo YAML (config/waypoints/) ou dos cliques no RViz
+(ferramenta Publish Point, tópico /clicked_point), espera o Nav2 e o TF do
+frame global até o base_link e manda tudo de uma vez para a ação
 FollowWaypoints do waypoint_follower. O follower vai a um waypoint por vez
 (NavigateToPose), para alguns segundos em cada um (WaitAtWaypoint, em
 nav2_params.yaml) e, se um falhar, pula para o próximo.
@@ -20,6 +21,13 @@ Formato do arquivo:
 Sem yaw, o robô chega olhando para o próximo waypoint (o último, na direção
 em que chegou).
 
+Com arquivo, a missão começa sozinha. Sem arquivo (waypoints:=rviz), cada
+clique do Publish Point acrescenta um waypoint e a missão espera os serviços:
+    ~/start   inicia (ou repete) a missão com a lista atual
+    ~/undo    tira o último waypoint
+    ~/clear   apaga todos
+    ~/save    grava a lista no formato acima (output_dir/rviz_<data>.yaml)
+
 Saídas, em output_dir (padrão ~/.ros/agrobot_missions):
     <caso>_<modo>_<data>_waypoints.csv   uma linha por waypoint
     <caso>_<modo>_<data>_trajetoria.csv  pose estimada e verdadeira no tempo
@@ -29,6 +37,7 @@ para o frame da partida. Ela só é usada para medir, nunca para navegar.
 Tópicos:
     /waypoints/markers   (visualization_msgs/MarkerArray)  saída, para o RViz
     /ground_truth/odom   (nav_msgs/Odometry)               entrada, opcional
+    /clicked_point       (geometry_msgs/PointStamped)      entrada, do RViz
 """
 
 import csv
@@ -36,7 +45,7 @@ import math
 import os
 import time
 
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PointStamped, PoseStamped
 from nav2_msgs.action import FollowWaypoints
 from nav_msgs.msg import Odometry
 import rclpy
@@ -44,6 +53,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.time import Time
+from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 import yaml
@@ -84,7 +94,7 @@ def yaw_from_quaternion(q):
 
 
 def load_waypoints(path):
-    """Lê o YAML e completa os yaw que faltam."""
+    """Lê o YAML; yaw_in é o yaw do arquivo (None se não tiver)."""
     with open(path) as waypoint_file:
         data = yaml.safe_load(waypoint_file) or {}
     entries = data.get('waypoints') or []
@@ -96,20 +106,29 @@ def load_waypoints(path):
             'name': str(entry.get('name', f'wp{i + 1}')),
             'x': float(entry['x']),
             'y': float(entry['y']),
-            'yaw': None if entry.get('yaw') is None else float(entry['yaw']),
+            'yaw_in': (None if entry.get('yaw') is None
+                       else float(entry['yaw'])),
         })
-    # Sem yaw: olhando para o próximo; o último, na direção em que chegou.
-    # O primeiro sem anterior olha a partir da partida (0, 0).
+    return data.get('world'), waypoints
+
+
+def fill_yaw(waypoints, origin):
+    """
+    Completa wp['yaw'] a partir de wp['yaw_in'].
+
+    Sem yaw: olhando para o próximo; o último, na direção em que chegou (o
+    único, a partir de origin, a posição do robô).
+    """
     for i, wp in enumerate(waypoints):
-        if wp['yaw'] is not None:
-            continue
-        if i + 1 < len(waypoints):
+        if wp['yaw_in'] is not None:
+            wp['yaw'] = wp['yaw_in']
+        elif i + 1 < len(waypoints):
             nxt = waypoints[i + 1]
             wp['yaw'] = math.atan2(nxt['y'] - wp['y'], nxt['x'] - wp['x'])
         else:
-            prev = waypoints[i - 1] if i > 0 else {'x': 0.0, 'y': 0.0}
+            prev = waypoints[i - 1] if i > 0 else {
+                'x': origin[0], 'y': origin[1]}
             wp['yaw'] = math.atan2(wp['y'] - prev['y'], wp['x'] - prev['x'])
-    return data.get('world'), waypoints
 
 
 class WaypointMission(Node):
@@ -129,19 +148,20 @@ class WaypointMission(Node):
         path = self.get_parameter('waypoints_file').value
         self.frame = self.get_parameter('frame').value
         self.robot_frame = self.get_parameter('robot_frame').value
-        self.case = os.path.splitext(os.path.basename(path))[0]
         self.run_label = self.get_parameter('run_label').value or self.frame
         self.output_dir = self.get_parameter('output_dir').value
-        file_world, self.waypoints = load_waypoints(path)
-        world = self.get_parameter('world').value
-        self.blocked = bool(file_world and world and file_world != world)
-        if self.blocked:
+        self.world = self.get_parameter('world').value
+        if path:
+            self.case = os.path.splitext(os.path.basename(path))[0]
+            file_world, self.waypoints = load_waypoints(path)
+        else:
+            self.case = 'rviz'
+            file_world, self.waypoints = None, []
+        blocked = bool(file_world and self.world and file_world != self.world)
+        if blocked:
             self.get_logger().error(
                 f'{self.case} é para o mundo {file_world}, mas o mundo é '
-                f'{world}. Missão cancelada.')
-        self.status = [PENDING] * len(self.waypoints)
-        self.records = [None] * len(self.waypoints)
-        self.current = -1
+                f'{self.world}. Missão cancelada.')
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -154,23 +174,25 @@ class WaypointMission(Node):
             Odometry, '/ground_truth/odom', self.ground_truth_callback, 10)
         self.truth_origin = None   # pose verdadeira na partida (mundo)
         self.truth = None          # pose verdadeira no frame da partida
-        self.truth_distance = 0.0
-        self.last_truth_xy = None
+        self.create_subscription(
+            PointStamped, '/clicked_point', self.clicked_point_callback, 10)
+        self.create_service(Trigger, '~/start', self.start_service)
+        self.create_service(Trigger, '~/undo', self.undo_service)
+        self.create_service(Trigger, '~/clear', self.clear_service)
+        self.create_service(Trigger, '~/save', self.save_service)
 
-        self.goal_handle = None
-        self.sending = False
-        self.finished = False
-        self.start_time = None
-        self.trajectory_rows = []
-        self.publish_markers()
-        if not self.blocked:
+        self.start_timer = None
+        self.reset_progress()
+        rate = float(self.get_parameter('trajectory_rate').value)
+        self.create_timer(1.0 / rate, self.record_trajectory)
+        if path and not blocked:
+            self.start_mission()
+        elif not path:
             self.get_logger().info(
-                f'{self.case}: {len(self.waypoints)} waypoints no frame '
-                f'{self.frame}. Esperando o Nav2 e o TF '
-                f'{self.frame} -> {self.robot_frame}...')
-            self.start_timer = self.create_timer(1.0, self.try_start)
-            rate = float(self.get_parameter('trajectory_rate').value)
-            self.create_timer(1.0 / rate, self.record_trajectory)
+                'Sem arquivo: clique no mapa com a ferramenta Publish Point '
+                'do RViz para acrescentar waypoints e chame '
+                '"ros2 service call /waypoint_mission/start '
+                'std_srvs/srv/Trigger" para começar.')
 
     # Pose verdadeira -------------------------------------------------------
 
@@ -199,7 +221,109 @@ class WaypointMission(Node):
         return (t.transform.translation.x, t.transform.translation.y,
                 yaw_from_quaternion(t.transform.rotation))
 
+    # Edição pelo RViz ------------------------------------------------------
+
+    def running(self):
+        return self.start_timer is not None or (
+            self.goal_handle is not None and not self.finished)
+
+    def clicked_point_callback(self, message):
+        if self.running():
+            self.get_logger().warn('Missão em andamento: clique ignorado.')
+            return
+        x, y = message.point.x, message.point.y
+        source = message.header.frame_id or self.frame
+        if source != self.frame:
+            try:
+                t = self.tf_buffer.lookup_transform(self.frame, source, Time())
+            except TransformException as error:
+                self.get_logger().warn(f'Clique ignorado: {error}')
+                return
+            yaw = yaw_from_quaternion(t.transform.rotation)
+            c, s = math.cos(yaw), math.sin(yaw)
+            x, y = (t.transform.translation.x + c * x - s * y,
+                    t.transform.translation.y + s * x + c * y)
+        n = len(self.waypoints) + 1
+        self.waypoints.append(
+            {'name': f'wp{n}', 'x': x, 'y': y, 'yaw_in': None})
+        self.reset_progress()
+        self.get_logger().info(
+            f'Waypoint {n} acrescentado: ({x:.2f}, {y:.2f}) em {self.frame}')
+
+    def start_service(self, request, response):
+        response.success = self.start_mission()
+        response.message = ('missão iniciada' if response.success else
+                            'nada a fazer: lista vazia ou missão em andamento')
+        return response
+
+    def undo_service(self, request, response):
+        response.success = bool(self.waypoints) and not self.running()
+        if response.success:
+            self.waypoints.pop()
+            self.reset_progress()
+        response.message = f'{len(self.waypoints)} waypoints'
+        return response
+
+    def clear_service(self, request, response):
+        response.success = not self.running()
+        if response.success:
+            self.waypoints = []
+            self.reset_progress()
+        response.message = f'{len(self.waypoints)} waypoints'
+        return response
+
+    def save_service(self, request, response):
+        if not self.waypoints:
+            response.success = False
+            response.message = 'lista vazia'
+            return response
+        os.makedirs(self.output_dir, exist_ok=True)
+        path = os.path.join(
+            self.output_dir, f'rviz_{time.strftime("%Y%m%d-%H%M%S")}.yaml')
+        lines = ['# Gravado pelo waypoint_mission (cliques no RViz).',
+                 f'# Coordenadas no frame {self.frame}, a partir da partida.']
+        if self.world:
+            lines.append(f'world: {self.world}')
+        lines.append('waypoints:')
+        for wp in self.waypoints:
+            yaw = '' if wp['yaw_in'] is None else f', yaw: {wp["yaw_in"]:.4f}'
+            lines.append(f'  - {{name: {wp["name"]}, x: {wp["x"]:.3f}, '
+                         f'y: {wp["y"]:.3f}{yaw}}}')
+        with open(path, 'w') as out:
+            out.write('\n'.join(lines) + '\n')
+        response.success = True
+        response.message = path
+        self.get_logger().info(f'Waypoints gravados em {path}')
+        return response
+
     # Envio da missão -------------------------------------------------------
+
+    def reset_progress(self):
+        """Volta todos os waypoints a pendente, para editar ou repetir."""
+        self.status = [PENDING] * len(self.waypoints)
+        self.records = [None] * len(self.waypoints)
+        self.current = -1
+        self.goal_handle = None
+        self.sending = False
+        self.finished = False
+        self.start_time = None
+        self.trajectory_rows = []
+        self.truth_distance = 0.0
+        self.last_truth_xy = None
+        self.publish_markers()
+
+    def start_mission(self):
+        if self.running() or not self.waypoints:
+            return False
+        self.reset_progress()
+        est = self.estimated_pose()
+        fill_yaw(self.waypoints, est[:2] if est else (0.0, 0.0))
+        self.get_logger().info(
+            f'{self.case}: {len(self.waypoints)} waypoints no frame '
+            f'{self.frame}. Esperando o Nav2 e o TF '
+            f'{self.frame} -> {self.robot_frame}...')
+        self.start_timer = self.create_timer(1.0, self.try_start)
+        return True
 
     def try_start(self):
         if self.goal_handle is not None or self.sending:
@@ -233,6 +357,8 @@ class WaypointMission(Node):
             return
         self.goal_handle = handle
         self.start_timer.cancel()
+        self.destroy_timer(self.start_timer)
+        self.start_timer = None
         self.start_time = self.now_s()
         self.last_truth_xy = self.truth[:2] if self.truth else None
         if self.truth is None:
@@ -390,9 +516,9 @@ class WaypointMission(Node):
             label.color.r = label.color.g = label.color.b = label.color.a = 1.0
             label.text = f'{i + 1} {wp["name"]}'
             markers.markers.append(label)
-            point = sphere.pose.position
-            line.points.append(point)
-        markers.markers.append(line)
+            line.points.append(sphere.pose.position)
+        if len(line.points) > 1:
+            markers.markers.append(line)
         self.marker_publisher.publish(markers)
 
 

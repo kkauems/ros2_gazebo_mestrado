@@ -92,6 +92,11 @@ Visualization Manager:
     - Class: rviz_default_plugins/SetGoal
       Topic:
         Value: /goal_pose
+    - Class: rviz_default_plugins/PublishPoint
+      # Cada clique vira um waypoint (waypoints:=rviz).
+      Single click: true
+      Topic:
+        Value: /clicked_point
   Views:
     Current:
       Class: rviz_default_plugins/TopDownOrtho

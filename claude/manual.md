@@ -1324,3 +1324,73 @@ para um trabalho separado.
 
 **Não testado:** Windows/WSL, RViz (os marcadores foram conferidos pelo tópico, não na tela),
 VSLAM (próximo PR).
+
+### 2026-10-26 — Waypoints clicados no RViz (`waypoints:=rviz`)
+
+**Pedido.** Terceira parte do trabalho dos waypoints, combinada no plano: além das listas em
+YAML, marcar os waypoints clicando no mapa do RViz.
+
+**Para usar**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots simulation.launch.py ekf:=true waypoints:=rviz
+# no RViz: ferramenta Publish Point, um clique por waypoint; depois, em outro terminal:
+ros2 service call /waypoint_mission/start std_srvs/srv/Trigger
+```
+Outros serviços: `undo` (tira o último), `clear` (apaga todos) e `save` (grava a lista em
+`~/.ros/agrobot_missions/rviz_<data>.yaml`, no mesmo formato dos casos de estudo, para rodar
+de novo com `waypoints:=<arquivo>`).
+
+**O que mudou**
+- `agrobot_webots/agrobot_webots/waypoint_mission.py`:
+  - sem `waypoints_file`, a lista começa vazia e o caso se chama `rviz`;
+  - assina `/clicked_point` (o tópico da ferramenta Publish Point). Cada clique vira um
+    waypoint `wpN` no fim da lista, convertido pelo TF para o frame da missão (`odom`, ou
+    `map` com SLAM). Clique durante uma missão é ignorado com aviso;
+  - serviços `~/start`, `~/undo`, `~/clear` e `~/save` (`std_srvs/Trigger`);
+  - o yaw automático (olhando para o próximo waypoint) agora é calculado na hora de
+    começar (`fill_yaw`), porque a lista muda. O último waypoint de uma lista de um só olha
+    a partir da posição do robô, e não da partida;
+  - a missão pode ser repetida: `start` depois do fim volta todos os waypoints a pendente e
+    grava CSVs novos.
+- `agrobot_webots/launch/simulation.launch.py`: `waypoints:=rviz` sobe o nó sem arquivo.
+- `agrobot_webots/rviz/nav.rviz` e `nav_slam.rviz`: ferramenta Publish Point (`/clicked_point`,
+  "Single click").
+- `agrobot_webots/package.xml`: `std_srvs`.
+- `README.md`: "Waypoints clicked in RViz" na seção das missões, argumento `waypoints` e
+  tópico `/clicked_point`.
+
+**Por quê**
+- **Publish Point em vez do "Nav2 Goal"**: o "Nav2 Goal" manda o robô andar na hora. Com o
+  Publish Point o clique só marca o ponto, e a lista inteira vai para o mesmo
+  `FollowWaypoints` das listas em YAML, com a mesma parada, os mesmos marcadores e os
+  mesmos CSVs.
+- **Serviços em vez de um botão no RViz**: um painel próprio do RViz seria um plugin em
+  C++. Os serviços `Trigger` funcionam no terminal e em qualquer script.
+- **`save` no formato dos casos**: uma rota clicada vira um caso de estudo novo sem
+  reescrever nada.
+
+**Como foi validado** (nuvem Linux, Webots R2025a headless, driver real, Nav2 1.3.13). Os
+cliques foram simulados publicando `geometry_msgs/PointStamped` em `/clicked_point`, como a
+ferramenta do RViz faz:
+- `start` com a lista vazia: recusado. Cliques em (1,0; -0,9) e (5,0; 5,0), `undo` (sobra 1),
+  clique em (2,6; 0,6) e um clique em (0, 0) no frame `base_link`, convertido pelo TF para
+  `odom` como (0,00; 0,00). `save` gravou o YAML com `world: obstacle_arena.wbt` e os 3
+  pontos. `start` iniciou a missão; `clear` durante a missão foi recusado.
+
+| Rodada | Atingidos | Tempo (s) | Erro final (m) | ATE (m) |
+|---|---|---|---|---|
+| Arena, `ekf:=true waypoints:=rviz` (cliques em `odom` e `base_link`) | 3/3 | 44 | 0,26 | 0,11 |
+| Arena, o YAML gravado acima com `waypoints:=<arquivo>` | 3/3 | 44 | 0,25 | 0,10 |
+| Arena, `ekf:=true slam:=true waypoints:=rviz` (cliques em `map`) | 3/3 | 45 | 0,05 | 0,02 |
+
+- Um teste sem simulação, com TF falso, conferiu também que um clique em `map` sem o TF
+  `map → odom` é ignorado com aviso.
+- `ament_flake8` e `ament_pep257` sem erros no `waypoint_mission.py`.
+
+**Não testado:** Windows/WSL, o RViz de verdade (os cliques foram simulados publicando em
+`/clicked_point`, como a ferramenta faz). O `nav_vslam.rviz` do PR do RTAB-Map ainda não tem a
+ferramenta Publish Point; ela entra quando os dois PRs estiverem juntos.

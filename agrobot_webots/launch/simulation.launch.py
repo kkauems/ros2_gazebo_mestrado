@@ -179,15 +179,20 @@ def generate_launch_description():
 
     def start_mission(context):
         # waypoints:=caso2_plantacao_ida_volta (config/waypoints/) ou um
-        # caminho para um .yaml. Vazio: sem missão.
+        # caminho para um .yaml; waypoints:=rviz para clicar os waypoints no
+        # RViz (Publish Point). Vazio: sem missão.
         name = LaunchConfiguration('waypoints').perform(context)
         if not name:
             return []
-        path = name if os.path.isfile(name) else os.path.join(
-            webots_share, 'config', 'waypoints',
-            name if name.endswith('.yaml') else name + '.yaml')
-        if not os.path.isfile(path):
-            raise RuntimeError(f'Arquivo de waypoints não encontrado: {path}')
+        if name == 'rviz':
+            path = ''
+        else:
+            path = name if os.path.isfile(name) else os.path.join(
+                webots_share, 'config', 'waypoints',
+                name if name.endswith('.yaml') else name + '.yaml')
+            if not os.path.isfile(path):
+                raise RuntimeError(
+                    f'Arquivo de waypoints não encontrado: {path}')
         modes = [m for m in ('ekf', 'slam') if is_true(context, m)]
         return [Node(
             package='agrobot_webots',
