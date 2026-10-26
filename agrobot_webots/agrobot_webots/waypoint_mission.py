@@ -339,7 +339,8 @@ class WaypointMission(Node):
         reached = self.status.count(REACHED)
         last = self.records[-1]
         final = last.get('erro_real_alvo_m')
-        final_text = f', erro real no último: {final:.2f} m' if final else ''
+        final_text = ('' if final is None
+                      else f', erro real no último: {final:.2f} m')
         self.get_logger().info(
             f'Missão {self.case} terminada: {reached}/{len(self.waypoints)} '
             f'waypoints em {last["t_saida_s"]:.0f} s{final_text}. '
