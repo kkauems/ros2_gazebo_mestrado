@@ -5,11 +5,12 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from nav2_common.launch import RewrittenYaml
 
 
-# Só os servidores necessários para NavigateToPose. O navigation_launch.py
-# do nav2_bringup (Jazzy) também sobe docking_server, que falha sem
-# configuração e derruba o lifecycle_manager.
+# Só os servidores necessários para NavigateToPose e FollowWaypoints. O
+# navigation_launch.py do nav2_bringup (Jazzy) também sobe docking_server,
+# que falha sem configuração e derruba o lifecycle_manager.
 LIFECYCLE_NODES = [
     'controller_server',
     'smoother_server',
@@ -17,13 +18,28 @@ LIFECYCLE_NODES = [
     'behavior_server',
     'velocity_smoother',
     'bt_navigator',
+    'waypoint_follower',
 ]
 
 
 def generate_launch_description():
     webots_share = get_package_share_directory('agrobot_webots')
-    params_file = LaunchConfiguration('params_file')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    # Com SLAM, o planejamento global vai para map: bt_navigator, costmap
+    # global e behavior_server. O controller_server e o costmap local
+    # continuam em odom (REP-105), senão o controlador pularia a cada
+    # correção do SLAM.
+    global_frame = LaunchConfiguration('global_frame')
+    params_file = RewrittenYaml(
+        source_file=LaunchConfiguration('params_file'),
+        param_rewrites={
+            'bt_navigator.ros__parameters.global_frame': global_frame,
+            'global_costmap.global_costmap.ros__parameters.global_frame':
+                global_frame,
+            'behavior_server.ros__parameters.global_frame': global_frame,
+        },
+        convert_types=True,
+    )
     common = [params_file, {'use_sim_time': use_sim_time}]
 
     return LaunchDescription([
@@ -33,6 +49,7 @@ def generate_launch_description():
                 webots_share, 'config', 'nav2_params.yaml'),
         ),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument('global_frame', default_value='odom'),
         Node(
             package='nav2_controller',
             executable='controller_server',
@@ -78,6 +95,13 @@ def generate_launch_description():
             package='nav2_bt_navigator',
             executable='bt_navigator',
             name='bt_navigator',
+            output='screen',
+            parameters=common,
+        ),
+        Node(
+            package='nav2_waypoint_follower',
+            executable='waypoint_follower',
+            name='waypoint_follower',
             output='screen',
             parameters=common,
         ),

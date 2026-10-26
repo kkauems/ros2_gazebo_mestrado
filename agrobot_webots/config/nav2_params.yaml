@@ -1,4 +1,6 @@
-# Nav2 sem mapa: odom é o frame global e os dois costmaps são rolling window.
+# Nav2 sem mapa: os dois costmaps são rolling window. O frame global é odom;
+# com SLAM, o simulation.launch.py passa global_frame:=map ao navigation.launch.py
+# (bt_navigator, costmap global e behavior_server). O costmap local fica em odom.
 # Pegada do robô: chassi 1.2 m x rodas (y = ±0.55) -> 1.2 x 1.12 m.
 
 bt_navigator:
@@ -8,7 +10,11 @@ bt_navigator:
     robot_base_frame: base_link
     odom_topic: /odom
     bt_loop_duration: 10
-    default_server_timeout: 20
+    # Tempo (ms) que cada nó da BT espera o servidor aceitar o pedido. Com 20
+    # (padrão do Nav2), com slam:=true na nuvem o planner às vezes demorava
+    # mais, o ComputePathToPose falhava e o objetivo inteiro abortava ("Timed
+    # out while waiting for action server to acknowledge goal request").
+    default_server_timeout: 200
     wait_for_service_timeout: 1000
     navigators: ["navigate_to_pose", "navigate_through_poses"]
     navigate_to_pose:
@@ -202,3 +208,19 @@ velocity_smoother:
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
+
+# Percorre uma lista de waypoints (ação FollowWaypoints), um NavigateToPose
+# por vez. Usado pelo waypoint_mission (simulation.launch.py waypoints:=...).
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: true
+    loop_rate: 20
+    # false: um waypoint que falha é pulado e volta em missed_waypoints.
+    stop_on_failure: false
+    action_server_result_timeout: 900.0
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    # Parada em cada waypoint (ms): o lugar da aquisição de dados.
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: true
+      waypoint_pause_duration: 3000

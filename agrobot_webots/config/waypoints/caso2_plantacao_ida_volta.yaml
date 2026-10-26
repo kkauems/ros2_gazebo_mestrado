@@ -1,0 +1,18 @@
+# Caso de estudo 2: ida e volta na plantação (plantation_field.wbt), ~26 m.
+# Entrelinha do meio (y = 0) até a cabeceira leste, entrelinha y = 1,8 de
+# volta e retorno à partida. Fileiras repetitivas, terreno irregular, um
+# laço curto (volta ao começo).
+#
+# Coordenadas no frame da partida (x ao longo das fileiras; o odom e o map
+# nascem aí). No mundo, partida = (-6; 0), então mundo = frame + (-6; 0).
+# Fileiras de x = 1,5 a 10,5; entrelinhas em y = 0, ±1,8, ±3,6. Cabeceira
+# oeste de x = -1 a 1,5 e leste de 10,5 a 13. Pedras grandes perto das
+# cabeceiras em (0,4; -3,2), (-0,3; 2,4), (11,8; -1,5) e (12,2; 3,8).
+# Sem yaw, o robô chega olhando para o próximo waypoint: na cabeceira ele
+# gira 90°, para, segue 1,8 m e gira mais 90° para entrar na entrelinha.
+world: plantation_field.wbt
+waypoints:
+  - {name: cabeceira_leste_y0, x: 11.3, y: 0.0}
+  - {name: cabeceira_leste_y1.8, x: 11.3, y: 1.8}
+  - {name: cabeceira_oeste_y1.8, x: 0.6, y: 1.8}
+  - {name: partida, x: 0.0, y: 0.0}

@@ -11,7 +11,7 @@ PROTO agrobot [
   field  SFString    controller      "void"     # Is `Robot.controller`.
   field  MFString    controllerArgs  []         # Is `Robot.controllerArgs`.
   field  SFString    customData      ""         # Is `Robot.customData`.
-  field  SFBool      supervisor      FALSE      # Is `Robot.supervisor`.
+  field  SFBool      supervisor      TRUE       # Is `Robot.supervisor`. TRUE: o driver publica a pose verdadeira (/ground_truth/odom).
   field  SFBool      synchronization TRUE       # Is `Robot.synchronization`.
   field  SFBool      selfCollision   FALSE      # Is `Robot.selfCollision`.
 ]

@@ -8,6 +8,7 @@ from launch.actions import (
     IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
+    SetLaunchConfiguration,
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
@@ -42,6 +43,10 @@ def driver_urdf(robot_description, ekf):
     return path
 
 
+def is_true(context, name):
+    return LaunchConfiguration(name).perform(context).lower() == 'true'
+
+
 def generate_launch_description():
     webots_share = get_package_share_directory('agrobot_webots')
     # Arquivo em worlds/ (world:=plantation_field.wbt para a plantação).
@@ -66,7 +71,7 @@ def generate_launch_description():
         robot_description_content = urdf_file.read()
 
     def start_driver(context):
-        ekf = LaunchConfiguration('ekf').perform(context).lower() == 'true'
+        ekf = is_true(context, 'ekf')
         return [WebotsController(
             robot_name='agrobot',
             parameters=[
@@ -158,15 +163,50 @@ def generate_launch_description():
         condition=slam,
     )
 
-    navigation = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(webots_share, 'launch', 'navigation.launch.py')),
-        condition=IfCondition(LaunchConfiguration('nav')),
-    )
+    def global_frame(context):
+        # Com SLAM existe map -> odom e o Nav2 planeja em map; sem, em odom.
+        return 'map' if is_true(context, 'slam') else 'odom'
+
+    def start_navigation(context):
+        return [IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(webots_share, 'launch', 'navigation.launch.py')),
+            launch_arguments={'global_frame': global_frame(context)}.items(),
+            condition=IfCondition(LaunchConfiguration('nav')),
+        )]
+
+    navigation = OpaqueFunction(function=start_navigation)
+
+    def start_mission(context):
+        # waypoints:=caso2_plantacao_ida_volta (config/waypoints/) ou um
+        # caminho para um .yaml. Vazio: sem missão.
+        name = LaunchConfiguration('waypoints').perform(context)
+        if not name:
+            return []
+        path = name if os.path.isfile(name) else os.path.join(
+            webots_share, 'config', 'waypoints',
+            name if name.endswith('.yaml') else name + '.yaml')
+        if not os.path.isfile(path):
+            raise RuntimeError(f'Arquivo de waypoints não encontrado: {path}')
+        modes = [m for m in ('ekf', 'slam') if is_true(context, m)]
+        return [Node(
+            package='agrobot_webots',
+            executable='waypoint_mission',
+            output='screen',
+            parameters=[{
+                'waypoints_file': path,
+                'frame': global_frame(context),
+                'run_label': '+'.join(modes) or 'odom',
+                'world': LaunchConfiguration('world_name').perform(context),
+                'use_sim_time': True,
+            }],
+        )]
+
+    mission = OpaqueFunction(function=start_mission)
 
     def start_rviz(context):
         # Com slam, o RViz usa o frame map e mostra o /map e as elipses.
-        slam_on = LaunchConfiguration('slam').perform(context).lower() == 'true'
+        slam_on = is_true(context, 'slam')
         config = 'nav_slam.rviz' if slam_on else 'nav.rviz'
         return [Node(
             package='rviz2',
@@ -192,6 +232,10 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('ekf', default_value='false'),
         DeclareLaunchArgument('slam', default_value='false'),
+        DeclareLaunchArgument('waypoints', default_value=''),
+        # O WebotsLauncher troca 'world' pelo caminho de uma cópia temporária;
+        # o nome original fica guardado para o waypoint_mission.
+        SetLaunchConfiguration('world_name', LaunchConfiguration('world')),
         webots,
         agrobot_driver,
         robot_state_publisher,
@@ -201,6 +245,7 @@ def generate_launch_description():
         slam_activate,
         ekf_map_node,
         navigation,
+        mission,
         rviz,
         shutdown_on_webots_exit,
     ])

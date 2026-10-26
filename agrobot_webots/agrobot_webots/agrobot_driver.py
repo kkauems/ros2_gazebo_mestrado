@@ -24,6 +24,24 @@ WHEEL_VX_STD_PER_SPEED = 0.10       # 10% de |v|
 WHEEL_VY_STD_PER_SPEED = 0.05       # deriva lateral: 5% de |v| ...
 WHEEL_VY_STD_PER_TURN = 0.05        # ... + 0,05 m/s por rad/s (skid-steer)
 
+
+def quaternion_from_matrix(m):
+    """Quaternion (x, y, z, w) de uma matriz de rotação 3x3 em lista."""
+    r00, r01, r02, r10, r11, r12, r20, r21, r22 = m
+    trace = r00 + r11 + r22
+    if trace > 0.0:
+        s = 2.0 * math.sqrt(trace + 1.0)
+        return ((r21 - r12) / s, (r02 - r20) / s, (r10 - r01) / s, 0.25 * s)
+    if r00 > r11 and r00 > r22:
+        s = 2.0 * math.sqrt(1.0 + r00 - r11 - r22)
+        return (0.25 * s, (r01 + r10) / s, (r02 + r20) / s, (r21 - r12) / s)
+    if r11 > r22:
+        s = 2.0 * math.sqrt(1.0 + r11 - r00 - r22)
+        return ((r01 + r10) / s, 0.25 * s, (r12 + r21) / s, (r02 - r20) / s)
+    s = 2.0 * math.sqrt(1.0 + r22 - r00 - r11)
+    return ((r02 + r20) / s, (r12 + r21) / s, 0.25 * s, (r10 - r01) / s)
+
+
 WHEEL_JOINTS = [
     'front_left_wheel_joint',
     'rear_left_wheel_joint',
@@ -86,6 +104,11 @@ class AgrobotDriver:
         # Ler a range image antes da primeira amostra derruba o controlador.
         self.next_scan_time = 2 * self.lidar_period / 1000.0
 
+        # Pose verdadeira pelo Supervisor (supervisor TRUE no agrobot.proto),
+        # só para medir erros: nada da localização a usa.
+        self.robot_node = (self.robot.getSelf()
+                           if hasattr(self.robot, 'getSelf') else None)
+
         self.x = 0.0
         self.y = 0.0
         self.yaw = 0.0
@@ -121,6 +144,9 @@ class AgrobotDriver:
             LaserScan, '/scan', qos_profile_sensor_data)
         self.joint_state_publisher = self.node.create_publisher(
             JointState, '/joint_states', 10)
+        if self.robot_node is not None:
+            self.ground_truth_publisher = self.node.create_publisher(
+                Odometry, '/ground_truth/odom', 10)
         self.node.get_logger().info('Controlador Webots do agrobot iniciado.')
 
     def get_motor(self, name):
@@ -163,11 +189,43 @@ class AgrobotDriver:
         stamp.nanosec = int((now - int(now)) * 1e9)
         self.clock_publisher.publish(Clock(clock=stamp))
         self.update_odometry(separation, now, stamp)
+        self.publish_ground_truth(stamp)
         self.publish_imu(stamp)
         self.publish_joint_states(stamp)
         if now >= self.next_scan_time:
             self.next_scan_time = now + self.lidar_period / 1000.0
             self.publish_scan(stamp)
+
+    def publish_ground_truth(self, stamp):
+        """Pose e velocidade verdadeiras do base_link no frame do mundo."""
+        if self.robot_node is None:
+            return
+        position = self.robot_node.getPosition()
+        rotation = self.robot_node.getOrientation()
+        velocity = self.robot_node.getVelocity()
+        if any(math.isnan(v) for v in [*position, *rotation]):
+            return
+        qx, qy, qz, qw = quaternion_from_matrix(rotation)
+        message = Odometry()
+        message.header.stamp = stamp
+        message.header.frame_id = 'world'
+        message.child_frame_id = 'base_link_gt'
+        message.pose.pose.position.x = position[0]
+        message.pose.pose.position.y = position[1]
+        message.pose.pose.position.z = position[2]
+        message.pose.pose.orientation.x = qx
+        message.pose.pose.orientation.y = qy
+        message.pose.pose.orientation.z = qz
+        message.pose.pose.orientation.w = qw
+        # O Webots dá a velocidade no frame do mundo; a Odometry pede no
+        # frame do filho (base_link_gt). R^T * v.
+        for twist, offset in ((message.twist.twist.linear, 0),
+                              (message.twist.twist.angular, 3)):
+            v = velocity[offset:offset + 3]
+            twist.x = rotation[0] * v[0] + rotation[3] * v[1] + rotation[6] * v[2]
+            twist.y = rotation[1] * v[0] + rotation[4] * v[1] + rotation[7] * v[2]
+            twist.z = rotation[2] * v[0] + rotation[5] * v[1] + rotation[8] * v[2]
+        self.ground_truth_publisher.publish(message)
 
     def publish_joint_states(self, stamp):
         sensors = [
