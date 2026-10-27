@@ -1,0 +1,25 @@
+# Caso de estudo 3: serpentina longa na plantação (plantation_field.wbt), ~51 m.
+# Entrelinha y = 0 para leste, y = 1,8 para oeste, travessia da cabeceira
+# oeste, y = -1,8 para leste e volta pela y = 0 para oeste até a partida.
+# Percurso longo (deriva acumulada), entrelinhas iguais (aliasing) e a
+# entrelinha do meio percorrida duas vezes, em sentidos opostos (o SLAM e o
+# VSLAM podem fechar o laço nela).
+#
+# Mesmas coordenadas e obstáculos do caso 2 (veja caso2_plantacao_ida_volta.yaml).
+# A entrelinha -1,8 termina em x = 10,8, e não 11,3, por causa da pedra em
+# (11,8; -1,5). Os pontos no meio das entrelinhas (x = 6) obrigam o Nav2 a
+# usar a entrelinha certa (sem eles ele pode voltar por outra) e servem de
+# pontos de coleta.
+world: plantation_field.wbt
+waypoints:
+  - {name: meio_y0, x: 6.0, y: 0.0}
+  - {name: cabeceira_leste_y0, x: 11.3, y: 0.0}
+  - {name: cabeceira_leste_y1.8, x: 11.3, y: 1.8}
+  - {name: meio_y1.8, x: 6.0, y: 1.8}
+  - {name: cabeceira_oeste_y1.8, x: 0.6, y: 1.8}
+  - {name: cabeceira_oeste_y-1.8, x: 0.6, y: -1.8}
+  - {name: meio_y-1.8, x: 6.0, y: -1.8}
+  - {name: cabeceira_leste_y-1.8, x: 10.8, y: -1.8}
+  - {name: cabeceira_leste_y0_volta, x: 11.3, y: 0.0}
+  - {name: meio_y0_volta, x: 6.0, y: 0.0}
+  - {name: partida, x: 0.0, y: 0.0}

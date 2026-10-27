@@ -1,0 +1,22 @@
+# Caso de estudo 1: circuito curto na arena (obstacle_arena.wbt), ~10 m.
+# Passa ao sul do caixote do centro, vai ao leste, sobe ao norte dele, volta
+# pelo leste e retorna à partida. O leste e a partida são visitados duas
+# vezes (o SLAM pode reconhecer o lugar). Ambiente fechado: o LiDAR vê duas
+# ou mais paredes de qualquer ponto; a câmera vê paredes e chão lisos
+# (controle negativo do VSLAM).
+#
+# Não há volta completa em torno do caixote do centro: a única passagem a
+# oeste dele fica entre dois caixotes, com 1,4 m livres para um robô de
+# 1,12 m de largura. Nos testes o Nav2 passou ali só com manobras de
+# recuperação, e com slam:=true desistiu.
+#
+# Coordenadas no frame da partida do robô (x para a frente dele; o odom e o
+# map nascem aí). No mundo, partida = (-1,0; -0,3), então mundo = frame + (-1,0; -0,3).
+# Sem yaw, o robô chega olhando para o próximo waypoint.
+world: obstacle_arena.wbt
+waypoints:
+  - {name: sul_do_caixote, x: 1.0, y: -0.9}
+  - {name: leste, x: 2.6, y: 0.6}
+  - {name: norte_do_caixote, x: 1.0, y: 1.9}
+  - {name: leste_volta, x: 2.6, y: 0.6}
+  - {name: partida, x: 0.0, y: 0.0}

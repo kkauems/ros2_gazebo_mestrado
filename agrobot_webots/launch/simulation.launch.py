@@ -10,6 +10,7 @@ from launch.actions import (
     IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
+    SetLaunchConfiguration,
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
@@ -293,11 +294,53 @@ def generate_launch_description():
 
     vslam = OpaqueFunction(function=start_vslam)
 
-    navigation = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(webots_share, 'launch', 'navigation.launch.py')),
-        condition=IfCondition(LaunchConfiguration('nav')),
-    )
+    def global_frame(context):
+        # Com SLAM (slam_toolbox ou RTAB-Map) existe map -> odom e o Nav2
+        # planeja em map; sem, em odom.
+        mapped = flag(context, 'slam') or flag(context, 'vslam')
+        return 'map' if mapped else 'odom'
+
+    def start_navigation(context):
+        return [IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(webots_share, 'launch', 'navigation.launch.py')),
+            launch_arguments={'global_frame': global_frame(context)}.items(),
+            condition=IfCondition(LaunchConfiguration('nav')),
+        )]
+
+    navigation = OpaqueFunction(function=start_navigation)
+
+    def start_mission(context):
+        # waypoints:=caso2_plantacao_ida_volta (config/waypoints/) ou um
+        # caminho para um .yaml. Vazio: sem missão.
+        name = LaunchConfiguration('waypoints').perform(context)
+        if not name:
+            return []
+        path = name if os.path.isfile(name) else os.path.join(
+            webots_share, 'config', 'waypoints',
+            name if name.endswith('.yaml') else name + '.yaml')
+        if not os.path.isfile(path):
+            raise RuntimeError(f'Arquivo de waypoints não encontrado: {path}')
+        modes = [m for m in ('ekf', 'slam', 'vslam') if flag(context, m)]
+        if 'vslam' in modes and flag(context, 'vslam_localization'):
+            # Localização num mapa salvo: outro rótulo nos CSVs, para não
+            # misturar com as rodadas de mapeamento. Hífen, e não '_', porque
+            # o summarize_missions.py separa caso, modo e data por '_'.
+            modes[modes.index('vslam')] = 'vslam-loc'
+        return [Node(
+            package='agrobot_webots',
+            executable='waypoint_mission',
+            output='screen',
+            parameters=[{
+                'waypoints_file': path,
+                'frame': global_frame(context),
+                'run_label': '+'.join(modes) or 'odom',
+                'world': LaunchConfiguration('world_name').perform(context),
+                'use_sim_time': True,
+            }],
+        )]
+
+    mission = OpaqueFunction(function=start_mission)
 
     def start_rviz(context):
         # Com slam ou vslam, o RViz usa o frame map; com slam, mostra o /map
@@ -332,6 +375,10 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('ekf', default_value='false'),
         DeclareLaunchArgument('slam', default_value='false'),
+        DeclareLaunchArgument('waypoints', default_value=''),
+        # O WebotsLauncher troca 'world' pelo caminho de uma cópia temporária;
+        # o nome original fica guardado para o waypoint_mission.
+        SetLaunchConfiguration('world_name', LaunchConfiguration('world')),
         DeclareLaunchArgument('camera', default_value='true'),
         DeclareLaunchArgument('vslam', default_value='false'),
         DeclareLaunchArgument('vslam_localization', default_value='false'),
@@ -346,6 +393,7 @@ def generate_launch_description():
         ekf_node,
         slam,
         navigation,
+        mission,
         rviz,
         shutdown_on_webots_exit,
     ])

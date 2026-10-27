@@ -17,6 +17,8 @@ setup(
         (os.path.join('share', package_name, 'worlds'), glob('worlds/*')),
         (os.path.join('share', package_name, 'protos'), glob('protos/*')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'config', 'waypoints'),
+            glob('config/waypoints/*.yaml')),
         (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
         (os.path.join('share', package_name, 'meshes'), glob('meshes/*.stl')),
     ],
@@ -34,6 +36,7 @@ setup(
     entry_points={
         'console_scripts': [
             'goal_navigator = agrobot_webots.goal_navigator:main',
+            'waypoint_mission = agrobot_webots.waypoint_mission:main',
         ],
     },
 )

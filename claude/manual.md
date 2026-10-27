@@ -1494,3 +1494,295 @@ código mudou.
 
 **Como foi conferido:** leitura do código-fonte nas versões instaladas na nuvem; nada foi
 rodado de novo.
+
+### 2026-10-26 — Missões de waypoints (`FollowWaypoints`), Nav2 em `map` com SLAM e três casos de estudo
+
+**Pedido.** Kauê pediu para marcar waypoints no mapa e fazer o robô passar por eles em
+sequência. Depois do plano (revisado antes de começar), escolheu: frame `map` quando o SLAM
+está ligado e `odom` sem ele; uma parada em cada waypoint; o trabalho em PRs separados,
+começando pelas listas em YAML. Pediu também três casos de estudo com waypoints fixos, para
+um possível estudo comparando EKF, SLAM e VSLAM. Este registro é o primeiro PR. O RTAB-Map
+(VSLAM) no launch chegou pela main (PR #9) e foi juntado a este PR no registro de
+2026-10-27; os waypoints clicados no RViz vêm no PR seguinte.
+
+**Para usar**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots simulation.launch.py ekf:=true waypoints:=caso1_arena_circuito
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true slam:=true \
+    waypoints:=caso3_plantacao_serpentina
+python3 agrobot_webots/scripts/summarize_missions.py ~/.ros/agrobot_missions
+```
+O robô começa a missão sozinho quando o Nav2 termina de subir. No RViz, o display
+**Waypoints** mostra a lista (laranja pendente, azul atual, verde atingido, vermelho
+perdido). Os CSVs ficam em `~/.ros/agrobot_missions/`.
+
+**O que mudou**
+- `agrobot_webots/agrobot_webots/waypoint_mission.py` (novo): o nó da missão.
+  - Lê a lista (`waypoints_file`), espera o TF do frame global até `base_link` e o action
+    server `follow_waypoints`, e manda a lista inteira de uma vez para o
+    `waypoint_follower` do Nav2. Se o Nav2 ainda está subindo e recusa o objetivo, tenta de
+    novo a cada segundo.
+  - Sem `yaw` no YAML, o robô chega olhando para o próximo waypoint (o último, olhando na
+    direção de onde veio). Assim ele não gira no lugar mais do que precisa.
+  - Se o YAML tem `world:` e ele não bate com o mundo do launch, a missão é cancelada (as
+    coordenadas só valem naquele mundo).
+  - Publica `/waypoints/markers` (transient local): esferas, nomes e a linha da rota, com a
+    cor do estado de cada waypoint.
+  - Grava dois CSVs, `<lista>_<modo>_<data>_waypoints.csv` (uma linha por waypoint: estado,
+    tempo de saída, pose estimada pelo TF, pose verdadeira, erro verdadeiro até o alvo, erro
+    de localização, distância verdadeira percorrida) e `_trajetoria.csv` (pose estimada e
+    verdadeira a 5 Hz). O `<modo>` é `ekf`, `ekf+slam`, `odom` ou `slam`, conforme o launch.
+  - A pose verdadeira é levada para o frame da partida: a primeira mensagem do
+    `/ground_truth/odom` vira a origem. Assim ela compara direto com o `odom` e o `map`, que
+    também nascem na partida.
+- `agrobot_webots/agrobot_webots/agrobot_driver.py`: publica `/ground_truth/odom` com a pose
+  e a velocidade verdadeiras do `base_link`, lidas do Supervisor (frame `world`, filho
+  `base_link_gt`, sem TF). Serve só para medir erro; nenhum estimador usa.
+- `agrobot_webots/protos/agrobot.proto`: `supervisor` agora é `TRUE` por padrão (o driver
+  precisa disso para ler a própria pose).
+- `agrobot_webots/config/nav2_params.yaml`:
+  - bloco `waypoint_follower` com o plugin `WaitAtWaypoint` (parada de 3 s,
+    `waypoint_pause_duration`) e `stop_on_failure: false` (um waypoint que falha é pulado e
+    a missão segue);
+  - `default_server_timeout` do bt_navigator de 20 para 200 ms (motivo abaixo).
+- `agrobot_webots/launch/navigation.launch.py`: sobe o `waypoint_follower` junto com os
+  outros servidores (e no lifecycle manager). Argumento novo `global_frame` (padrão `odom`),
+  aplicado com `RewrittenYaml` no bt_navigator, no costmap global e no behavior_server. O
+  controlador e o costmap local ficam em `odom`, como pede a REP-105.
+- `agrobot_webots/launch/simulation.launch.py`: passa `global_frame:=map` para o Nav2 quando
+  `slam:=true`. Argumento novo `waypoints`: nome de uma lista em `config/waypoints/` (sem
+  `.yaml`) ou caminho de um arquivo. Ele sobe o `waypoint_mission` com o frame certo, o modo
+  e o nome do mundo.
+- `agrobot_webots/config/waypoints/` (novo): as três listas dos casos de estudo.
+- `agrobot_webots/scripts/summarize_missions.py` (novo): lê os CSVs e imprime uma linha de
+  tabela Markdown por rodada: waypoints atingidos, tempo, distância verdadeira, erro final,
+  ATE, maior erro de posição e maior erro de yaw (as tabelas abaixo saíram dele).
+- `agrobot_webots/rviz/nav.rviz` e `nav_slam.rviz`: display "Waypoints".
+- `agrobot_webots/setup.py` e `package.xml`: instala as listas, entry point
+  `waypoint_mission`, dependências `nav2_common`, `nav2_msgs`, `python3-yaml` e
+  `visualization_msgs`.
+- `README.md`: seção "Waypoint missions", argumento `waypoints`, tópicos novos, resumo do
+  Nav2 e próximos passos.
+
+**Por quê**
+- **`FollowWaypoints` do Nav2, e não um laço próprio de `NavigateToPose`.** O
+  `waypoint_follower` já faz a sequência, a parada (`WaitAtWaypoint`) e o pulo de um
+  waypoint que falha, e devolve quais foram perdidos. O nó da missão só prepara a lista e
+  registra o resultado.
+- **`RewrittenYaml` para o `global_frame`.** Passar `{'global_frame': 'map'}` como parâmetro
+  de nó no launch não chega ao costmap global: ele é o nó `global_costmap/global_costmap`,
+  e o `launch_ros` aplica o dicionário pelo nome completo do nó que está no launch
+  (`planner_server`). Com o YAML reescrito (caminho `global_costmap.global_costmap...`),
+  `ros2 param get` confirmou `map` no bt_navigator, no costmap global e no
+  behavior_server, e `odom` no costmap local.
+- **`default_server_timeout` 200 ms.** Com `slam:=true` e a CPU da nuvem cheia, o
+  bt_navigator às vezes desistia antes de o planner aceitar o pedido ("Timed out while
+  waiting for action server to acknowledge goal request for compute_path_to_pose") e o
+  waypoint inteiro falhava. Com 200 ms isso não voltou a acontecer.
+- **Coordenadas no frame da partida.** O `odom` e o `map` do slam_toolbox nascem na pose
+  inicial do robô, então a mesma lista serve com e sem SLAM, e o erro é comparável entre
+  os modos.
+
+**Os casos de estudo** (coordenadas no frame da partida; todos começam e terminam na
+partida)
+
+| Lista | Mundo | Rota | Comprimento | O que testa |
+|---|---|---|---|---|
+| `caso1_arena_circuito` | `obstacle_arena.wbt` | sul do caixote do centro, leste, norte do caixote, leste de novo, partida | ~10 m | ambiente fechado, sempre com paredes à vista; lugares revisitados; controle negativo do VSLAM (paredes e chão lisos) |
+| `caso2_plantacao_ida_volta` | `plantation_field.wbt` | entrelinha y = 0 até a cabeceira leste, volta pela y = 1,8, partida | ~26 m | fileiras repetitivas, terreno irregular, duas manobras de cabeceira |
+| `caso3_plantacao_serpentina` | `plantation_field.wbt` | entrelinhas y = 0 (leste), 1,8 (oeste), -1,8 (leste) e 0 de novo (oeste) até a partida | ~51 m | percurso longo (deriva acumulada), entrelinhas iguais (aliasing), a entrelinha do meio percorrida duas vezes |
+
+Ajustes que vieram dos testes (os comentários de cada YAML explicam):
+- A arena não tem volta completa em torno do caixote do centro. A única passagem a oeste dele
+  fica entre dois caixotes, com 1,4 m livres para um robô de 1,12 m. A primeira versão do
+  caso 1 (laço por ali) chegou em 4/4 com EKF, mas em 2/4 e 3/4 com SLAM: o Nav2 só passava
+  com manobras de recuperação. O circuito final vai e volta pelo leste.
+- Os pontos no meio das entrelinhas (x = 6) obrigam o Nav2 a usar a entrelinha certa. Sem
+  eles, numa rodada o planejador foi da cabeceira leste para a entrelinha y = 3,6 e depois
+  para a y = 0, porque todas levam ao outro lado.
+- O caso 2 não para na cabeceira oeste. Com um waypoint em (0,6; 1,8), o robô chegou, mas
+  não conseguiu girar no lugar para a partida (pouco espaço entre a fileira e a pedra) e o
+  Nav2 desistiu dele. Sem a parada ele faz a curva andando.
+- No caso 3, a entrelinha -1,8 termina em x = 10,8 por causa da pedra em (11,8; -1,5).
+
+**Resultados na nuvem** (uma rodada por linha, tempo de simulação; "erro final" é a
+distância verdadeira até o último waypoint; ATE é a raiz do erro quadrático médio da posição
+estimada contra a verdadeira ao longo da trajetória, sem alinhamento)
+
+| Caso | Modo | Atingidos | Tempo (s) | Distância (m) | Erro final (m) | ATE (m) | Erro máx. (m) | Yaw máx. (°) |
+|---|---|---|---|---|---|---|---|---|
+| 1 arena | EKF | 5/5 | 77 | 10,6 | 0,20 | 0,08 | 0,15 | 1,2 |
+| 1 arena | EKF + SLAM | 5/5 | 77 | 10,9 | 0,08 | 0,02 | 0,08 | 4,6 |
+| 2 ida e volta | EKF | 5/5 | 132 | 26,6 | 0,16 | 0,10 | 0,19 | 3,2 |
+| 2 ida e volta | EKF + SLAM | 3/5 | 237 | 33,4 | 10,04 | 2,04 | 2,89 | 28,3 |
+| 3 serpentina | EKF | 11/11 | 231 | 52,4 | 0,15 | 0,16 | 0,36 | 1,3 |
+| 3 serpentina | EKF + SLAM, 1ª rodada | 5/11 | 559 | 75,3 | 2,35 | 1,25 | 2,49 | 24,4 |
+| 3 serpentina | EKF + SLAM, 2ª rodada | 7/11 | 368 | 62,6 | 2,26 | 1,32 | 2,47 | 38,4 |
+| 2, rota antiga (sem os pontos do meio, parada na cabeceira oeste) | EKF | 3/4 | 267 | 45,4 | 0,28 | 0,36 | 0,64 | 1,9 |
+| 2, rota antiga | EKF + SLAM | 3/4 | 246 | 33,1 | 0,15 | 0,10 | 0,32 | 18,9 |
+
+- Com EKF, os três casos chegaram a todos os waypoints, com erro de localização máximo de
+  0,36 m.
+- Na arena, o SLAM chegou a todos e localizou melhor que o EKF (ATE 0,02 contra 0,08 m).
+- Na plantação, o SLAM perdeu waypoints nas 4 rodadas: 3 pela localização (abaixo) e 1 pela
+  rota antiga. As duas rodadas da rota antiga perderam um waypoint cada por causa da rota
+  (entrelinha errada com EKF; giro na cabeceira oeste com SLAM), o que a rota final corrige.
+- O "erro final" de 10 m do caso 2 com SLAM é o waypoint `partida` perdido: o robô parou
+  no meio da entrelinha y = 3,6. Com waypoints perdidos, o erro final não compara; o ATE
+  e o erro máximo comparam.
+
+**Por que o SLAM falhou na plantação.** Nas 3 rodadas da rota final com `slam:=true`, o erro
+começou na manobra da cabeceira leste: o yaw do slam_toolbox errou de 10° a 23° ali (e
+chegou a 38° depois), enquanto o do EKF ficou abaixo de 3,2° em todas as rodadas (coluna
+"yaw máx."). Com o yaw errado, a entrelinha seguinte aparece inclinada no frame `map`: em
+5 m, 10° deslocam ~0,9 m para o lado, metade da distância entre entrelinhas. O waypoint do meio da entrelinha (x = 6) cai
+em cima de uma fileira, o planejador não acha caminho ("failed to plan ... tolerance of
+0.3") e o waypoint é perdido. Depois o robô segue por outra entrelinha achando que está na
+certa: na 1ª rodada do caso 3, ele voltou pela entrelinha y = 0 com o SLAM dizendo
+y = 1,7, e no caso 2 terminou na entrelinha y = 3,6 achando que estava na y = 2,3. Na
+rodada com a rota antiga do caso 2, o robô passou pela mesma cabeceira com menos de 3° de
+erro (o erro de 18,9° veio depois, na cabeceira oeste, e voltou a menos de 3°), então a
+falha não acontece sempre.
+
+Hipóteses, não verificadas:
+- Na cabeceira o LiDAR vê pouca coisa que segure a rotação (pontas de fileira parecidas e
+  mourões longe). A busca angular grossa do slam_toolbox vai até ±20°
+  (`coarse_search_angle_offset: 0.349`), e o maior erro na chegada à cabeceira (21° a 23°,
+  no caso 2) fica perto desse limite.
+- Com a CPU cheia, o slam_toolbox (modo assíncrono) pula scans, e o robô gira mais entre
+  dois scans processados durante os giros no lugar da cabeceira. Num PC mais rápido isso
+  pode ser melhor.
+- A cabeceira tem buracos e chão mais irregular, e o robô gira no lugar ali. Inclinado, o
+  plano do LiDAR pode bater no chão e pôr arcos falsos no scan.
+
+A configuração do slam_toolbox não mudou neste registro. Ajustá-la para a plantação fica
+para um trabalho separado.
+
+**Para o estudo**
+- Rodar cada caso várias vezes em cada modo: na nuvem, com a CPU no limite (controlador a
+  4–10 Hz em vez de 20), o mesmo caso com SLAM variou de uma rodada para outra.
+- O EKF está favorecido na simulação: o `InertialUnit` do Webots dá o yaw absoluto sem
+  ruído nem deriva, e o EKF usa esse yaw. No robô real a IMU deriva. Para uma comparação
+  justa, pôr ruído nos sensores do PROTO antes das rodadas do estudo: campo `noise` do
+  `InertialUnit` e do `Lidar`, terceira coluna do `lookupTable` do `Gyro`. O `noise` do
+  Webots é ruído branco; uma deriva do yaw teria que ser somada no driver.
+- Comparar o ATE e o erro máximo (localização), e não só o erro final: com o EKF o robô
+  chega perto do alvo que ele acha que alcançou, mesmo com a estimativa errada.
+- A parada de 3 s é o lugar para a coleta de dados; o tempo muda em
+  `waypoint_pause_duration`.
+
+**Como foi validado** (nuvem Linux, sem GPU)
+- Webots R2025a headless, driver real, Nav2 1.3.13, slam_toolbox 2.8.5,
+  robot_localization 3.8.3, launch real `simulation.launch.py ... waypoints:=<caso>`. Cada
+  rodada terminava sozinha quando o nó registrava o fim da missão.
+- `ros2 param get` nos nós do Nav2 com `slam:=true` (frames acima).
+- `ament_flake8` e `ament_pep257` sem erros nos arquivos novos.
+
+**Não testado:** Windows/WSL, RViz (os marcadores foram conferidos pelo tópico, não na tela).
+O VSLAM foi testado depois, no registro de 2026-10-27.
+
+### 2026-10-27 — Conflito do PR #10 com a main: missões de waypoints com o VSLAM (RTAB-Map)
+
+**Pedido.** Depois que a main recebeu o VSLAM (PR #9), o PR #10 (missões de waypoints) ficou
+em conflito. Kauê pediu para resolver. A main foi juntada ao ramo do PR com um merge (sem
+reescrever o histórico), e as missões foram testadas de novo no Webots, agora também com o
+RTAB-Map.
+
+**Para usar**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+# mapeamento com o RTAB-Map durante a missão (grava ~/.ros/agrobot_vslam/plantation_field.db)
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
+    waypoints:=caso2_plantacao_ida_volta
+# mesma missão, localizando no mapa salvo
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
+    vslam_localization:=true waypoints:=caso2_plantacao_ida_volta
+python3 agrobot_webots/scripts/summarize_missions.py ~/.ros/agrobot_missions
+```
+
+**O que mudou**
+- Merge da `main` no ramo do PR. Conflitos em quatro arquivos, todos resolvidos juntando os
+  dois lados:
+  - `agrobot_webots/agrobot_webots/agrobot_driver.py`: a câmera RGB-D da main e o
+    `/ground_truth/odom` deste PR convivem. O `__init__` pega o nó do próprio robô no
+    Supervisor (`getSelf`) e liga a câmera; o `step` publica a odometria, a pose verdadeira e
+    as imagens. As constantes do VSLAM ficam no topo do arquivo.
+  - `agrobot_webots/launch/simulation.launch.py`: fica a estrutura da main (`flag`,
+    `driver_urdf(..., camera)`, `vslam_database`, `start_vslam`, RViz por modo). Deste PR
+    entram `global_frame`, o argumento `waypoints` e `start_mission`.
+  - `README.md` e `claude/manual.md`: as seções dos dois lados, os registros em ordem de data.
+- Mudanças novas, além da junção:
+  - `simulation.launch.py`: o Nav2 e a missão usam o frame `map` também com `vslam:=true`
+    (antes, só com `slam:=true`; a main deixava o Nav2 em `odom` com o VSLAM). É o `map` que
+    corrige a deriva da odometria, e as listas continuam valendo: o `map` do RTAB-Map nasce
+    na partida, e na localização o `RGBD/StartAtOrigin` põe o robô no primeiro nó do mapa,
+    que é a partida do mapeamento. Com `slam:=true vslam:=true`, quem publica `map -> odom` é
+    o RTAB-Map (regra da main), então o Nav2 segue o RTAB-Map.
+  - `simulation.launch.py`: o modo nos nomes dos CSVs é `ekf+vslam` no mapeamento e
+    `ekf+vslam-loc` com `vslam_localization:=true`, para as duas coisas não se misturarem no
+    estudo. Hífen, e não `_`, porque o `summarize_missions.py` separa caso, modo e data por
+    `_`: num teste com `vslam_loc`, ele leu o caso errado.
+  - `agrobot_webots/config/nav2_params.yaml`: `default_server_timeout` do bt_navigator de 200
+    para 1000 ms. Na primeira rodada da plantação com o RTAB-Map, o planner rodava a ~1,5 Hz
+    (em vez de 5) com a câmera e o RTAB-Map na CPU da nuvem. O pedido ao
+    `compute_path_to_pose` passou de 200 ms sem resposta, o objetivo abortou e o waypoint
+    `cabeceira_leste_y0` foi perdido (4/5). Com 1000 ms, as três rodadas seguintes da
+    plantação não tiveram esse erro. Esperar mais só atrasa a resposta quando o servidor está
+    lento.
+  - `agrobot_webots/rviz/nav_vslam.rviz` (o RViz do `vslam:=true`, novo na main): display
+    "Waypoints", como no `nav.rviz` e no `nav_slam.rviz`.
+  - `agrobot_driver.py`: uma linha em branco que faltava antes de `quaternion_from_matrix`
+    (E302 do flake8, vindo da junção).
+  - `README.md`: os modos do estudo incluem a localização (`vslam_localization:=true`), a nota
+    da câmera ligada por padrão, os resultados do RTAB-Map e o novo timeout.
+  - Este registro, e duas frases do registro de 2026-10-26 que diziam que o VSLAM vinha num
+    PR seguinte.
+
+**Atenção:** desde a main, a câmera é ligada por padrão (`camera:=true`) em todos os modos,
+também nas rodadas só com EKF ou SLAM. Isso deixa a carga de CPU igual entre os modos do
+estudo. Num PC lento, `camera:=false` alivia as rodadas sem VSLAM.
+
+**Como foi testado** (nuvem Linux sem GPU, Webots R2025a headless, Nav2 1.3.13, rtabmap_ros
+0.23.13; cada rodada terminava sozinha no fim da missão; tabela do `summarize_missions.py`,
+uma rodada por linha)
+
+| Caso | Modo | Atingidos | Tempo (s) | Distância (m) | Erro final (m) | ATE (m) | Erro máx. (m) | Yaw máx. (°) |
+|---|---|---|---|---|---|---|---|---|
+| 1 arena | EKF | 5/5 | 77 | 10,6 | 0,17 | 0,08 | 0,11 | 3,0 |
+| 1 arena | EKF + SLAM | 5/5 | 74 | 10,8 | 0,08 | 0,03 | 0,08 | 8,4 |
+| 1 arena | EKF + VSLAM, mapeamento | 5/5 | 80 | 10,6 | 0,21 | 0,08 | 0,18 | 3,6 |
+| 2 ida e volta | EKF | 5/5 | 98 | 25,8 | 0,08 | 0,09 | 0,20 | 1,8 |
+| 2 ida e volta | EKF + VSLAM, mapeamento (timeout 200 ms) | 4/5 | 105 | 25,7 | 0,07 | 0,08 | 0,24 | 6,2 |
+| 2 ida e volta | EKF + VSLAM, localização no mapa acima (200 ms) | 5/5 | 109 | 25,9 | 0,07 | 0,07 | 0,24 | 6,6 |
+| 2 ida e volta | EKF + VSLAM, mapeamento (1000 ms) | 5/5 | 95 | 25,6 | 0,17 | 0,11 | 0,18 | 1,8 |
+| 2 ida e volta | EKF + VSLAM, localização no mapa acima (1000 ms) | 5/5 | 98 | 25,7 | 0,19 | 0,10 | 0,21 | 2,2 |
+
+- As rodadas só com EKF e com SLAM continuam como antes do merge (registro de 2026-10-26):
+  arena 5/5 nos dois modos, plantação 5/5 com EKF.
+- Com o RTAB-Map, o robô chegou a todos os waypoints da arena e do caso 2, mapeando e
+  localizando, exceto na rodada do timeout. Na plantação, ao contrário do slam_toolbox, ele
+  não perdeu o yaw na cabeceira leste (no máximo 6,6°, contra 10° a 23° do slam_toolbox).
+- Na arena, o RTAB-Map localizou como o EKF (ATE 0,08 m) e pior que o slam_toolbox
+  (0,03 m), como esperado do controle negativo (paredes e chão lisos). Na plantação, o ATE do
+  RTAB-Map (0,07 a 0,11 m) ficou perto do EKF (0,09 m). É uma rodada por modo, e o EKF tem o
+  yaw sem ruído da simulação, então isso não diz qual é melhor.
+- Durante as missões, um script conferiu os tópicos com `ros2 topic hz` (relógio da parede,
+  com a simulação abaixo do tempo real): `/ground_truth/odom` a ~30 Hz na arena e ~18 Hz na
+  plantação, junto com a cor (5 a 10 Hz) e a profundidade (~10 Hz) da câmera e o `/scan`
+  (8 a 10 Hz). Com `vslam:=true`, `ros2 param get` deu `map` no `global_costmap` e no
+  `waypoint_mission`, e o `tf2_echo map odom` mostrou o TF do RTAB-Map.
+- Na localização, o log do rtabmap mostrou a cópia do banco carregada,
+  `Localization mode (Mem/IncrementalMemory=false)` e `RGBD/StartAtOrigin=true`.
+- `ament_flake8` e `ament_pep257` no driver e no launch: sem erros novos. Os avisos de ordem
+  de import (I100/I101) nos dois arquivos já existem na main.
+- `colcon build --symlink-install --packages-select agrobot_description agrobot_webots`.
+
+**Não testado:** caso 3 com o RTAB-Map, `slam:=true vslam:=true` com missão, RViz na tela
+(o `nav_vslam.rviz` só foi conferido como YAML válido), Windows.
