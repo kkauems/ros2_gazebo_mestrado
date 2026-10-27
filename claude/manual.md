@@ -1685,6 +1685,76 @@ para um trabalho separado.
 **Não testado:** Windows/WSL, RViz (os marcadores foram conferidos pelo tópico, não na tela).
 O VSLAM foi testado depois, no registro de 2026-10-27.
 
+### 2026-10-26 — Waypoints clicados no RViz (`waypoints:=rviz`)
+
+**Pedido.** Terceira parte do trabalho dos waypoints, combinada no plano: além das listas em
+YAML, marcar os waypoints clicando no mapa do RViz.
+
+**Para usar**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+colcon build --symlink-install --packages-select agrobot_webots
+source install/setup.bash
+ros2 launch agrobot_webots simulation.launch.py ekf:=true waypoints:=rviz
+# no RViz: ferramenta Publish Point, um clique por waypoint; depois, em outro terminal:
+ros2 service call /waypoint_mission/start std_srvs/srv/Trigger
+```
+Outros serviços: `undo` (tira o último), `clear` (apaga todos) e `save` (grava a lista em
+`~/.ros/agrobot_missions/rviz_<data>.yaml`, no mesmo formato dos casos de estudo, para rodar
+de novo com `waypoints:=<arquivo>`).
+
+**O que mudou**
+- `agrobot_webots/agrobot_webots/waypoint_mission.py`:
+  - sem `waypoints_file`, a lista começa vazia e o caso se chama `rviz`;
+  - assina `/clicked_point` (o tópico da ferramenta Publish Point). Cada clique vira um
+    waypoint `wpN` no fim da lista, convertido pelo TF para o frame da missão (`odom`, ou
+    `map` com SLAM). Clique durante uma missão é ignorado com aviso;
+  - serviços `~/start`, `~/undo`, `~/clear` e `~/save` (`std_srvs/Trigger`);
+  - o yaw automático (olhando para o próximo waypoint) agora é calculado na hora de
+    começar (`fill_yaw`), porque a lista muda. O último waypoint de uma lista de um só olha
+    a partir da posição do robô, e não da partida;
+  - a missão pode ser repetida: `start` depois do fim volta todos os waypoints a pendente e
+    grava CSVs novos.
+- `agrobot_webots/launch/simulation.launch.py`: `waypoints:=rviz` sobe o nó sem arquivo.
+- `agrobot_webots/rviz/nav.rviz` e `nav_slam.rviz`: ferramenta Publish Point (`/clicked_point`,
+  "Single click").
+- `agrobot_webots/package.xml`: `std_srvs`.
+- `README.md`: "Waypoints clicked in RViz" na seção das missões, argumento `waypoints` e
+  tópico `/clicked_point`.
+
+**Por quê**
+- **Publish Point em vez do "Nav2 Goal"**: o "Nav2 Goal" manda o robô andar na hora. Com o
+  Publish Point o clique só marca o ponto, e a lista inteira vai para o mesmo
+  `FollowWaypoints` das listas em YAML, com a mesma parada, os mesmos marcadores e os
+  mesmos CSVs.
+- **Serviços em vez de um botão no RViz**: um painel próprio do RViz seria um plugin em
+  C++. Os serviços `Trigger` funcionam no terminal e em qualquer script.
+- **`save` no formato dos casos**: uma rota clicada vira um caso de estudo novo sem
+  reescrever nada.
+
+**Como foi validado** (nuvem Linux, Webots R2025a headless, driver real, Nav2 1.3.13). Os
+cliques foram simulados publicando `geometry_msgs/PointStamped` em `/clicked_point`, como a
+ferramenta do RViz faz:
+- `start` com a lista vazia: recusado. Cliques em (1,0; -0,9) e (5,0; 5,0), `undo` (sobra 1),
+  clique em (2,6; 0,6) e um clique em (0, 0) no frame `base_link`, convertido pelo TF para
+  `odom` como (0,00; 0,00). `save` gravou o YAML com `world: obstacle_arena.wbt` e os 3
+  pontos. `start` iniciou a missão; `clear` durante a missão foi recusado.
+
+| Rodada | Atingidos | Tempo (s) | Erro final (m) | ATE (m) |
+|---|---|---|---|---|
+| Arena, `ekf:=true waypoints:=rviz` (cliques em `odom` e `base_link`) | 3/3 | 44 | 0,26 | 0,11 |
+| Arena, o YAML gravado acima com `waypoints:=<arquivo>` | 3/3 | 44 | 0,25 | 0,10 |
+| Arena, `ekf:=true slam:=true waypoints:=rviz` (cliques em `map`) | 3/3 | 45 | 0,05 | 0,02 |
+
+- Um teste sem simulação, com TF falso, conferiu também que um clique em `map` sem o TF
+  `map → odom` é ignorado com aviso.
+- `ament_flake8` e `ament_pep257` sem erros no `waypoint_mission.py`.
+
+**Não testado:** Windows/WSL, o RViz de verdade (os cliques foram simulados publicando em
+`/clicked_point`, como a ferramenta faz). O `nav_vslam.rviz` ganhou a ferramenta Publish Point
+depois, no registro de 2026-10-27 sobre os cliques com o VSLAM.
+
 ### 2026-10-27 — Conflito do PR #10 com a main: missões de waypoints com o VSLAM (RTAB-Map)
 
 **Pedido.** Depois que a main recebeu o VSLAM (PR #9), o PR #10 (missões de waypoints) ficou
@@ -1786,3 +1856,40 @@ uma rodada por linha)
 
 **Não testado:** caso 3 com o RTAB-Map, `slam:=true vslam:=true` com missão, RViz na tela
 (o `nav_vslam.rviz` só foi conferido como YAML válido), Windows.
+
+### 2026-10-27 — Cliques no RViz (`waypoints:=rviz`) juntados ao PR #10 atualizado, com o VSLAM
+
+**Pedido.** Depois do merge da main no PR #10 (registro anterior), o PR dos cliques no RViz,
+que parte do #10, foi atualizado com um merge do ramo do #10 e testado de novo.
+
+**O que mudou**
+- Merge do ramo do PR #10 no ramo deste PR. Conflitos resolvidos juntando os dois lados:
+  - `agrobot_webots/launch/simulation.launch.py` (`start_mission`): o `waypoints:=rviz` deste
+    PR (nó sem arquivo) com os modos do #10 (`flag`, `vslam`, `vslam-loc`);
+  - `README.md`: as linhas do `waypoints:=rviz` na tabela de estado, no argumento
+    `waypoints` e no tópico `/clicked_point`, sobre as versões do #10 (com o VSLAM);
+  - `claude/manual.md`: os registros em ordem de data.
+- `agrobot_webots/rviz/nav_vslam.rviz`: ferramenta Publish Point (`/clicked_point`,
+  "Single click"), como no `nav.rviz` e no `nav_slam.rviz`. Com `vslam:=true` o RViz abre
+  esse arquivo, e sem a ferramenta não dava para clicar os waypoints.
+- `README.md`: os cliques vão para `map` também com `vslam:=true`, e a ferramenta está nos
+  três arquivos do RViz.
+
+**Como foi testado** (nuvem, Webots R2025a headless; cliques simulados publicando em
+`/clicked_point`, como a ferramenta do RViz faz; mesma sequência do registro de 2026-10-26:
+`start` com a lista vazia, dois cliques, `undo`, mais dois cliques, `save`, `start`, `clear`
+durante a missão)
+
+| Rodada | Atingidos | Tempo (s) | Erro final (m) | ATE (m) |
+|---|---|---|---|---|
+| Arena, `ekf:=true vslam:=true waypoints:=rviz` (cliques em `map`) | 3/3 | 44 | 0,22 | 0,09 |
+| Arena, `ekf:=true waypoints:=rviz` (cliques em `odom` e `base_link`) | 3/3 | 44 | 0,23 | 0,09 |
+
+- Nas duas, os serviços responderam como antes: `start` vazio recusado, `undo` deixou 1
+  waypoint, `save` gravou o YAML, `clear` durante a missão recusado.
+- Com `vslam:=true`, os cliques entraram em `map` e o CSV saiu como `rviz_ekf+vslam_*`.
+- `ament_flake8` e `ament_pep257` sem erros novos (os avisos de ordem de import do launch já
+  existem na main). O `nav_vslam.rviz` foi conferido como YAML válido; o RViz não está
+  instalado na nuvem.
+
+**Não testado:** Windows/WSL, o RViz de verdade.
