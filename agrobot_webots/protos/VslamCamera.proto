@@ -1,0 +1,72 @@
+#VRML_SIM R2025a utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# Câmera RGB-D do VSLAM: uma Camera (cor) e um RangeFinder (profundidade) na
+# mesma pose, com a mesma resolução e o mesmo FOV. Assim a profundidade já sai
+# registrada à cor (um só camera_info e um só frame óptico).
+# Valores padrão parecidos com a Intel RealSense D455: FOV de 87 graus
+# (o da profundidade dela) e alcance de 0,5 a 6 m.
+# Como no Webots R2025a, a câmera olha para +x, com +z para cima.
+
+PROTO VslamCamera [
+  field SFVec3f    translation      0 0 0
+  field SFRotation rotation         0 0 1 0
+  field SFString   colorName        "vslam_color"  # nome do device de cor
+  field SFString   depthName        "vslam_depth"  # nome do device de profundidade
+  field SFInt32    width            424
+  field SFInt32    height           240
+  field SFFloat    fieldOfView      1.518          # horizontal, rad (87 graus)
+  field SFFloat    near             0.05           # plano de recorte (m)
+  field SFFloat    minRange         0.5            # abaixo disso: +inf (m)
+  field SFFloat    maxRange         6.0            # a partir disso: +inf (m)
+  # Passo da profundidade (m); -1 = sem passo. Com passo, o Webots R2025a
+  # escreve NaN (e não +inf) fora do alcance, na última linha e na borda
+  # direita dos objetos contra o fundo.
+  field SFFloat    depthResolution  -1
+  field SFFloat    colorNoise       0.0            # desvio do ruído da cor (fração de 255)
+  field SFFloat    depthNoise       0.0            # desvio do ruído da profundidade (fração de maxRange)
+]
+{
+  Pose {
+    translation IS translation
+    rotation IS rotation
+    children [
+      Camera {
+        name IS colorName
+        fieldOfView IS fieldOfView
+        width IS width
+        height IS height
+        near IS near
+        noise IS colorNoise
+      }
+      RangeFinder {
+        name IS depthName
+        fieldOfView IS fieldOfView
+        width IS width
+        height IS height
+        near IS near
+        minRange IS minRange
+        maxRange IS maxRange
+        resolution IS depthResolution
+        noise IS depthNoise
+      }
+      # Corpo (12,4 x 2,6 x 2,9 cm, como a D455), atrás do centro óptico para
+      # não aparecer na própria imagem.
+      Pose {
+        translation -0.013 0 0
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.05 0.05 0.05
+              roughness 1
+              metalness 0
+            }
+            geometry Box {
+              size 0.026 0.124 0.029
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -13,8 +13,11 @@ bt_navigator:
     # Tempo (ms) que cada nó da BT espera o servidor aceitar o pedido. Com 20
     # (padrão do Nav2), com slam:=true na nuvem o planner às vezes demorava
     # mais, o ComputePathToPose falhava e o objetivo inteiro abortava ("Timed
-    # out while waiting for action server to acknowledge goal request").
-    default_server_timeout: 200
+    # out while waiting for action server to acknowledge goal request"). Com
+    # a câmera e o RTAB-Map, 200 ms também não bastaram uma vez na plantação
+    # (planner a ~1,5 Hz em vez de 5). Esperar mais só atrasa a resposta
+    # quando o servidor está lento; não muda nada quando ele responde logo.
+    default_server_timeout: 1000
     wait_for_service_timeout: 1000
     navigators: ["navigate_to_pose", "navigate_through_poses"]
     navigate_to_pose:

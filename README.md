@@ -22,10 +22,12 @@ reactive obstacle avoidance and stability tests).
 | `/clock` from Webots sim time | Webots | New on 2026-10-07 |
 | Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route); the ellipse wasn't checked in RViz, not yet on Windows |
 | Crop-field test world (`plantation_field.wbt`): 6 plant rows, uneven ground, clods, stones and branches, `world:=plantation_field.wbt` | Webots | New on 2026-10-09, tested in Webots R2025a on Linux (headless) with the real driver, Nav2 and slam_toolbox, not yet on Windows. See [Plantation field](#plantation-field-world) |
+| RGB-D camera for VSLAM (`/vslam_camera/...`: color, registered depth, `camera_info`, one stamp), `camera:=false` turns it off | Webots | New on 2026-10-20, tested in Webots R2025a on Linux (headless), measured with the `AgrobotDriver` code run outside `webots_ros2_driver`; on 2026-10-21 also started with `webots_ros2_driver` itself (topics published, none with `camera:=false`). Not yet in RViz or on Windows ([details](claude/manual.md#2026-10-20--câmera-rgb-d-do-vslam-etapas-1-e-2)) |
+| VSLAM with RTAB-Map (camera + lidar check): TF `map → odom`, `/rtabmap/map`, mapping and localization on a saved map, `vslam:=true` (needs `ekf:=true`) | Webots | New on 2026-10-21, tested in Webots R2025a on Linux (headless) on the crop field and the arena, without Nav2, with the driver code run outside `webots_ros2_driver` (and 40 s with `webots_ros2_driver` itself); not yet in RViz or on Windows. See [VSLAM](#vslam-rtab-map) |
 | Waypoint missions: a YAML list of waypoints driven in sequence with Nav2 `FollowWaypoints`, a 3 s stop at each one, markers in RViz and a CSV log with the estimated and true pose, `waypoints:=<case>`, or clicked in RViz with `waypoints:=rviz` | Webots | New on 2026-10-26. Three study cases for comparing EKF, SLAM and VSLAM. Run in Webots R2025a on Linux (headless), not yet on Windows. See [Waypoint missions](#waypoint-missions) |
 | Ground truth from the Webots Supervisor (`/ground_truth/odom`), for measuring errors only | Webots | New on 2026-10-26 |
-| Nav2 plans in `map` when SLAM is on (`slam:=true`); local costmap and controller stay in `odom` | Webots | New on 2026-10-26 |
-| AMCL / GPS / VSLAM | — | Not done. VSLAM study: [claude/estudo_vslam.md](claude/estudo_vslam.md) |
+| Nav2 plans in `map` when SLAM is on (`slam:=true` or `vslam:=true`); local costmap and controller stay in `odom` | Webots | New on 2026-10-26 |
+| AMCL / GPS | — | Not done. VSLAM study: [claude/estudo_vslam.md](claude/estudo_vslam.md) |
 | `cmd_vel` / `odom` / `scan` bridge | Gazebo | Works (from the earlier commits) |
 | Reactive obstacle avoidance node | Gazebo | Code exists, but see [Known issues](#known-issues) |
 | Roll/pitch stability monitor | Gazebo | Code exists, no entry point yet |
@@ -57,7 +59,9 @@ agrobot_webots/          Webots simulation + Nav2 (ament_python)
   config/slam_toolbox.yaml slam_toolbox (lidar SLAM), used with slam:=true
   config/ekf_map.yaml      map-frame EKF (wheels + IMU + slam_toolbox pose), used with slam:=true
   rviz/nav.rviz            RViz config with the "Nav2 Goal" tool
+  config/rtabmap.yaml      RTAB-Map (RGB-D camera + lidar VSLAM), used with vslam:=true
   rviz/nav_slam.rviz       same, Fixed Frame map, with /map and the covariance ellipses (slam:=true)
+  rviz/nav_vslam.rviz      same, Fixed Frame map, with the RTAB-Map grid and path (vslam:=true)
   rviz/goal.rviz           RViz config for goal_navigator ("2D Goal Pose" tool)
 agrobot_gazebo/          Gazebo Harmonic worlds (.sdf) and launch files (ament_cmake)
 agrobot_control/         Gazebo-era nodes: obstacle_avoidance.py, stability_monitor.py
@@ -73,7 +77,7 @@ claude/                  Notes for/from Claude: instructions.md (plan + status),
 ```bash
 sudo apt install ros-jazzy-webots-ros2 ros-jazzy-navigation2 ros-jazzy-rviz2 \
                  ros-jazzy-robot-state-publisher ros-jazzy-robot-localization \
-                 ros-jazzy-slam-toolbox ros-jazzy-ros-gz
+                 ros-jazzy-slam-toolbox ros-jazzy-rtabmap-ros ros-jazzy-ros-gz
 ```
 
 Webots runs on Windows. `webots_ros2_driver` finds it through `WEBOTS_HOME`, so that
@@ -110,9 +114,14 @@ Launch arguments:
 |---|---|---|
 | `world` | `obstacle_arena.wbt` | World file in `agrobot_webots/worlds/`. `plantation_field.wbt` is the crop field ([below](#plantation-field-world)). `goal_navigation.launch.py` takes the same argument |
 | `nav` | `true` | Start the Nav2 servers (`navigation.launch.py`) |
-| `rviz` | `true` | Start RViz with `rviz/nav.rviz` (`rviz/nav_slam.rviz` with `slam:=true`) |
+| `rviz` | `true` | Start RViz with `rviz/nav.rviz` (`rviz/nav_slam.rviz` with `slam:=true`, `rviz/nav_vslam.rviz` with `vslam:=true`) |
 | `ekf` | `false` | `true`: the `robot_localization` EKF fuses `/wheel/odom` + `/imu/data` and publishes `/odom` and TF `odom → base_link` (the driver stops publishing them). `goal_navigation.launch.py` takes the same argument |
+| `camera` | `true` | `false`: the driver doesn't enable the VSLAM RGB-D camera, so Webots doesn't render it and the `/vslam_camera/...` topics don't exist |
 | `slam` | `false` | `true`: `slam_toolbox` builds `/map` from `/scan` and publishes TF `map → odom` and `/pose`; `ekf_map_node` fuses `/wheel/odom` + `/imu/data` + `/pose` into `/odometry/map`. RViz shows the map and the `/odometry/map` covariance ellipse (magnified 20×); an `/odom` ellipse for comparison is in the Displays panel, off by default and meaningful only with `ekf:=true`. Nav2 plans in `map` (bt_navigator, global costmap, behaviors); the controller and the local costmap stay in `odom`. Works with `ekf:=true` or `false` |
+| `vslam` | `false` | `true`: RTAB-Map maps with the RGB-D camera and the lidar and publishes TF `map → odom`, `/rtabmap/map` and `/rtabmap/mapPath` ([VSLAM](#vslam-rtab-map)). Needs `ekf:=true` and `camera:=true`. With `slam:=true` too, slam_toolbox keeps running without TF, for comparison. Nav2 plans in `map`, as with `slam:=true` |
+| `vslam_localization` | `false` | With `vslam:=true`: localize on a saved RTAB-Map database instead of mapping (the database isn't changed) |
+| `vslam_db` | `~/.ros/agrobot_vslam/<world>.db` | RTAB-Map database. Mapping erases it at start |
+| `rtabmap_viz` | `false` | With `vslam:=true`: also open the `rtabmap_viz` window (loop closures, features) |
 | `waypoints` | (empty) | Name of a waypoint list in `config/waypoints/` (without `.yaml`), a path to a `.yaml`, or `rviz` to click the waypoints in RViz. Starts `waypoint_mission`, which drives the robot through the list once Nav2 is up ([below](#waypoint-missions)) |
 
 Examples:
@@ -214,8 +223,8 @@ waypoints:
 ```
 
 - Coordinates are in the frame where the robot started: `odom` starts there, and so does
-  the `map` of slam_toolbox. The same list works with and without SLAM; the launch picks the
-  frame (`map` with `slam:=true`, otherwise `odom`).
+  the `map` of slam_toolbox and of RTAB-Map. The same list works with and without SLAM; the
+  launch picks the frame (`map` with `slam:=true` or `vslam:=true`, otherwise `odom`).
 - Without `yaw`, the robot arrives facing the next waypoint (the last one, facing the way it
   came), so it doesn't turn in place more than it needs to.
 - Each waypoint must be less than ~12 m from the previous one (the global costmap window).
@@ -257,8 +266,9 @@ ros2 service call /waypoint_mission/clear std_srvs/srv/Trigger   # remove all of
 ros2 service call /waypoint_mission/save std_srvs/srv/Trigger    # write the list to a YAML file
 ```
 
-- Clicks are converted to the mission frame (`odom`, or `map` with SLAM) and ignored while a
-  mission runs.
+- Clicks are converted to the mission frame (`odom`, or `map` with `slam:=true` or
+  `vslam:=true`) and ignored while a mission runs. The Publish Point tool is in all three
+  RViz configs (`nav.rviz`, `nav_slam.rviz`, `nav_vslam.rviz`).
 - After a mission ends, `start` drives the same list again, and new clicks add to it.
 - `save` writes `~/.ros/agrobot_missions/rviz_<date>.yaml` in the format above, with the
   world, so the list can be run again with `waypoints:=<that file>`.
@@ -272,16 +282,60 @@ ros2 service call /waypoint_mission/save std_srvs/srv/Trigger    # write the lis
 | `caso2_plantacao_ida_volta` | `plantation_field.wbt` | middle lane to the east headland, back along lane y = 1.8, to the start | ~26 m |
 | `caso3_plantacao_serpentina` | `plantation_field.wbt` | lanes y = 0 (east), 1.8 (west), −1.8 (east), and 0 again (west) to the start | ~51 m |
 
-Run each case with `ekf:=true` (EKF only, Nav2 in `odom`) and `ekf:=true slam:=true` (lidar
-SLAM, Nav2 in `map`). The plantation lists have a waypoint in the middle of each lane
-(x = 6): without it, Nav2 may take a different lane to reach the far headland.
+Run each case with `ekf:=true` (EKF only, Nav2 in `odom`), `ekf:=true slam:=true` (lidar
+SLAM, Nav2 in `map`), `ekf:=true vslam:=true` (RTAB-Map mapping, Nav2 in `map`) and, after a
+mapping run, `ekf:=true vslam:=true vslam_localization:=true` (RTAB-Map localizing on the
+saved map). The mode goes into the CSV names (`ekf`, `ekf+slam`, `ekf+vslam`,
+`ekf+vslam-loc`). The camera is on by default (`camera:=true`) in every mode, so the CPU load
+is the same; `camera:=false` lightens the runs without VSLAM. The plantation lists have a
+waypoint in the middle of each lane (x = 6): without it, Nav2 may take a different lane to
+reach the far headland.
 
 In the cloud runs, the EKF reached every waypoint of the three cases (largest localization
 error 0.36 m). Lidar SLAM reached every waypoint in the arena, but in the plantation it lost
 its heading (10–23° off) at the east headland in all three runs of the final routes, and then
-missed waypoints. Tables and analysis are in [claude/manual.md](claude/manual.md). In the
-simulation the IMU yaw has no noise or drift, which favors the EKF; add sensor noise before
-running the study.
+missed waypoints. RTAB-Map reached every waypoint in the arena and in case 2, mapping and
+localizing (ATE 0.07–0.11 m, heading error under 7°); case 3 wasn't run with it yet. Tables
+and analysis are in [claude/manual.md](claude/manual.md). In the simulation the IMU yaw has no
+noise or drift, which favors the EKF; add sensor noise before running the study.
+
+### VSLAM (RTAB-Map)
+
+```bash
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true vslam_localization:=true
+ros2 run tf2_ros tf2_monitor map odom     # map → odom must come from one node only
+```
+
+- **Mapping** (`vslam:=true`). RTAB-Map takes the RGB-D camera and the EKF odometry
+  (TF `odom → base_link`), adds a node about every second while the robot moves, looks for
+  loop closures by appearance with the camera and checks each one with the lidar (ICP).
+  Near its current estimate it also matches the lidar scan against the scans of nearby
+  nodes (proximity detection). It publishes TF
+  `map → odom` at 20 Hz (identity until the first frame), the lidar occupancy grid
+  `/rtabmap/map` and the graph path `/rtabmap/mapPath`, both shown by `rviz/nav_vslam.rviz`.
+  The grid is assembled only while someone subscribes to `/rtabmap/map`, so keep RViz open
+  while mapping. Drive around with Nav2 goals, a waypoint mission or teleop; Nav2 plans in `map`.
+- **Database.** `~/.ros/agrobot_vslam/<world>.db` (for example `plantation_field.db`), or
+  the path given in `vslam_db`. Mapping **erases it when it starts**, so copy the file to
+  keep a map. Inspect it with `rtabmap-info <file>`.
+- **Localization** (`vslam_localization:=true`). RTAB-Map loads the saved map (a copy in
+  `/tmp`, the file itself isn't changed) and adds nothing to it. It starts with the robot on
+  the map's first node and corrects `map → odom` (still published at 20 Hz) when it
+  recognizes places; the first correction waits for a second recognition. The robot has to
+  start where it started when mapping (the worlds fix the spawn pose).
+- **With `slam:=true` too.** slam_toolbox keeps running for comparison, without TF: its map
+  goes to `/slam_toolbox/map` in frame `slam_map`, which isn't in the TF tree (RViz can't
+  show it). Save it with `ros2 run nav2_map_server map_saver_cli -t /slam_toolbox/map`.
+  `ekf_map_node` and the `/odometry/map` ellipse don't run with `vslam:=true`.
+- `rtabmap_viz:=true` opens the RTAB-Map window (loop closures, features).
+- **The plantation soil texture repeats every 2 m**, and the camera sees mostly soil: in
+  the first test, 8 loop closures placed the robot exactly 2 m away from where it was. The
+  lidar check (ICP) and robust graph optimization deal with that; in the cloud test, 2 laps around the
+  y = 0 and y = 1.8 lanes gave a `map` pose error of 0.11 m RMS (0.23 m max, 0.08 m at the
+  end), against 0.28 m RMS (0.46 m max, 0.45 m at the end) for the EKF odometry alone.
+  Details in [claude/manual.md](claude/manual.md#2026-10-21--rtab-map-vslam-com-vslamtrue-etapa-5).
+  The arena has plain walls and floor and few visual features.
 
 ### Goal without Nav2 (`goal_navigator`)
 
@@ -316,6 +370,7 @@ for manual driving.
 ros2 topic hz /scan                     # ~10 Hz
 ros2 topic echo /odom --once
 ros2 run tf2_tools view_frames          # odom -> base_link -> wheels, front_lidar_link, ...
+ros2 run tf2_ros tf2_monitor map odom   # with slam:=true or vslam:=true: one publisher, ~20 Hz
 ros2 lifecycle get /bt_navigator        # should be "active [3]"
 ```
 
@@ -328,10 +383,16 @@ ros2 lifecycle get /bt_navigator        # should be "active [3]"
                                                      │ subscribes /cmd_vel
                                                      │ publishes  /odom, TF odom→base_link (ekf:=false),
                                                      │            /wheel/odom, /imu/data, /clock,
-                                                     │            /scan, /joint_states
+                                                     │            /scan, /joint_states,
+                                                     │            /vslam_camera/... (camera:=true)
 ekf_filter_node (ekf:=true) ◄── /wheel/odom, /imu/data   ──► /odom, TF odom→base_link
 slam_toolbox (slam:=true)   ◄── /scan, TF odom→base_link ──► /map, /pose, TF map→odom
 ekf_map_node (slam:=true)   ◄── /wheel/odom, /imu/data, /pose ──► /odometry/map (no TF)
+rgbd_sync (vslam:=true)     ◄── /vslam_camera/... ──► /rtabmap/rgbd_image
+rtabmap (vslam:=true)       ◄── /rtabmap/rgbd_image, /scan, TF odom→base_link
+                                ──► /rtabmap/map, /rtabmap/mapPath, TF map→odom
+   (with vslam:=true, slam_toolbox publishes no TF and its map moves to /slam_toolbox/map,
+    and ekf_map_node doesn't run)
 robot_state_publisher ◄── /joint_states             ─┘
    (URDF static TF: base_link → wheels, lidars, imu, ...)
 
@@ -351,13 +412,22 @@ waypoint_mission (waypoints:=...) ─FollowWaypoints─► waypoint_follower ─
 | `/clock` | `rosgraph_msgs/Clock` | AgrobotDriver | Webots sim time, every step |
 | `/scan` | `sensor_msgs/LaserScan` | AgrobotDriver | frame `front_lidar_link`, 300 rays, 3.0 rad FOV, 0.1–8 m, sensor-data QoS |
 | `/joint_states` | `sensor_msgs/JointState` | AgrobotDriver | 4 wheel positions |
+| `/vslam_camera/color/image_raw` | `sensor_msgs/Image` | AgrobotDriver (`camera:=true`) | `bgra8`, 424 × 240, every 96 ms (~10.4 Hz), frame `vslam_camera_optical_frame`, reliable QoS |
+| `/vslam_camera/color/camera_info` | `sensor_msgs/CameraInfo` | AgrobotDriver | pinhole, no distortion, fx = fy ≈ 223.5 px |
+| `/vslam_camera/aligned_depth_to_color/image_raw` | `sensor_msgs/Image` | AgrobotDriver | `32FC1`, planar depth in meters, registered to the color image; `+inf` outside 0.5–6 m. Same stamp as the color image |
+| `/vslam_camera/aligned_depth_to_color/camera_info` | `sensor_msgs/CameraInfo` | AgrobotDriver | same as the color one |
 | `/map` | `nav_msgs/OccupancyGrid` | slam_toolbox (`slam:=true`) | 0.05 m cells, transient local, every 5 s |
 | `/pose` | `geometry_msgs/PoseWithCovarianceStamped` | slam_toolbox (`slam:=true`) | frame `map`, one per processed scan, scan-matching covariance |
 | `/odometry/map` | `nav_msgs/Odometry` | ekf_map_node (`slam:=true`) | frame `map`: wheels + IMU + `/pose`; the ellipse shown in RViz |
+| `/rtabmap/rgbd_image` | `rtabmap_msgs/RGBDImage` | rgbd_sync (`vslam:=true`) | color + depth + `camera_info` of one frame, exact sync |
+| `/rtabmap/map` | `nav_msgs/OccupancyGrid` | rtabmap (`vslam:=true`) | from the lidar, 0.05 m cells, transient local; built only while someone subscribes |
+| `/rtabmap/mapPath` | `nav_msgs/Path` | rtabmap (`vslam:=true`) | one pose per node of the optimized graph |
+| `/rtabmap/info` | `rtabmap_msgs/Info` | rtabmap (`vslam:=true`) | per processed frame: loop closures, timing |
+| `/rtabmap/localization_pose` | `geometry_msgs/PoseWithCovarianceStamped` | rtabmap (`vslam:=true`) | only in iterations with a loop closure or proximity link (a localization, with `vslam_localization:=true`), and only while subscribed |
 | `/ground_truth/odom` | `nav_msgs/Odometry` | AgrobotDriver | true pose of `base_link` from the Webots Supervisor, frame `world`, child `base_link_gt`, no TF. For measuring only |
 | `/waypoints/markers` | `visualization_msgs/MarkerArray` | waypoint_mission | waypoints, names and route, transient local |
 | `/clicked_point` | `geometry_msgs/PointStamped` | RViz (Publish Point tool) | with `waypoints:=rviz`, each click adds a waypoint |
-| `/tf` | | AgrobotDriver or EKF, robot_state_publisher, slam_toolbox | `map → odom` (slam) and `odom → base_link` are dynamic, the rest is static |
+| `/tf` | | AgrobotDriver or EKF, robot_state_publisher, slam_toolbox or rtabmap | `map → odom` (slam_toolbox with `slam:=true`, rtabmap with `vslam:=true`) and `odom → base_link` are dynamic, the rest is static |
 
 All messages are stamped with **Webots simulation time** (`robot.getTime()`), and the
 nodes run with `use_sim_time: true`, except `goal_navigator`. Since 2026-10-07 the driver
@@ -374,6 +444,7 @@ Set in the URDF `<webots><plugin>` block ([agrobot.urdf](agrobot_description/urd
 | `wheelSeparation` | 0.96 m | geometric track width |
 | `wheelSeparationScale` | 1.33 | effective track = 0.96 × 1.33, calibrated for skid-steer slip in turns |
 | `publishOdom` | true | driver publishes `/odom` + TF; the launch sets it to false with `ekf:=true` |
+| `vslamCameraPeriod` | 96 ms | VSLAM camera period, a multiple of the 32 ms step; the launch sets it to 0 (off) with `camera:=false` |
 
 Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
 - The robot is a Supervisor (`supervisor TRUE`, since 2026-10-26), so the driver can read
@@ -385,19 +456,27 @@ Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
   in the arena's world frame, whose floor top is at z = 0.05). It sees the boxes (0.20 m
   above the floor) and the crates (0.30 m). Until 2026-10-09 it was 5 cm lower; see
   [claude/manual.md](claude/manual.md#2026-10-09--lidar-frontal-5-cm-mais-alto-13-cm-do-chão)
+- `VslamCamera` ([VslamCamera.proto](agrobot_webots/protos/VslamCamera.proto)): a `Camera`
+  `vslam_color` and a `RangeFinder` `vslam_depth` at the same pose, with the same 424 × 240
+  resolution and 87° horizontal FOV, so the depth is registered to the color image. It sits
+  at (0.45, 0, 0.38) from `base_link` (~0.61 m above the ground), pitched 15° down, like an
+  Intel RealSense D455 (depth 0.5–6 m). URDF frames: `vslam_camera_link` (x forward) and
+  `vslam_camera_optical_frame` (z forward, x right, y down). The old `camera_link` is left
+  as it was because the Gazebo package uses the same URDF. Only for VSLAM; the data
+  acquisition camera will be a separate RGB camera
 
 ### Nav2 configuration (summary)
 
 [config/nav2_params.yaml](agrobot_webots/config/nav2_params.yaml):
-- No map. `global_frame: odom`; with `slam:=true` the launch rewrites it to `map` for the
-  bt_navigator, the global costmap and the behavior server (`navigation.launch.py`
-  argument `global_frame`). The local costmap and the controller stay in `odom`. Both
-  costmaps are rolling windows (local 4×4 m, global 24×24 m, 5 cm cells). Goals must be
-  inside the global window (up to ~12 m away).
+- No map. `global_frame: odom`; with `slam:=true` or `vslam:=true` the launch rewrites it
+  to `map` for the bt_navigator, the global costmap and the behavior server
+  (`navigation.launch.py` argument `global_frame`). The local costmap and the controller
+  stay in `odom`. Both costmaps are rolling windows (local 4×4 m, global 24×24 m, 5 cm
+  cells). Goals must be inside the global window (up to ~12 m away).
 - `waypoint_follower` with a 3 s stop at each waypoint and `stop_on_failure: false`.
-- `default_server_timeout` of the bt_navigator: 200 ms (Nav2 default 20 ms). With 20 ms, on
-  a loaded CPU with `slam:=true` the planner sometimes took longer to accept the request,
-  and the whole goal aborted.
+- `default_server_timeout` of the bt_navigator: 1000 ms (Nav2 default 20 ms). On a loaded
+  CPU (`slam:=true`, or the camera with `vslam:=true`) the planner sometimes took longer to
+  accept the request, and the whole goal aborted.
 - Layers: `obstacle_layer` (from `/scan`) + `inflation_layer` (radius 0.7 m).
 - Footprint 1.2 × 1.12 m (chassis length × outer wheel width).
 - Planner: NavFn. Controller: Regulated Pure Pursuit, 0.4 m/s, rotate-to-heading on.
@@ -418,11 +497,13 @@ In Gazebo, the robot uses the `gz-sim-diff-drive-system` plugin and the tall `li
 
 ## Known issues
 
-- **Odometry drift.** Skid-steer wheels slip sideways in turns, and the encoders can't
-  see it. Expect about 0.3 m position error per goal and about 0.4 m after a round trip.
-  The EKF (`ekf:=true`) doesn't remove this: slip is invisible to wheels and IMU alike.
-  `slam:=true` corrects it in the `map` frame (`map → odom`), and Nav2 then plans and takes
-  goals in `map`.
+- **Odometry drift.** Skid-steer wheels slip, and the encoders can't see it. With the
+  driver odometry (2026-10-02) the error was about 0.3 m per goal and about 0.4 m after a
+  round trip; with the EKF, 0.28 m RMS and 0.45 m at the end of 2 laps (~50 m) on the crop
+  field (2026-10-21). The EKF (`ekf:=true`) doesn't remove this: the IMU fixes the heading,
+  but nothing it fuses measures the distance traveled. `slam:=true` or `vslam:=true`
+  corrects it in the `map` frame (`map → odom`; 0.11 m RMS with `vslam:=true` in the same
+  test), and Nav2 then plans and takes goals in `map`.
 - **Lidar SLAM loses its heading in the plantation.** At the east headland of
   `plantation_field.wbt`, slam_toolbox's yaw went 10–23° off in every waypoint run with
   `slam:=true`. The next lane then looks tilted in `map`, its waypoints land on a plant row and
@@ -453,9 +534,10 @@ In Gazebo, the robot uses the `gz-sim-diff-drive-system` plugin and the tall `li
 
 ## Next steps
 
-1. Check `ekf:=true slam:=true` and the waypoint missions in RViz on Windows/WSL (so far
-   they only ran headless in the cloud). Add RTAB-Map with the RGB-D camera
-   (plan in [claude/estudo_vslam.md](claude/estudo_vslam.md)) and run the study cases with it.
+1. Check `ekf:=true slam:=true`, `ekf:=true vslam:=true` and the waypoint missions in RViz
+   on Windows/WSL (so far they only ran headless in the cloud), and measure how fast the
+   simulation runs there with the camera and RTAB-Map. Then run the study cases with each
+   mode. VSLAM plan: `planejamento/camera_rgbd.md` in the project files.
 2. Move the Nav2 setup to the vineyard world (rows, longer distances).
 3. Fix the `agrobot_control` package layout. Decide whether the reactive avoider is still
    needed alongside Nav2.
