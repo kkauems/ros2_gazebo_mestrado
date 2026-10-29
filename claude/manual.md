@@ -1993,3 +1993,160 @@ canal `robostack-jazzy`; launch real `simulation.launch.py ... rviz:=false`; tab
 
 **Não testado:** Windows/WSL, RViz, várias rodadas de cada caso (uma ou duas por modo), a
 localização com o robô começando fora do primeiro nó, sensores com ruído.
+
+### 2026-10-29 — Comparação dos métodos de localização nos três casos (passo 3)
+
+**Pedido.** Kauê pediu o passo 3: repetir os três casos de estudo (1 arena, 2 ida e volta
+na plantação com mapeamento e localização, 3 serpentina) com os três métodos de localização
+(EKF só, SLAM por LiDAR com `slam:=true` e VSLAM com `vslam:=true`) no Webots, e montar a
+tabela de comparação para a dissertação: waypoints atingidos, ATE médio e máximo contra a
+pose verdadeira, e falhas. O SLAM por LiDAR entra só como comparação e não foi mexido. O
+VSLAM roda com o fechamento de laço só por proximidade do PR #13 (já na main). O problema do
+Nav2 na cabeceira leste ficou fora do escopo; está registrado abaixo onde aconteceu.
+
+**Para usar**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+# rodar cada caso algumas vezes em cada modo (comandos do registro de 2026-10-26), depois:
+python3 agrobot_webots/scripts/compare_methods.py ~/.ros/agrobot_missions
+```
+Os CSVs e os logs das 32 rodadas deste registro estão nos arquivos do projeto, em
+`resultados/passo3_comparacao/` (`compare.md` é a saída do script, `per_run.md` a do
+`summarize_missions.py`, `logs_launch.tar.gz` os logs do `ros2 launch`). Para refazer as
+tabelas: `python3 agrobot_webots/scripts/compare_methods.py <essa pasta>`.
+
+**O que mudou**
+- `agrobot_webots/scripts/compare_methods.py` (novo): lê os mesmos CSVs do
+  `summarize_missions.py` e imprime uma linha por caso e modo, juntando as rodadas:
+  waypoints atingidos segundo o Nav2 (soma e rodadas completas), waypoints em que o robô
+  esteve de verdade a até 0,5 m do alvo ("no alvo"), ATE médio ± desvio padrão, a média e o
+  maior dos erros máximos, o maior erro de yaw e o tempo médio. Depois lista os waypoints
+  perdidos com o erro de localização no momento em que o Nav2 desistiu (até 0,5 m conta como
+  falha de navegação; acima, de localização).
+- `README.md`: o script na estrutura do repositório e na seção das missões, o resumo dos
+  resultados no lugar do anterior (que era de uma ou duas rodadas) e o problema da cabeceira
+  leste em "Known issues".
+- Nenhuma mudança no launch, nos parâmetros nem no driver.
+
+**Por quê "no alvo".** O "atingidos" é o que o Nav2 acha. Com a localização errada, o Nav2
+dá o waypoint como atingido com o robô em outro lugar: na rodada 1 do caso 3 com VSLAM, ele
+marcou 11/11, mas os três últimos foram "atingidos" na entrelinha y = -1,8, a 1,8 m dos
+alvos. O "no alvo" usa a pose verdadeira (`/ground_truth/odom`) e mostra isso.
+
+**Como foi rodado** (nuvem Linux sem GPU, 4 CPUs; Webots R2025a com `--no-rendering` e
+`xvfb-run` do `WebotsLauncher`; ROS 2 Jazzy do RoboStack com Python 3.14, Nav2 1.3.13,
+slam_toolbox 2.8.5, rtabmap 0.23.13, robot_localization 3.8.3 e `webots_ros2_driver`
+2025.0.0; launch real `simulation.launch.py ... rviz:=false`, sem nenhuma mudança no código)
+- Três repetições de cada caso e modo, intercaladas (repetição 1 de todos, depois a 2, depois
+  a 3), sempre com `ekf:=true`. Modos: `ekf`, `ekf:=true slam:=true` e
+  `ekf:=true vslam:=true`. No caso 2, cada mapeamento com VSLAM foi seguido de uma rodada de
+  localização no mapa dele (`vslam_localization:=true`).
+- Cada rodada terminava quando o `waypoint_mission` registrava o fim da missão, ou depois de
+  15 (caso 1), 25 (caso 2) ou 40 min (caso 3) de relógio. Só a rodada 2 do caso 3 com SLAM
+  bateu no limite.
+- A simulação ficou perto do tempo real (caso 1: 76 s de simulação em ~115 s de relógio,
+  contando a subida).
+
+**Resultado por caso e método** (3 rodadas cada; ATE = raiz do erro quadrático médio da
+posição estimada contra a verdadeira, sem alinhamento; "erro máx." = maior erro de posição
+de cada rodada, média das rodadas e, entre parênteses, o maior de todas)
+
+| Caso | Método | Atingidos (Nav2) | Rodadas completas | No alvo (≤ 0,5 m) | ATE (m) | Erro máx. (m) | Yaw máx. (°) | Tempo médio (s) |
+|---|---|---|---|---|---|---|---|---|
+| 1 arena | EKF | 15/15 | 3/3 | 15/15 | 0,08 ± 0,00 | 0,13 (0,13) | 1,4 | 76 |
+| 1 arena | SLAM LiDAR | 15/15 | 3/3 | 15/15 | 0,03 ± 0,00 | 0,07 (0,08) | 5,0 | 76 |
+| 1 arena | VSLAM | 15/15 | 3/3 | 15/15 | 0,08 ± 0,00 | 0,18 (0,20) | 6,1 | 75 |
+| 2 ida e volta | EKF | 13/15 | 1/3 | 12/15 | 0,29 ± 0,17 | 0,72 (1,56) | 2,4 | 170 |
+| 2 ida e volta | SLAM LiDAR | 10/15 | 0/3 | 7/15 | 2,12 ± 1,65 | 4,47 (8,61) | 51,5 | 265 |
+| 2 ida e volta | VSLAM, mapeamento | 15/15 | 3/3 | 15/15 | 0,15 ± 0,04 | 0,33 (0,51) | 4,3 | 120 |
+| 2 ida e volta | VSLAM, localização no mapa salvo | 14/15 | 2/3 | 14/15 | 0,13 ± 0,06 | 0,27 (0,43) | 4,5 | 119 |
+| 3 serpentina | EKF | 30/33 | 1/3 | 26/33 | 0,47 ± 0,32 | 1,01 (1,82) | 3,4 | 271 |
+| 3 serpentina | SLAM LiDAR (2 rodadas + 1 que não terminou) | 12/22 | 0/3 | 8/22 | 2,97 ± 2,41 | 5,52 (8,24) | 38,9 | 533 |
+| 3 serpentina | VSLAM | 28/33 | 1/3 | 20/33 | 1,05 ± 0,89 | 1,86 (3,21) | 8,3 | 350 |
+
+**Rodadas** (saída do `summarize_missions.py`; erro final = distância verdadeira até o
+último waypoint)
+
+| Caso | Método | Rodada | Atingidos | Tempo (s) | Distância (m) | Erro final (m) | ATE (m) | Erro máx. (m) | Yaw máx. (°) |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | EKF | 1 / 2 / 3 | 5/5 / 5/5 / 5/5 | 77 / 76 / 76 | 10,5 / 10,6 / 10,6 | 0,19 / 0,17 / 0,19 | 0,08 / 0,08 / 0,08 | 0,13 / 0,12 / 0,13 | 1,4 / 1,2 / 1,3 |
+| 1 | SLAM LiDAR | 1 / 2 / 3 | 5/5 / 5/5 / 5/5 | 77 / 76 / 75 | 11,0 / 10,7 / 11,0 | 0,10 / 0,13 / 0,07 | 0,03 / 0,02 / 0,03 | 0,08 / 0,06 / 0,07 | 4,0 / 3,7 / 5,0 |
+| 1 | VSLAM | 1 / 2 / 3 | 5/5 / 5/5 / 5/5 | 75 / 75 / 75 | 10,6 / 10,6 / 10,6 | 0,21 / 0,23 / 0,24 | 0,08 / 0,08 / 0,08 | 0,16 / 0,19 / 0,20 | 2,4 / 4,1 / 6,1 |
+| 2 | EKF | 1 / 2 / 3 | 4/5 / 5/5 / 4/5 | 264 / 123 / 124 | 42,2 / 27,2 / 26,6 | 1,67 / 0,22 / 0,28 | 0,49 / 0,16 / 0,23 | 1,56 / 0,26 / 0,33 | 1,9 / 2,2 / 2,4 |
+| 2 | SLAM LiDAR | 1 / 2 / 3 | 4/5 / 3/5 / 3/5 | 267 / 236 / 291 | 33,8 / 34,2 / 44,2 | 0,19 / 8,54 / 4,35 | 0,58 / 3,87 / 1,92 | 0,90 / 8,61 / 3,91 | 27,2 / 51,5 / 24,3 |
+| 2 | VSLAM, mapeamento | 1 / 2 / 3 | 5/5 / 5/5 / 5/5 | 120 / 132 / 107 | 26,1 / 29,8 / 27,2 | 0,09 / 0,10 / 0,43 | 0,13 / 0,13 / 0,20 | 0,24 / 0,25 / 0,51 | 1,4 / 2,9 / 4,3 |
+| 2 | VSLAM, localização | 1 / 2 / 3 | 4/5 / 5/5 / 5/5 | 148 / 109 / 99 | 38,7 / 25,6 / 25,6 | 12,03 / 0,26 / 0,11 | 0,18 / 0,15 / 0,06 | 0,43 / 0,28 / 0,11 | 2,5 / 2,1 / 4,5 |
+| 3 | EKF | 1 / 2 / 3 | 9/11 / 11/11 / 10/11 | 303 / 243 / 267 | 54,9 / 51,7 / 56,8 | 0,52 / 1,76 / 0,08 | 0,31 / 0,83 / 0,26 | 0,72 / 1,82 / 0,48 | 3,4 / 2,1 / 3,4 |
+| 3 | SLAM LiDAR | 1 / 2 / 3 | 5/11 / não terminou / 7/11 | 553 / — / 513 | 77,4 / — / 70,0 | 2,32 / — / 0,50 | 4,67 / — / 1,26 | 8,24 / — / 2,80 | 38,9 / — / 15,7 |
+| 3 | VSLAM | 1 / 2 / 3 | 11/11 / 8/11 / 9/11 | 242 / 462 / 345 | 51,4 / 78,7 / 59,0 | 1,82 / 2,48 / 0,30 | 0,87 / 2,01 / 0,26 | 1,90 / 3,21 / 0,46 | 4,1 / 8,3 / 4,7 |
+
+**Falhas na plantação** (de cada rodada com waypoint perdido ou "atingido" longe do alvo;
+causa pelo log do Nav2 e pela trajetória verdadeira contra a estimada)
+
+| Caso | Método | Rodada | O que aconteceu | Tipo |
+|---|---|---|---|---|
+| 2 | EKF | 1 | Na cabeceira leste, o robô passou da entrelinha y = 1,8 e entrou na y = 3,6; perdeu o `meio_y1.8`. Manobrando entre as fileiras, o erro de localização subiu até 0,7 m e chegou a 1,6 m na volta à partida | navegação (cabeceira leste), depois deriva |
+| 2 | EKF | 3 | O planejador não achou caminho do meio da entrelinha y = 0 até a `cabeceira_leste_y0` ("Failed to create plan with tolerance of: 0.300000"), com a localização certa (0,19 m) | navegação (cabeceira leste) |
+| 2 | SLAM LiDAR | 1 | Na cabeceira leste, o scan matching deu saltos de 0,3 a 0,5 m de uma amostra para a seguinte (0,2 s) e o yaw errou até 27°; perdeu o `meio_y1.8` e chegou a dois waypoints a 0,7 m deles | localização |
+| 2 | SLAM LiDAR | 2 | Mesma cabeceira; yaw até 51° errado, o robô terminou em y = 7,9, fora da rota; 2 perdidos | localização |
+| 2 | SLAM LiDAR | 3 | Saltos na cabeceira leste e o erro crescendo depois (até 3,9 m); 2 perdidos | localização |
+| 2 | VSLAM, localização | 1 | O planejador recusou a `partida`: "Goal Coordinates of(0.000000, 0.000000) was outside bounds". O robô estava na cabeceira leste (12,0; 0,3), com a localização certa (0,28 m). Não investigado | navegação (costmap global no mapa salvo) |
+| 3 | EKF | 1 | A travessia da cabeceira leste de y = -1,8 para y = 0 (`cabeceira_leste_y0_volta`) falhou no planejador (localização 0,10 m); o robô voltou pela entrelinha -1,8 e perdeu também o `meio_y0_volta` | navegação (cabeceira leste) |
+| 3 | EKF | 2 | Preso na mesma travessia, contra a pedra perto de (11,8; -1,5), com as rodas girando: em 6 s a odometria andou 1,4 m para o norte com o robô parado. O robô voltou pela entrelinha -1,8 achando que estava na 0, e o Nav2 deu os 3 últimos como atingidos a 1,7–1,8 m deles | localização (patinagem) |
+| 3 | EKF | 3 | Perdeu o `meio_y0_volta` com a localização certa (0,21 m) | navegação |
+| 3 | SLAM LiDAR | 1 | Saltos na cabeceira leste (até 0,4 m por amostra) e na oeste (1,7 m), yaw até 39°, erro até 8,2 m; 6 perdidos | localização |
+| 3 | SLAM LiDAR | 2 | Preso na travessia da cabeceira leste (waypoint 9) por ~25 min de relógio, com o Nav2 passando caminho novo ao controlador sem desistir; não gravou CSV | navegação (cabeceira leste), não terminou |
+| 3 | SLAM LiDAR | 3 | Salto de 0,67 m por amostra na cabeceira oeste, erro até 2,8 m; 4 perdidos | localização |
+| 3 | VSLAM | 1 | Igual à rodada 2 do EKF: preso em (10,7; -1,7), a odometria escorregou 1,6 m para o norte em 6 s. Nenhum fechamento de laço corrigiu (a proximidade só busca nós a até 1 m da pose do EKF). Os 3 últimos "atingidos" a 1,8 m, na entrelinha errada | localização (patinagem não corrigida) |
+| 3 | VSLAM | 2 | Na cabeceira leste (de y = 0 para y = 1,8), o robô passou da entrelinha e foi até y ≈ 5,4. Ali, preso entre as fileiras, o robô era arrastado sem as rodas girarem (estimativa parada, pose verdadeira andando) e o erro subiu de 0,3 para 1,1 m em 80 s, chegando a 3 m; 3 perdidos e 5 "atingidos" longe | navegação (cabeceira leste), depois deriva |
+| 3 | VSLAM | 3 | A travessia da cabeceira leste de y = -1,8 para y = 0 falhou no planejador (localização 0,26 m); perdeu também o `meio_y0_volta` | navegação (cabeceira leste) |
+
+- A cabeceira leste (planejador, entrelinha errada ou robô preso) apareceu em 7 das 15
+  rodadas da plantação com EKF ou VSLAM, mais a recusa da `partida` na localização. Nas 6
+  rodadas com o SLAM por LiDAR houve saltos de pose ou yaw errado, a maioria na cabeceira
+  leste.
+- A travessia de y = -1,8 para y = 0 no caso 3 (waypoint 9) deu problema em 4 das 6 rodadas
+  com EKF ou VSLAM. A pedra em (11,8; -1,5) fica a ~1 m do waypoint 8 (10,8; -1,8).
+- Na arena, só avisos de "collision ahead" do controlador perto do caixote do norte, sem
+  perda de waypoint.
+
+**O que os números dizem**
+- **Arena (caso 1):** os três chegaram a tudo, com pouca variação entre rodadas. O SLAM por
+  LiDAR localizou melhor (ATE 0,03 m); EKF e VSLAM empataram (0,08 m). Paredes lisas e
+  perto dão um bom scan, e pouca textura para a câmera, como previsto.
+- **Plantação, ida e volta (caso 2):** o VSLAM foi o melhor: 15/15 no mapeamento e 14/15 na
+  localização no mapa salvo, com ATE de 0,13–0,15 m, metade do EKF (0,29 m). A única perda
+  da localização foi do planejador, com a localização certa. O SLAM por LiDAR foi o pior
+  (7/15 no alvo, yaw até 51°).
+- **Plantação, serpentina (caso 3):** nenhum método foi confiável. O EKF teve ATE menor que o
+  VSLAM (0,47 contra 1,05 m), mas a diferença vem de duas rodadas do VSLAM (a 1, com a
+  patinagem não corrigida, e a 2, que se perdeu na entrelinha y = 5,4); na rodada 3 o VSLAM
+  ficou em 0,26 m, como o EKF. Com 3 rodadas e falhas desse tamanho, a média não separa os
+  dois.
+- **O que pesou mais na plantação não foi a localização, e sim o Nav2 na cabeceira leste.**
+  As 8 rodadas da plantação com EKF ou VSLAM que passaram por ela sem problema tiveram ATE
+  de 0,06 a 0,26 m.
+- **O custo do fechamento só por proximidade (PR #13) apareceu:** quando a odometria
+  escorrega mais de ~1 m (robô preso com as rodas girando), o RTAB-Map não procura o lugar
+  certo e o erro fica. A detecção global corrigiria isso, mas era ela que trazia os
+  fechamentos falsos entre entrelinhas.
+- Comparado com as rodadas anteriores (uma ou duas por modo, registros de 2026-10-26 e
+  2026-10-29), a arena e o caso 2 repetiram o que se viu. O caso 3 com EKF e com VSLAM tinha
+  dado 11/11 com ATE de 0,16–0,19 m; aqui isso aconteceu em 2 das 6 rodadas. A diferença é
+  a cabeceira leste, que falha em algumas rodadas e não em outras.
+
+**Para a dissertação.** Para comparar a localização sem a navegação no meio:
+1. Resolver a cabeceira leste antes das rodadas finais (fora deste registro): afastar o
+   waypoint 8 da pedra, pôr um waypoint intermediário na cabeceira, ou ajustar o costmap
+   global e o planejador ali.
+2. Reduzir o efeito da patinagem: detectar o robô preso (rodas girando e a IMU sem
+   aceleração) e não integrar a odometria das rodas, ou aumentar o raio da proximidade do
+   RTAB-Map. Hoje uma patinagem de 1,5 m some do EKF e do VSLAM.
+3. Ruído nos sensores (registro de 2026-10-26), para o EKF não ficar favorecido pelo yaw
+   perfeito.
+4. Mais rodadas por caso (5 ou mais), já que a variação entre rodadas é grande na plantação.
+
+**Não testado:** Windows/WSL, RViz, sensores com ruído, mais de 3 rodadas por caso e modo, a
+localização do VSLAM com o robô começando fora do primeiro nó. Os fechamentos de laço de
+cada rodada do VSLAM não foram contados (os bancos não foram analisados desta vez).
