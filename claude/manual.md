@@ -1893,3 +1893,103 @@ durante a missão)
   instalado na nuvem.
 
 **Não testado:** Windows/WSL, o RViz de verdade.
+
+### 2026-10-29 — RTAB-Map: fechamento de laço só perto da pose do EKF (entrelinhas iguais)
+
+**Pedido.** Na plantação (`plantation_field.wbt`), o RTAB-Map aceitava fechamentos de laço
+errados porque as entrelinhas são parecidas, e a pose no `map` pulava de uma entrelinha para
+outra. Kauê pediu para corrigir o fechamento de laço e rodar os casos de waypoints com
+`vslam:=true`, em especial o caso 3 (serpentina), que ainda não tinha sido rodado com o VSLAM.
+O SLAM por LiDAR (slam_toolbox) fica só para comparação e não foi mexido.
+
+**O que mudou**
+- `agrobot_webots/config/rtabmap.yaml`:
+  - `Rtabmap/LoopThr` de `"0.11"` para `"1.01"`: desliga a detecção global de laço (pela
+    aparência, contra todos os nós do mapa). O valor da hipótese vai de 0 a 1, então 1,01
+    nunca é alcançado; o dicionário visual continua sendo montado, e o banco continua servindo
+    para a localização.
+  - `RGBD/AggressiveLoopThr` `"1.01"` (novo; padrão 0,05): na localização, até a primeira
+    localização o rtabmap usava esse limiar baixo para aceitar a hipótese global mais forte.
+    Com 1,01 ele não entra (só entra quando é menor que o `LoopThr`). O launch já liga o
+    `RGBD/StartAtOrigin` na localização, então o robô começa no primeiro nó do mapa.
+  - O resto ficou igual. O que fecha laço agora é só a detecção por proximidade, que parte da
+    pose do EKF: pela câmera, nós a até 1 m (`RGBD/ProximityPathFilteringRadius`) e 45°
+    (`RGBD/ProximityAngle`), com a odometria como chute (`RGBD/ProximityOdomGuess`) e o ICP
+    depois; pelo LiDAR, as varreduras dos nós vizinhos, com o ICP corrigindo no máximo
+    `Icp/MaxTranslation` (0,2 m) do chute.
+- `README.md`: seção VSLAM (mapeamento, localização e o parágrafo da textura repetida) e o
+  resumo dos casos de waypoints.
+
+**Por quê**
+- *Fechamento global contra entrelinhas iguais:* ele compara a imagem nova com todos os nós,
+  sem olhar onde o EKF diz que o robô está. Na plantação as entrelinhas são iguais para a
+  câmera e também para o LiDAR (fileiras paralelas deslocadas de 1,8 m dão o mesmo scan),
+  então o ICP do `Reg/Strategy` 2 não basta: no reprocessamento abaixo, um fechamento de
+  exatamente 1,8 m (entrelinha y = 0 com a y = -1,8) passou pelo ICP. A otimização robusta
+  desligou esse, mas uma sequência de fechamentos falsos coerentes entre si (o robô andando
+  pela entrelinha errada) pode ser aceita por ela, e o `RGBD/OptimizeMaxError` não pega
+  (registro de 2026-10-21: o erro se espalha por dezenas de elos de odometria). O rtabmap
+  0.23 não tem uma checagem que compare o fechamento global com a odometria; o
+  `RGBD/MaxLoopClosureDistance` limita a distância entre os dois nós, e não a correção, e
+  não ajuda aqui (no falso, os nós parecem perto um do outro).
+- *Proximidade:* é o fechamento "perto do chute da odometria". Uma entrelinha vizinha
+  (1,8 m) fica de fora enquanto a deriva lateral do EKF for menor que ~0,8 m (raio de 1 m
+  da câmera; 0,2 m do ICP do LiDAR). Nos casos rodados, o erro do EKF ficou abaixo de 0,5 m.
+- *O que se perde:* a detecção global é o que recuperaria o robô depois de uma deriva grande
+  (mais que ~1 m), ou o que o relocalizaria num mapa salvo sem saber onde começa. Na
+  simulação o EKF tem o yaw do `InertialUnit` sem ruído e o robô começa sempre no mesmo
+  lugar, então isso não fez falta. Com ruído nos sensores (ou no robô real), conferir se a
+  deriva continua abaixo de ~0,8 m entre dois fechamentos; para religar a detecção global,
+  `Rtabmap/LoopThr` e `RGBD/AggressiveLoopThr` de volta para `"0.11"` e `"0.05"`.
+- *Quanto a câmera ajuda:* nos casos 2 e 3, as passadas repetidas pela mesma entrelinha são em
+  sentidos opostos, e a câmera não reconhece o lugar visto de costas. Nas rodadas abaixo, os
+  únicos fechamentos certos na plantação foram por proximidade do LiDAR (1 por rodada do
+  caso 3, nenhum no caso 2). Por isso o ATE com o VSLAM fica perto do EKF sozinho. Na arena
+  houve 16 fechamentos, todos certos.
+
+**Reprocessamento do banco da rodada com a configuração anterior** (caso 3, 355 nós,
+`rtabmap-reprocess` com o mesmo banco; elo falso = mais de 0,3 m ou 10° de diferença do
+movimento verdadeiro entre os dois nós; grafo = poses otimizadas no fim contra a verdadeira)
+
+| Configuração | Fechamentos certos / falsos | Grafo, rms / máximo |
+|---|---|---|
+| Anterior (ICP + robusta, `LoopThr` 0,11) | 1 / 1 (1,8 m, y = 0 com y = -1,8) | 0,15 / 0,26 m |
+| Parâmetros do plano (`Reg/Strategy` 0, sem robusta) | 0 / 37 | 7,76 / 11,17 m |
+| Parâmetros do plano + esta correção | 1 / 0 | 0,14 / 0,27 m |
+| Esta correção | 1 / 0 | 0,15 / 0,26 m |
+
+O banco de uma rodada com a correção, reprocessado com a configuração anterior, não teve
+fechamento falso: o falso depende de qual quadro o rtabmap pega, e varia de rodada para
+rodada.
+
+**Missões** (nuvem Linux sem GPU, Webots R2025a, `WEBOTS_OFFSCREEN=1`, ROS 2 Jazzy do
+RoboStack com Nav2 1.3.13, rtabmap 0.23.13 e `webots_ros2_driver` 2025.0.0, todos binários do
+canal `robostack-jazzy`; launch real `simulation.launch.py ... rviz:=false`; tabela do
+`summarize_missions.py`, uma rodada por linha)
+
+| Caso | Modo | Atingidos | Tempo (s) | Distância (m) | Erro final (m) | ATE (m) | Erro máx. (m) | Yaw máx. (°) |
+|---|---|---|---|---|---|---|---|---|
+| 3 serpentina | EKF + VSLAM, configuração anterior | 10/11 | 225 | 52,0 | 0,31 | 0,15 | 0,26 | 3,3 |
+| 3 serpentina | EKF + VSLAM, correção, 1ª | 11/11 | 240 | 52,5 | 0,03 | 0,17 | 0,35 | 4,7 |
+| 3 serpentina | EKF + VSLAM, correção, 2ª | 11/11 | 240 | 55,7 | 0,12 | 0,19 | 0,42 | 5,7 |
+| 3 serpentina | EKF (comparação) | 8/11 | 270 | 50,3 | 12,63 | 0,27 | 0,49 | 1,6 |
+| 2 ida e volta | EKF + VSLAM, correção, mapeamento | 5/5 | 118 | 26,6 | 0,41 | 0,18 | 0,47 | 3,4 |
+| 2 ida e volta | EKF + VSLAM, correção, localização no mapa acima | 5/5 | 125 | 26,8 | 0,10 | 0,11 | 0,33 | 7,4 |
+| 1 arena | EKF + VSLAM, correção | 5/5 | 76 | 10,6 | 0,21 | 0,08 | 0,16 | 8,2 |
+
+- O caso 3 com o VSLAM chegou a todos os waypoints nas duas rodadas com a correção. Nenhum
+  pulo de pose: a maior variação do erro de localização entre duas amostras seguidas da
+  trajetória (0,2 s) foi de 0,08 a 0,12 m. Nos bancos, nenhum fechamento falso.
+- Os waypoints perdidos (o 9, `cabeceira_leste_y0_volta`, na rodada com a configuração
+  anterior; 9 a 11 na rodada só com EKF) não foram pela localização (erro abaixo de 0,5 m
+  ali): o planejador não achou caminho na travessia da cabeceira leste, de y = -1,8 para
+  y = 0 ("Failed to create plan with tolerance of: 0.300000"). Na rodada só com EKF o robô
+  ficou preso ali e perdeu os três últimos. É um problema do Nav2 naquela cabeceira, que
+  aparece em algumas rodadas e não em outras; não mexi.
+- Na localização (caso 2), o log mostrou `Localization mode`, o `RGBD/StartAtOrigin` e
+  localizações por proximidade ("Localization was good, but waiting for another one").
+- Um script gravou o `/ground_truth/odom` com o tempo de simulação, e outro comparou cada
+  elo do banco (tabela `Link`, pelos `stamp` dos nós) com o movimento verdadeiro.
+
+**Não testado:** Windows/WSL, RViz, várias rodadas de cada caso (uma ou duas por modo), a
+localização com o robô começando fora do primeiro nó, sensores com ruído.

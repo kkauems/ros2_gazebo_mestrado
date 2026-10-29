@@ -295,7 +295,8 @@ In the cloud runs, the EKF reached every waypoint of the three cases (largest lo
 error 0.36 m). Lidar SLAM reached every waypoint in the arena, but in the plantation it lost
 its heading (10–23° off) at the east headland in all three runs of the final routes, and then
 missed waypoints. RTAB-Map reached every waypoint in the arena and in case 2, mapping and
-localizing (ATE 0.07–0.11 m, heading error under 7°); case 3 wasn't run with it yet. Tables
+localizing (ATE 0.07–0.11 m, heading error under 7°). In case 3, with global loop closure
+off (see VSLAM below), it reached 11/11 in both runs (ATE 0.17–0.19 m, no pose jumps). Tables
 and analysis are in [claude/manual.md](claude/manual.md). In the simulation the IMU yaw has no
 noise or drift, which favors the EKF; add sensor noise before running the study.
 
@@ -308,10 +309,12 @@ ros2 run tf2_ros tf2_monitor map odom     # map → odom must come from one node
 ```
 
 - **Mapping** (`vslam:=true`). RTAB-Map takes the RGB-D camera and the EKF odometry
-  (TF `odom → base_link`), adds a node about every second while the robot moves, looks for
-  loop closures by appearance with the camera and checks each one with the lidar (ICP).
-  Near its current estimate it also matches the lidar scan against the scans of nearby
-  nodes (proximity detection). It publishes TF
+  (TF `odom → base_link`), adds a node about every second while the robot moves and
+  closes loops only near the EKF estimate (proximity detection): the camera image against
+  nodes up to 1 m and 45° away, using the odometry as the guess, and the lidar scan against
+  the scans of nearby nodes, each checked by ICP. Appearance-based (global) loop closure is
+  off (`Rtabmap/LoopThr` 1.01) because the plantation lanes look the same: it is what made
+  the pose jump between lanes. It publishes TF
   `map → odom` at 20 Hz (identity until the first frame), the lidar occupancy grid
   `/rtabmap/map` and the graph path `/rtabmap/mapPath`, both shown by `rviz/nav_vslam.rviz`.
   The grid is assembled only while someone subscribes to `/rtabmap/map`, so keep RViz open
@@ -322,7 +325,8 @@ ros2 run tf2_ros tf2_monitor map odom     # map → odom must come from one node
 - **Localization** (`vslam_localization:=true`). RTAB-Map loads the saved map (a copy in
   `/tmp`, the file itself isn't changed) and adds nothing to it. It starts with the robot on
   the map's first node and corrects `map → odom` (still published at 20 Hz) when it
-  recognizes places; the first correction waits for a second recognition. The robot has to
+  recognizes a place near the EKF estimate (proximity detection, as in mapping); the first
+  correction waits for a second recognition. The robot has to
   start where it started when mapping (the worlds fix the spawn pose).
 - **With `slam:=true` too.** slam_toolbox keeps running for comparison, without TF: its map
   goes to `/slam_toolbox/map` in frame `slam_map`, which isn't in the TF tree (RViz can't
@@ -331,7 +335,9 @@ ros2 run tf2_ros tf2_monitor map odom     # map → odom must come from one node
 - `rtabmap_viz:=true` opens the RTAB-Map window (loop closures, features).
 - **The plantation soil texture repeats every 2 m**, and the camera sees mostly soil: in
   the first test, 8 loop closures placed the robot exactly 2 m away from where it was. The
-  lidar check (ICP) and robust graph optimization deal with that; in the cloud test, 2 laps around the
+  lidar check (ICP) and robust graph optimization dealt with most of them, but the lanes also
+  look the same to the lidar (one 1.8 m closure from lane y = 0 to y = -1.8 passed the ICP in
+  the serpentine case), so global loop closure is now off (see Mapping above). In the cloud test, 2 laps around the
   y = 0 and y = 1.8 lanes gave a `map` pose error of 0.11 m RMS (0.23 m max, 0.08 m at the
   end), against 0.28 m RMS (0.46 m max, 0.45 m at the end) for the EKF odometry alone.
   Details in [claude/manual.md](claude/manual.md#2026-10-21--rtab-map-vslam-com-vslamtrue-etapa-5).
