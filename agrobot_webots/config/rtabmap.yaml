@@ -107,7 +107,31 @@
     # Padrão 10. Os ~30 nós mais recentes (~30 s andando) ficam fora do
     # fechamento de laço: uma passada pela fileira não fecha consigo mesma.
     Mem/STMSize: "30"
-    Rtabmap/LoopThr: "0.11"             # padrão; subir (0,15 a 0,25) se aparecerem fechamentos falsos
+
+    # Fechamento de laço só perto da pose do EKF. A detecção global (pela
+    # aparência, em todo o mapa) fica desligada: ela compara a imagem com
+    # todos os nós, e as entrelinhas da plantação são iguais para a câmera e
+    # para o LiDAR. No caso 3, o banco da serpentina reprocessado com a
+    # configuração anterior aceitou um fechamento de 1,8 m (da entrelinha
+    # y = 0 com a y = -1,8, passando pelo ICP); com os parâmetros do plano,
+    # 37. Nenhuma checagem do rtabmap compara o fechamento global com a
+    # odometria (o RGBD/OptimizeMaxError espalha o erro pelos elos, acima).
+    # Sobra a detecção por proximidade, que já parte da pose do EKF: pela
+    # câmera, só nós a até 1 m (ProximityPathFilteringRadius) e 45°
+    # (RGBD/ProximityAngle), com a odometria como chute; pelo LiDAR, o ICP
+    # corrige no máximo Icp/MaxTranslation (0,2 m) do chute. Uma entrelinha
+    # vizinha (1,8 m) fica de fora enquanto a deriva do EKF for menor que
+    # ~0,8 m (no caso 3, no máximo 0,36 m).
+    # O valor da hipótese de laço vai de 0 a 1: 1,01 nunca é alcançado, e o
+    # dicionário visual continua sendo montado (o banco serve para a
+    # localização). Para religar: "0.11" (padrão).
+    Rtabmap/LoopThr: "1.01"
+    # O mesmo na localização: sem isso, até a primeira localização o rtabmap
+    # aceita a hipótese global mais forte com limiar 0,05. Com o
+    # RGBD/StartAtOrigin do launch, o robô já começa no primeiro nó do mapa,
+    # e a proximidade localiza dali. 1,01 e não 1 (o "desligado" da
+    # descrição): o limiar agressivo só entra se for menor que o LoopThr.
+    RGBD/AggressiveLoopThr: "1.01"
 
     # Grade de ocupação pelo LiDAR em /rtabmap/map (para um static_layer do
     # Nav2 depois). Cada nó guarda a grade local dele no banco; a grade
