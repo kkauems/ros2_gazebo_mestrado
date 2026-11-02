@@ -72,6 +72,25 @@ def flag(context, name):
     return LaunchConfiguration(name).perform(context).lower() == 'true'
 
 
+def slip_check_on(context):
+    """Checagem de patinagem: pedida e com o EKF e a câmera ligados."""
+    return (flag(context, 'slip_check') and flag(context, 'ekf')
+            and flag(context, 'camera'))
+
+
+def rgbd_sync_node(config):
+    """Junta cor, profundidade e camera_info em /rtabmap/rgbd_image."""
+    return Node(
+        package='rtabmap_sync',
+        executable='rgbd_sync',
+        name='rgbd_sync',
+        namespace='rtabmap',
+        output='screen',
+        parameters=[config, {'use_sim_time': True}],
+        remappings=VSLAM_CAMERA,
+    )
+
+
 def vslam_database(context):
     """
     Banco do RTAB-Map e se ele é de mapeamento.
@@ -136,19 +155,61 @@ def generate_launch_description():
 
     agrobot_driver = OpaqueFunction(function=start_driver)
 
-    # Rodas + IMU -> /odom e TF odom -> base_link (no lugar do driver).
-    ekf_node = Node(
-        package='robot_localization',
-        executable='ekf_node',
-        name='ekf_filter_node',
-        output='screen',
-        parameters=[
+    # Rodas + IMU -> /odom e TF odom -> base_link (no lugar do driver). Com
+    # a checagem de patinagem, as rodas chegam pelo wheel_slip_monitor.
+    def start_ekf(context):
+        if not flag(context, 'ekf'):
+            return []
+        parameters = [
             os.path.join(webots_share, 'config', 'ekf.yaml'),
             {'use_sim_time': True},
-        ],
-        remappings=[('odometry/filtered', '/odom')],
-        condition=IfCondition(LaunchConfiguration('ekf')),
-    )
+        ]
+        if slip_check_on(context):
+            parameters.append({'odom0': '/wheel/odom_checked'})
+        return [Node(
+            package='robot_localization',
+            executable='ekf_node',
+            name='ekf_filter_node',
+            output='screen',
+            parameters=parameters,
+            remappings=[('odometry/filtered', '/odom')],
+        )]
+
+    ekf_node = OpaqueFunction(function=start_ekf)
+
+    # Checagem de patinagem: a odometria visual da câmera RGB-D
+    # (rgbd_odometry do RTAB-Map, em /vo/odom) é comparada com as rodas pelo
+    # wheel_slip_monitor. Quando discordam (robô preso com as rodas girando,
+    # ou arrastado com elas paradas), o EKF recebe a velocidade da câmera no
+    # lugar da das rodas. Só com ekf:=true e camera:=true.
+    def start_slip_check(context):
+        if not slip_check_on(context):
+            return []
+        config = os.path.join(webots_share, 'config', 'rtabmap.yaml')
+        nodes = []
+        if not flag(context, 'vslam'):
+            # Com vslam:=true o rgbd_sync já sobe no start_vslam.
+            nodes.append(rgbd_sync_node(config))
+        nodes += [
+            Node(
+                package='rtabmap_odom',
+                executable='rgbd_odometry',
+                name='rgbd_odometry',
+                namespace='rtabmap',
+                output='screen',
+                parameters=[config, {'use_sim_time': True}],
+                remappings=[('odom', '/vo/odom')],
+            ),
+            Node(
+                package='agrobot_webots',
+                executable='wheel_slip_monitor',
+                output='screen',
+                parameters=[{'use_sim_time': True}],
+            ),
+        ]
+        return nodes
+
+    slip_check = OpaqueFunction(function=start_slip_check)
 
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -260,15 +321,7 @@ def generate_launch_description():
             # o mapeamento terminou.
             rtabmap_parameters['RGBD/StartAtOrigin'] = 'true'
         nodes = [
-            Node(
-                package='rtabmap_sync',
-                executable='rgbd_sync',
-                name='rgbd_sync',
-                namespace='rtabmap',
-                output='screen',
-                parameters=[config, {'use_sim_time': True}],
-                remappings=VSLAM_CAMERA,
-            ),
+            rgbd_sync_node(config),
             Node(
                 package='rtabmap_slam',
                 executable='rtabmap',
@@ -327,6 +380,9 @@ def generate_launch_description():
                 raise RuntimeError(
                     f'Arquivo de waypoints não encontrado: {path}')
         modes = [m for m in ('ekf', 'slam', 'vslam') if flag(context, m)]
+        if slip_check_on(context):
+            # EKF com a checagem de patinagem pela odometria visual.
+            modes[modes.index('ekf')] = 'ekf-vo'
         if 'vslam' in modes and flag(context, 'vslam_localization'):
             # Localização num mapa salvo: outro rótulo nos CSVs, para não
             # misturar com as rodadas de mapeamento. Hífen, e não '_', porque
@@ -389,6 +445,9 @@ def generate_launch_description():
         DeclareLaunchArgument('vslam_localization', default_value='false'),
         DeclareLaunchArgument('vslam_db', default_value=''),
         DeclareLaunchArgument('rtabmap_viz', default_value='false'),
+        # Checagem de patinagem das rodas pela odometria visual (com
+        # ekf:=true e camera:=true; sem efeito sem eles).
+        DeclareLaunchArgument('slip_check', default_value='true'),
         # Antes do Webots: se faltar o ekf, a câmera ou o mapa salvo, o launch
         # para com o erro sem abrir o Webots.
         vslam,
@@ -396,6 +455,7 @@ def generate_launch_description():
         agrobot_driver,
         robot_state_publisher,
         ekf_node,
+        slip_check,
         slam,
         navigation,
         mission,

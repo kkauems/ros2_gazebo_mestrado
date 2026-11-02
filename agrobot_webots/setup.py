@@ -37,6 +37,7 @@ setup(
         'console_scripts': [
             'goal_navigator = agrobot_webots.goal_navigator:main',
             'waypoint_mission = agrobot_webots.waypoint_mission:main',
+            'wheel_slip_monitor = agrobot_webots.wheel_slip_monitor:main',
         ],
     },
 )
