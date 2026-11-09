@@ -1993,3 +1993,83 @@ canal `robostack-jazzy`; launch real `simulation.launch.py ... rviz:=false`; tab
 
 **Não testado:** Windows/WSL, RViz, várias rodadas de cada caso (uma ou duas por modo), a
 localização com o robô começando fora do primeiro nó, sensores com ruído.
+
+### 2026-11-09 — Peças soltas no modelo do robô do Webots (rodas, sensores)
+
+**Pedido.** Kauê viu partes do robô flutuando e desconectadas no Webots e pediu uma análise
+de quais e como corrigir. Só o Webots foi mexido (`agrobot_webots`); o URDF e a malha do
+`agrobot_description` (usados pelo Gazebo e pelo TF/RViz) ficaram como estavam.
+
+**Análise** (medida na malha `chassis.stl` com o Transform do `agrobot.proto`)
+- **Rodas longe dos motores.** No CAD, os motores e os eixos das rodas estão em
+  x = ±0,2225 m e z = +0,0125 m; as rodas (juntas do URDF/proto) estão em x = ±0,35 m e
+  z = -0,02 m. Cada roda ficava 12,75 cm à frente/atrás do seu motor e 3,25 cm abaixo do eixo.
+  Os eixos do CAD também têm comprimentos diferentes (alguns não chegam à roda). Não dá para
+  pôr as rodas no lugar do CAD: com raio 0,22 m e entre-eixos de 0,445 m, as rodas da frente e
+  de trás se encostariam (e mudaria a cinemática e os resultados).
+- **Chassi 2,5 cm deslocado para +y.** O quadro do CAD vai de y = -0,265 a 0,315 m (centro em
+  +0,025 m), enquanto as rodas são simétricas (y = ±0,48 m).
+- **Sensores no ar.** O quadro é só um contorno de tubos (topo em z = 0,215 m, sem tampo):
+  a IMU (z = 0,35 m) ficava 12 cm acima do quadro, sem nada embaixo; a câmera RGB-D
+  (0,45; 0; 0,38) ficava 16,5 cm acima do tubo frontal; o LiDAR frontal (0,65; 0; -0,10)
+  ficava 21 cm à frente do quadro e abaixo dele.
+- **Não corrigido (só registro):** o `boundingObject` do corpo (caixa 1,2 × 0,8 × 0,35 m) é
+  maior que o quadro visível (0,88 × 0,58 m), ou seja, o robô bate em obstáculos antes de
+  "encostar" visualmente. Mudar isso muda a física e os resultados das missões, então ficou
+  como está. O RL (traseira esquerda) do CAD não tem o acoplamento que os outros três motores
+  têm. O RViz continua mostrando a malha original (do `agrobot_description`).
+
+**O que mudou**
+- `agrobot_webots/scripts/fix_chassis_mesh.py` (novo): lê o CAD original
+  (`agrobot_description/meshes/chassis.stl`, que não muda) e grava
+  `agrobot_webots/meshes/chassis.stl` com os 4 motores (e acoplamentos) movidos para o eixo das
+  rodas (x = ±0,35 m, z = -0,02 m), ainda presos por baixo das longarinas, e sem os eixos do
+  CAD. Rodar de novo dá o mesmo arquivo.
+- `agrobot_webots/meshes/chassis.stl`: gerado pelo script acima.
+- `agrobot_webots/protos/agrobot.proto`:
+  - Transform do chassi com y = -0,275 (era -0,25): quadro centralizado em y = 0.
+  - Suportes só visuais (Shapes no corpo, sem `boundingObject` nem massa, então a física, a
+    odometria, o TF e os dados dos sensores não mudam):
+    - 4 eixos (Cylinder r = 1 cm) do centro do motor (|y| = 0,165 m) até dentro do cubo da roda
+      (|y| = 0,42 m);
+    - travessa no topo do quadro em x = 0 e haste até a IMU;
+    - haste do tubo frontal (x = 0,4175 m) até o corpo da câmera, atrás do centro óptico
+      (fora da imagem);
+    - braço sob o tubo frontal até x = 0,67 m e haste até o topo do LiDAR (z = -0,08 m), acima
+      do plano do scan (z = -0,10 m) e abaixo do campo de visão da câmera (o raio mais baixo da
+      câmera desce 43° e o braço fica a mais de 55° abaixo dela).
+- `claude/img/webots_chassi_antes_depois.png` (novo): vistas lateral e frontal antes e depois
+  (malha + rodas + sensores + suportes, em laranja).
+
+**Como verificar**
+```bash
+python3 agrobot_webots/scripts/fix_chassis_mesh.py   # regenera a malha (deve ficar igual)
+ros2 launch agrobot_webots simulation.launch.py world:=obstacle_arena.wbt
+```
+No Webots, as rodas devem aparecer presas aos eixos dos motores e os três sensores presos ao
+quadro. **Não testado:** o Webots não roda nesta máquina; a verificação foi pela geometria
+(figura acima, gerada com as mesmas poses do proto). Nada da física mudou, então os resultados
+das missões não são afetados.
+
+### 2026-11-09 — Garras das rodas do Webots alinhadas ao pneu
+
+**Pedido.** Kauê achou as garras (retângulos de roda off-road) das rodas tortas e perguntou
+se era melhor tirar ou ajustar. Ajustei (só no `agrobot_webots/protos/agrobot.proto`; o URDF do
+Gazebo não mudou).
+
+**Causa.** As 12 garras de cada roda estavam nas posições certas em volta do pneu, mas giradas
+em torno do eixo z (vertical) e não do eixo da roda (y), e com ângulos que não batiam com a
+posição (23° a mais em cada uma). Por isso cada garra saía torta, atravessando o pneu de lado.
+Além disso, eram mais largas que o pneu (0,18 m contra 0,14 m) e saíam 3,25 cm para fora do
+raio de 0,22 m da colisão, ou seja, entravam no chão visualmente.
+
+**O que mudou** (nas 4 rodas)
+- 16 garras radiais (Box 0,05 × 0,14 × 0,025 m, `DEF lug`/`USE lug`), giradas em torno do
+  eixo da roda (`rotation 0 1 0 (π/2 − θ)`), com centro em r = 0,2075 m: vão do pneu
+  (0,195 m) até 0,22 m, o raio da colisão e o `wheelRadius` do driver. O robô apoia
+  visualmente na ponta das garras, sem entrar no chão.
+- Pneu visual com raio 0,195 m (era 0,22). O `boundingObject` (cilindro de 0,22 m), a massa e
+  a inércia não mudaram, então a física e a odometria são as mesmas.
+- `claude/img/webots_garras_roda_antes_depois.png` (novo): uma roda antes e depois.
+
+**Não testado** no Webots (não roda nesta máquina); conferido pela geometria na figura.
