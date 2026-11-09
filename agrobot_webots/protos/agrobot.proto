@@ -237,7 +237,7 @@ PROTO agrobot [
                     metalness 0
                   }
                   geometry Cylinder {
-                    radius 0.22
+                    radius 0.195
                     height 0.14
                   }
                 }
@@ -273,147 +273,166 @@ PROTO agrobot [
                 }
               ]
             }
+            # Garras: 16, radiais, presas ao pneu (raio 0,195 a 0,22 m).
             Pose {
-              translation 0.230000 0.000000 0.000000
-              rotation 0.000000 0.000000 1.000000 0.400000
+              translation 0.2075 0 0.0000
+              rotation 0 1 0 1.5708
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
+                  geometry DEF lug Box {
+                     size 0.05 0.14 0.025
                   }
                 }
               ]
             }
             Pose {
-              translation 0.199000 0.000000 0.115000
-              rotation 0.000000 0.000000 1.000000 0.920000
+              translation 0.1917 0 0.0794
+              rotation 0 1 0 1.1781
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.115000 0.000000 0.199000
-              rotation 0.000000 0.000000 1.000000 1.450000
+              translation 0.1467 0 0.1467
+              rotation 0 1 0 0.7854
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.000000 0.000000 0.230000
-              rotation 0.000000 0.000000 1.000000 1.970000
+              translation 0.0794 0 0.1917
+              rotation 0 1 0 0.3927
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.115000 0.000000 0.199000
-              rotation 0.000000 0.000000 1.000000 2.500000
+              translation 0.0000 0 0.2075
+              rotation 0 1 0 0.0000
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.199000 0.000000 0.115000
-              rotation 0.000000 0.000000 1.000000 3.020000
+              translation -0.0794 0 0.1917
+              rotation 0 1 0 -0.3927
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.230000 0.000000 0.000000
-              rotation -0.000000 0.000000 1.000000 3.540000
+              translation -0.1467 0 0.1467
+              rotation 0 1 0 -0.7854
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.199000 0.000000 -0.115000
-              rotation -0.000000 0.000000 1.000000 4.070000
+              translation -0.1917 0 0.0794
+              rotation 0 1 0 -1.1781
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.115000 0.000000 -0.199000
-              rotation -0.000000 0.000000 1.000000 4.590000
+              translation -0.2075 0 0.0000
+              rotation 0 1 0 -1.5708
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.000000 0.000000 -0.230000
-              rotation -0.000000 0.000000 1.000000 5.120000
+              translation -0.1917 0 -0.0794
+              rotation 0 1 0 -1.9635
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.115000 0.000000 -0.199000
-              rotation -0.000000 0.000000 1.000000 5.640000
+              translation -0.1467 0 -0.1467
+              rotation 0 1 0 -2.3562
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.199000 0.000000 -0.115000
-              rotation -0.000000 0.000000 1.000000 6.160000
+              translation -0.0794 0 -0.1917
+              rotation 0 1 0 -2.7489
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation -0.0000 0 -0.2075
+              rotation 0 1 0 -3.1416
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.0794 0 -0.1917
+              rotation 0 1 0 -3.5343
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.1467 0 -0.1467
+              rotation 0 1 0 -3.9270
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.1917 0 -0.0794
+              rotation 0 1 0 -4.3197
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
                 }
               ]
             }
@@ -463,7 +482,7 @@ PROTO agrobot [
                 Shape {
                   appearance USE black
                   geometry Cylinder {
-                    radius 0.22
+                    radius 0.195
                     height 0.14
                   }
                 }
@@ -495,147 +514,164 @@ PROTO agrobot [
                 }
               ]
             }
+            # Garras: 16, radiais, presas ao pneu (raio 0,195 a 0,22 m).
             Pose {
-              translation 0.230000 0.000000 0.000000
-              rotation 0.000000 0.000000 1.000000 0.400000
+              translation 0.2075 0 0.0000
+              rotation 0 1 0 1.5708
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.199000 0.000000 0.115000
-              rotation 0.000000 0.000000 1.000000 0.920000
+              translation 0.1917 0 0.0794
+              rotation 0 1 0 1.1781
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.115000 0.000000 0.199000
-              rotation 0.000000 0.000000 1.000000 1.450000
+              translation 0.1467 0 0.1467
+              rotation 0 1 0 0.7854
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.000000 0.000000 0.230000
-              rotation 0.000000 0.000000 1.000000 1.970000
+              translation 0.0794 0 0.1917
+              rotation 0 1 0 0.3927
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.115000 0.000000 0.199000
-              rotation 0.000000 0.000000 1.000000 2.500000
+              translation 0.0000 0 0.2075
+              rotation 0 1 0 0.0000
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.199000 0.000000 0.115000
-              rotation 0.000000 0.000000 1.000000 3.020000
+              translation -0.0794 0 0.1917
+              rotation 0 1 0 -0.3927
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.230000 0.000000 0.000000
-              rotation -0.000000 0.000000 1.000000 3.540000
+              translation -0.1467 0 0.1467
+              rotation 0 1 0 -0.7854
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.199000 0.000000 -0.115000
-              rotation -0.000000 0.000000 1.000000 4.070000
+              translation -0.1917 0 0.0794
+              rotation 0 1 0 -1.1781
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.115000 0.000000 -0.199000
-              rotation -0.000000 0.000000 1.000000 4.590000
+              translation -0.2075 0 0.0000
+              rotation 0 1 0 -1.5708
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.000000 0.000000 -0.230000
-              rotation -0.000000 0.000000 1.000000 5.120000
+              translation -0.1917 0 -0.0794
+              rotation 0 1 0 -1.9635
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.115000 0.000000 -0.199000
-              rotation -0.000000 0.000000 1.000000 5.640000
+              translation -0.1467 0 -0.1467
+              rotation 0 1 0 -2.3562
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.199000 0.000000 -0.115000
-              rotation -0.000000 0.000000 1.000000 6.160000
+              translation -0.0794 0 -0.1917
+              rotation 0 1 0 -2.7489
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation -0.0000 0 -0.2075
+              rotation 0 1 0 -3.1416
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.0794 0 -0.1917
+              rotation 0 1 0 -3.5343
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.1467 0 -0.1467
+              rotation 0 1 0 -3.9270
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.1917 0 -0.0794
+              rotation 0 1 0 -4.3197
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
                 }
               ]
             }
@@ -685,7 +721,7 @@ PROTO agrobot [
                 Shape {
                   appearance USE black
                   geometry Cylinder {
-                    radius 0.22
+                    radius 0.195
                     height 0.14
                   }
                 }
@@ -717,147 +753,164 @@ PROTO agrobot [
                 }
               ]
             }
+            # Garras: 16, radiais, presas ao pneu (raio 0,195 a 0,22 m).
             Pose {
-              translation 0.230000 0.000000 0.000000
-              rotation 0.000000 0.000000 1.000000 0.400000
+              translation 0.2075 0 0.0000
+              rotation 0 1 0 1.5708
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.199000 0.000000 0.115000
-              rotation 0.000000 0.000000 1.000000 0.920000
+              translation 0.1917 0 0.0794
+              rotation 0 1 0 1.1781
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.115000 0.000000 0.199000
-              rotation 0.000000 0.000000 1.000000 1.450000
+              translation 0.1467 0 0.1467
+              rotation 0 1 0 0.7854
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.000000 0.000000 0.230000
-              rotation 0.000000 0.000000 1.000000 1.970000
+              translation 0.0794 0 0.1917
+              rotation 0 1 0 0.3927
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.115000 0.000000 0.199000
-              rotation 0.000000 0.000000 1.000000 2.500000
+              translation 0.0000 0 0.2075
+              rotation 0 1 0 0.0000
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.199000 0.000000 0.115000
-              rotation 0.000000 0.000000 1.000000 3.020000
+              translation -0.0794 0 0.1917
+              rotation 0 1 0 -0.3927
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.230000 0.000000 0.000000
-              rotation -0.000000 0.000000 1.000000 3.540000
+              translation -0.1467 0 0.1467
+              rotation 0 1 0 -0.7854
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.199000 0.000000 -0.115000
-              rotation -0.000000 0.000000 1.000000 4.070000
+              translation -0.1917 0 0.0794
+              rotation 0 1 0 -1.1781
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.115000 0.000000 -0.199000
-              rotation -0.000000 0.000000 1.000000 4.590000
+              translation -0.2075 0 0.0000
+              rotation 0 1 0 -1.5708
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.000000 0.000000 -0.230000
-              rotation -0.000000 0.000000 1.000000 5.120000
+              translation -0.1917 0 -0.0794
+              rotation 0 1 0 -1.9635
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.115000 0.000000 -0.199000
-              rotation -0.000000 0.000000 1.000000 5.640000
+              translation -0.1467 0 -0.1467
+              rotation 0 1 0 -2.3562
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.199000 0.000000 -0.115000
-              rotation -0.000000 0.000000 1.000000 6.160000
+              translation -0.0794 0 -0.1917
+              rotation 0 1 0 -2.7489
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation -0.0000 0 -0.2075
+              rotation 0 1 0 -3.1416
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.0794 0 -0.1917
+              rotation 0 1 0 -3.5343
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.1467 0 -0.1467
+              rotation 0 1 0 -3.9270
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.1917 0 -0.0794
+              rotation 0 1 0 -4.3197
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
                 }
               ]
             }
@@ -907,7 +960,7 @@ PROTO agrobot [
                 Shape {
                   appearance USE black
                   geometry Cylinder {
-                    radius 0.22
+                    radius 0.195
                     height 0.14
                   }
                 }
@@ -939,147 +992,164 @@ PROTO agrobot [
                 }
               ]
             }
+            # Garras: 16, radiais, presas ao pneu (raio 0,195 a 0,22 m).
             Pose {
-              translation 0.230000 0.000000 0.000000
-              rotation 0.000000 0.000000 1.000000 0.400000
+              translation 0.2075 0 0.0000
+              rotation 0 1 0 1.5708
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.199000 0.000000 0.115000
-              rotation 0.000000 0.000000 1.000000 0.920000
+              translation 0.1917 0 0.0794
+              rotation 0 1 0 1.1781
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.115000 0.000000 0.199000
-              rotation 0.000000 0.000000 1.000000 1.450000
+              translation 0.1467 0 0.1467
+              rotation 0 1 0 0.7854
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.000000 0.000000 0.230000
-              rotation 0.000000 0.000000 1.000000 1.970000
+              translation 0.0794 0 0.1917
+              rotation 0 1 0 0.3927
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.115000 0.000000 0.199000
-              rotation 0.000000 0.000000 1.000000 2.500000
+              translation 0.0000 0 0.2075
+              rotation 0 1 0 0.0000
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.199000 0.000000 0.115000
-              rotation 0.000000 0.000000 1.000000 3.020000
+              translation -0.0794 0 0.1917
+              rotation 0 1 0 -0.3927
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.230000 0.000000 0.000000
-              rotation -0.000000 0.000000 1.000000 3.540000
+              translation -0.1467 0 0.1467
+              rotation 0 1 0 -0.7854
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.199000 0.000000 -0.115000
-              rotation -0.000000 0.000000 1.000000 4.070000
+              translation -0.1917 0 0.0794
+              rotation 0 1 0 -1.1781
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation -0.115000 0.000000 -0.199000
-              rotation -0.000000 0.000000 1.000000 4.590000
+              translation -0.2075 0 0.0000
+              rotation 0 1 0 -1.5708
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.000000 0.000000 -0.230000
-              rotation -0.000000 0.000000 1.000000 5.120000
+              translation -0.1917 0 -0.0794
+              rotation 0 1 0 -1.9635
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.115000 0.000000 -0.199000
-              rotation -0.000000 0.000000 1.000000 5.640000
+              translation -0.1467 0 -0.1467
+              rotation 0 1 0 -2.3562
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
                 }
               ]
             }
             Pose {
-              translation 0.199000 0.000000 -0.115000
-              rotation -0.000000 0.000000 1.000000 6.160000
+              translation -0.0794 0 -0.1917
+              rotation 0 1 0 -2.7489
               children [
                 Shape {
                   appearance USE black
-                  geometry Box {
-                     size 0.080000 0.180000 0.045000
-                  }
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation -0.0000 0 -0.2075
+              rotation 0 1 0 -3.1416
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.0794 0 -0.1917
+              rotation 0 1 0 -3.5343
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.1467 0 -0.1467
+              rotation 0 1 0 -3.9270
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
+                }
+              ]
+            }
+            Pose {
+              translation 0.1917 0 -0.0794
+              rotation 0 1 0 -4.3197
+              children [
+                Shape {
+                  appearance USE black
+                  geometry USE lug
                 }
               ]
             }

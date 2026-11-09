@@ -2050,3 +2050,26 @@ No Webots, as rodas devem aparecer presas aos eixos dos motores e os três senso
 quadro. **Não testado:** o Webots não roda nesta máquina; a verificação foi pela geometria
 (figura acima, gerada com as mesmas poses do proto). Nada da física mudou, então os resultados
 das missões não são afetados.
+
+### 2026-11-09 — Garras das rodas do Webots alinhadas ao pneu
+
+**Pedido.** Kauê achou as garras (retângulos de roda off-road) das rodas tortas e perguntou
+se era melhor tirar ou ajustar. Ajustei (só no `agrobot_webots/protos/agrobot.proto`; o URDF do
+Gazebo não mudou).
+
+**Causa.** As 12 garras de cada roda estavam nas posições certas em volta do pneu, mas giradas
+em torno do eixo z (vertical) e não do eixo da roda (y), e com ângulos que não batiam com a
+posição (23° a mais em cada uma). Por isso cada garra saía torta, atravessando o pneu de lado.
+Além disso, eram mais largas que o pneu (0,18 m contra 0,14 m) e saíam 3,25 cm para fora do
+raio de 0,22 m da colisão, ou seja, entravam no chão visualmente.
+
+**O que mudou** (nas 4 rodas)
+- 16 garras radiais (Box 0,05 × 0,14 × 0,025 m, `DEF lug`/`USE lug`), giradas em torno do
+  eixo da roda (`rotation 0 1 0 (π/2 − θ)`), com centro em r = 0,2075 m: vão do pneu
+  (0,195 m) até 0,22 m, o raio da colisão e o `wheelRadius` do driver. O robô apoia
+  visualmente na ponta das garras, sem entrar no chão.
+- Pneu visual com raio 0,195 m (era 0,22). O `boundingObject` (cilindro de 0,22 m), a massa e
+  a inércia não mudaram, então a física e a odometria são as mesmas.
+- `claude/img/webots_garras_roda_antes_depois.png` (novo): uma roda antes e depois.
+
+**Não testado** no Webots (não roda nesta máquina); conferido pela geometria na figura.
