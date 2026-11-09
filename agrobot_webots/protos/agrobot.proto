@@ -73,8 +73,12 @@ PROTO agrobot [
         translation 0.45 0 0.38
         rotation 0 1 0 0.2618
       }
+      # Chassi do CAD. A malha deste pacote é gerada por
+      # scripts/fix_chassis_mesh.py: motores no eixo das rodas (x = +-0,35 m,
+      # z = -0,02 m). O y -0,275 (e não -0,25) centraliza o quadro em y = 0,
+      # como as rodas (o CAD está 2,5 cm deslocado para +y).
       Transform {
-        translation -0.500000 -0.250000 0.050000
+        translation -0.500000 -0.275000 0.050000
         scale 0.001000 0.001000 0.001000
         children [
           Shape {
@@ -85,6 +89,122 @@ PROTO agrobot [
             }
             geometry DEF chassis Mesh {
                   url "../meshes/chassis.stl"
+            }
+          }
+        ]
+      }
+      # Suportes só visuais (sem boundingObject nem massa: não mudam a
+      # física). Eixos do motor até o cubo de cada roda, do centro do motor
+      # (|y| = 0,165 m) até dentro da roda (|y| = 0,42 m).
+      Pose {
+        translation 0.35 0.2925 -0.02
+        rotation 1 0 0 1.5708
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Cylinder {
+              height 0.255
+              radius 0.01
+            }
+          }
+        ]
+      }
+      Pose {
+        translation 0.35 -0.2925 -0.02
+        rotation 1 0 0 1.5708
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Cylinder {
+              height 0.255
+              radius 0.01
+            }
+          }
+        ]
+      }
+      Pose {
+        translation -0.35 0.2925 -0.02
+        rotation 1 0 0 1.5708
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Cylinder {
+              height 0.255
+              radius 0.01
+            }
+          }
+        ]
+      }
+      Pose {
+        translation -0.35 -0.2925 -0.02
+        rotation 1 0 0 1.5708
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Cylinder {
+              height 0.255
+              radius 0.01
+            }
+          }
+        ]
+      }
+      # Travessa no topo do quadro (x = 0) e haste da IMU (imu_link, z 0,35 m).
+      Pose {
+        translation 0 0 0.1925
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Box {
+              size 0.045 0.49 0.045
+            }
+          }
+        ]
+      }
+      Pose {
+        translation 0 0 0.275
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Box {
+              size 0.03 0.03 0.12
+            }
+          }
+        ]
+      }
+      # Haste da câmera RGB-D, do tubo frontal do quadro até o corpo da
+      # câmera; fica atrás do centro óptico, fora da imagem.
+      Pose {
+        translation 0.4175 0 0.2925
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Box {
+              size 0.03 0.03 0.155
+            }
+          }
+        ]
+      }
+      # Suporte do LiDAR frontal: braço sob o tubo frontal e haste até o
+      # topo do LiDAR (z -0,08 m). Tudo acima do plano do scan (z -0,10 m) e
+      # abaixo do campo de visão da câmera.
+      Pose {
+        translation 0.535 0 0.0475
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Box {
+              size 0.27 0.04 0.025
+            }
+          }
+        ]
+      }
+      Pose {
+        translation 0.65 0 -0.0225
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Box {
+              size 0.03 0.03 0.115
             }
           }
         ]
