@@ -31,20 +31,25 @@ ODOM_FROM_EKF = '<publishOdom>false</publishOdom>'
 # Qualquer período (o URDF pode ter outro múltiplo de 32 ms).
 CAMERA_ON = r'<vslamCameraPeriod>\s*\d+\s*</vslamCameraPeriod>'
 CAMERA_OFF = '<vslamCameraPeriod>0</vslamCameraPeriod>'
+DATA_CAMERA_ON = r'<dataCameraPeriod>\s*\d+\s*</dataCameraPeriod>'
+DATA_CAMERA_OFF = '<dataCameraPeriod>0</dataCameraPeriod>'
 
 
-def driver_urdf(robot_description, ekf, camera):
+def driver_urdf(robot_description, ekf, camera, data_camera=False):
     """
     Caminho do URDF para o driver, com as trocas pedidas no launch.
 
     Com ekf, o driver não publica /odom; sem camera, não liga a câmera do
-    VSLAM (o Webots também deixa de renderizá-la).
+    VSLAM, e sem data_camera, não liga a de aquisição de dados (o Webots
+    também deixa de renderizá-las).
     """
     replacements = []
     if ekf:
         replacements.append((ODOM_FROM_DRIVER, ODOM_FROM_EKF))
     if not camera:
         replacements.append((CAMERA_ON, CAMERA_OFF))
+    if not data_camera:
+        replacements.append((DATA_CAMERA_ON, DATA_CAMERA_OFF))
     if not replacements:
         return robot_description
     with open(robot_description) as urdf_file:
@@ -147,7 +152,8 @@ def generate_launch_description():
             robot_name='agrobot',
             parameters=[
                 {'robot_description':
-                    driver_urdf(robot_description, ekf, camera)},
+                    driver_urdf(robot_description, ekf, camera,
+                                flag(context, 'data_camera'))},
                 {'use_sim_time': True},
             ],
             output='screen',
@@ -441,6 +447,9 @@ def generate_launch_description():
         # o nome original fica guardado para o waypoint_mission.
         SetLaunchConfiguration('world_name', LaunchConfiguration('world')),
         DeclareLaunchArgument('camera', default_value='true'),
+        # Câmera RGB de aquisição de dados (/data_camera/...), desligada por
+        # padrão para não pesar nas rodadas que não coletam imagens.
+        DeclareLaunchArgument('data_camera', default_value='false'),
         DeclareLaunchArgument('vslam', default_value='false'),
         DeclareLaunchArgument('vslam_localization', default_value='false'),
         DeclareLaunchArgument('vslam_db', default_value=''),

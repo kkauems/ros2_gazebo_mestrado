@@ -71,6 +71,13 @@ with their node clock, which lags the `/clock` of the current step, and VSLAM pa
 depth and odometry by stamp. The URDF disables both, as it does for the lidar. See
 [the change log](#2026-10-20--câmera-rgb-d-do-vslam-etapas-1-e-2).
 
+**g) The RGB data acquisition camera (2026-11-12).** With `dataCameraPeriod` above 0 the
+plugin enables the `data_camera` device and publishes `/data_camera/image_raw` (`bgra8`)
+and `/data_camera/camera_info` every 1024 ms, stamped with the step the image was rendered
+in, and offers `/data_camera/enable` (`std_srvs/SetBool`) to switch it off and on while
+running. *Why the plugin:* same reason as (f); each photo is georeferenced with the TF at
+its stamp. See [the change log](#2026-11-12--câmera-rgb-de-aquisição-de-dados-etapas-1-e-2).
+
 **Timestamps:** everything is stamped with `robot.getTime()` (Webots sim time), so the
 plugin doesn't depend on its private node receiving `/clock`.
 
@@ -107,9 +114,15 @@ Gazebo. The Webots device sits on the robot's root body.
 [VslamCamera.proto](../agrobot_webots/protos/VslamCamera.proto); `vslam_camera_link` and
 `vslam_camera_optical_frame` in the URDF) at (0.45, 0, 0.38) from `base_link`, pitched 15°
 down: 424 × 240, 87° horizontal FOV, depth 0.5–6 m, like an Intel RealSense D455. It is only
-for VSLAM; the data acquisition camera will be a separate RGB camera.
+for VSLAM; the data acquisition camera is the one below.
 *Why a new link instead of using `camera_link`:* same reason as the lidar, Gazebo uses the
 same URDF.
+
+**RGB data acquisition camera (2026-11-12)** (`DataCamera` in the PROTO, from
+[DataCamera.proto](../agrobot_webots/protos/DataCamera.proto); `data_camera_link` and
+`data_camera_optical_frame` in the URDF) on a mast at (0, 0, 0.66) from `base_link`
+(~0.90 m above the ground), looking left (+y): 1280 × 960, 90° horizontal FOV. It
+photographs the plant row beside the robot and is not used for localization.
 
 ### 3. World — [obstacle_arena.wbt](../agrobot_webots/worlds/obstacle_arena.wbt)
 
@@ -139,6 +152,9 @@ New nodes alongside Webots and the driver:
 - **`camera`** (default `true`, 2026-10-20): with `camera:=false` the launch gives the driver
   a URDF with `vslamCameraPeriod` 0, so the VSLAM camera is not enabled and Webots doesn't
   render it.
+- **`data_camera`** (default `false`, 2026-11-12): only with `data_camera:=true` the driver
+  gets `dataCameraPeriod` 1024; otherwise the launch sets it to 0 and the acquisition camera
+  is neither enabled nor rendered.
 - **`vslam`** (default `false`, 2026-10-21): starts RTAB-Map (`rgbd_sync` and `rtabmap`, in
   the `rtabmap` namespace, with [config/rtabmap.yaml](../agrobot_webots/config/rtabmap.yaml)),
   which then owns TF `map → odom`. It needs `ekf:=true` and `camera:=true`, and the launch
@@ -2100,3 +2116,331 @@ Caso 3 (serpentina) com `ekf:=true vslam:=true` e a checagem (tabela do
 RViz, `slip_check` com `ekf:=true` sem `vslam:=true` numa missão (só nos testes de robô
 preso, que rodaram com `vslam:=true`), o robô preso na pedra numa missão com a versão final
 (nas rodadas 2 e 3 ele não ficou preso), sensores com ruído.
+### 2026-10-29 — Comparação dos métodos de localização nos três casos (passo 3)
+
+**Pedido.** Kauê pediu o passo 3: repetir os três casos de estudo (1 arena, 2 ida e volta
+na plantação com mapeamento e localização, 3 serpentina) com os três métodos de localização
+(EKF só, SLAM por LiDAR com `slam:=true` e VSLAM com `vslam:=true`) no Webots, e montar a
+tabela de comparação para a dissertação: waypoints atingidos, ATE médio e máximo contra a
+pose verdadeira, e falhas. O SLAM por LiDAR entra só como comparação e não foi mexido. O
+VSLAM roda com o fechamento de laço só por proximidade do PR #13 (já na main). O problema do
+Nav2 na cabeceira leste ficou fora do escopo; está registrado abaixo onde aconteceu.
+### 2026-11-09 — Peças soltas no modelo do robô do Webots (rodas, sensores)
+
+**Pedido.** Kauê viu partes do robô flutuando e desconectadas no Webots e pediu uma análise
+de quais e como corrigir. Só o Webots foi mexido (`agrobot_webots`); o URDF e a malha do
+`agrobot_description` (usados pelo Gazebo e pelo TF/RViz) ficaram como estavam.
+
+**Análise** (medida na malha `chassis.stl` com o Transform do `agrobot.proto`)
+- **Rodas longe dos motores.** No CAD, os motores e os eixos das rodas estão em
+  x = ±0,2225 m e z = +0,0125 m; as rodas (juntas do URDF/proto) estão em x = ±0,35 m e
+  z = -0,02 m. Cada roda ficava 12,75 cm à frente/atrás do seu motor e 3,25 cm abaixo do eixo.
+  Os eixos do CAD também têm comprimentos diferentes (alguns não chegam à roda). Não dá para
+  pôr as rodas no lugar do CAD: com raio 0,22 m e entre-eixos de 0,445 m, as rodas da frente e
+  de trás se encostariam (e mudaria a cinemática e os resultados).
+- **Chassi 2,5 cm deslocado para +y.** O quadro do CAD vai de y = -0,265 a 0,315 m (centro em
+  +0,025 m), enquanto as rodas são simétricas (y = ±0,48 m).
+- **Sensores no ar.** O quadro é só um contorno de tubos (topo em z = 0,215 m, sem tampo):
+  a IMU (z = 0,35 m) ficava 12 cm acima do quadro, sem nada embaixo; a câmera RGB-D
+  (0,45; 0; 0,38) ficava 16,5 cm acima do tubo frontal; o LiDAR frontal (0,65; 0; -0,10)
+  ficava 21 cm à frente do quadro e abaixo dele.
+- **Não corrigido (só registro):** o `boundingObject` do corpo (caixa 1,2 × 0,8 × 0,35 m) é
+  maior que o quadro visível (0,88 × 0,58 m), ou seja, o robô bate em obstáculos antes de
+  "encostar" visualmente. Mudar isso muda a física e os resultados das missões, então ficou
+  como está. O RL (traseira esquerda) do CAD não tem o acoplamento que os outros três motores
+  têm. O RViz continua mostrando a malha original (do `agrobot_description`).
+
+**O que mudou**
+- `agrobot_webots/scripts/fix_chassis_mesh.py` (novo): lê o CAD original
+  (`agrobot_description/meshes/chassis.stl`, que não muda) e grava
+  `agrobot_webots/meshes/chassis.stl` com os 4 motores (e acoplamentos) movidos para o eixo das
+  rodas (x = ±0,35 m, z = -0,02 m), ainda presos por baixo das longarinas, e sem os eixos do
+  CAD. Rodar de novo dá o mesmo arquivo.
+- `agrobot_webots/meshes/chassis.stl`: gerado pelo script acima.
+- `agrobot_webots/protos/agrobot.proto`:
+  - Transform do chassi com y = -0,275 (era -0,25): quadro centralizado em y = 0.
+  - Suportes só visuais (Shapes no corpo, sem `boundingObject` nem massa, então a física, a
+    odometria, o TF e os dados dos sensores não mudam):
+    - 4 eixos (Cylinder r = 1 cm) do centro do motor (|y| = 0,165 m) até dentro do cubo da roda
+      (|y| = 0,42 m);
+    - travessa no topo do quadro em x = 0 e haste até a IMU;
+    - haste do tubo frontal (x = 0,4175 m) até o corpo da câmera, atrás do centro óptico
+      (fora da imagem);
+    - braço sob o tubo frontal até x = 0,67 m e haste até o topo do LiDAR (z = -0,08 m), acima
+      do plano do scan (z = -0,10 m) e abaixo do campo de visão da câmera (o raio mais baixo da
+      câmera desce 43° e o braço fica a mais de 55° abaixo dela).
+- `claude/img/webots_chassi_antes_depois.png` (novo): vistas lateral e frontal antes e depois
+  (malha + rodas + sensores + suportes, em laranja).
+
+**Como verificar**
+```bash
+python3 agrobot_webots/scripts/fix_chassis_mesh.py   # regenera a malha (deve ficar igual)
+ros2 launch agrobot_webots simulation.launch.py world:=obstacle_arena.wbt
+```
+No Webots, as rodas devem aparecer presas aos eixos dos motores e os três sensores presos ao
+quadro. **Não testado:** o Webots não roda nesta máquina; a verificação foi pela geometria
+(figura acima, gerada com as mesmas poses do proto). Nada da física mudou, então os resultados
+das missões não são afetados.
+
+### 2026-11-09 — Garras das rodas do Webots alinhadas ao pneu
+
+**Pedido.** Kauê achou as garras (retângulos de roda off-road) das rodas tortas e perguntou
+se era melhor tirar ou ajustar. Ajustei (só no `agrobot_webots/protos/agrobot.proto`; o URDF do
+Gazebo não mudou).
+
+**Causa.** As 12 garras de cada roda estavam nas posições certas em volta do pneu, mas giradas
+em torno do eixo z (vertical) e não do eixo da roda (y), e com ângulos que não batiam com a
+posição (23° a mais em cada uma). Por isso cada garra saía torta, atravessando o pneu de lado.
+Além disso, eram mais largas que o pneu (0,18 m contra 0,14 m) e saíam 3,25 cm para fora do
+raio de 0,22 m da colisão, ou seja, entravam no chão visualmente.
+
+**O que mudou** (nas 4 rodas)
+- 16 garras radiais (Box 0,05 × 0,14 × 0,025 m, `DEF lug`/`USE lug`), giradas em torno do
+  eixo da roda (`rotation 0 1 0 (π/2 − θ)`), com centro em r = 0,2075 m: vão do pneu
+  (0,195 m) até 0,22 m, o raio da colisão e o `wheelRadius` do driver. O robô apoia
+  visualmente na ponta das garras, sem entrar no chão.
+- Pneu visual com raio 0,195 m (era 0,22). O `boundingObject` (cilindro de 0,22 m), a massa e
+  a inércia não mudaram, então a física e a odometria são as mesmas.
+- `claude/img/webots_garras_roda_antes_depois.png` (novo): uma roda antes e depois.
+
+**Não testado** no Webots (não roda nesta máquina); conferido pela geometria na figura.
+
+### 2026-11-12 — Câmera RGB de aquisição de dados (etapas 1 e 2)
+
+**Pedido.** Kauê pediu para começar a pôr no robô os sensores de aquisição de dados para
+monitorização, começando por uma câmera RGB, e, com o plano em mãos
+(`planejamento/camera_rgb_aquisicao.md`, nos arquivos do projeto), decidiu por **uma câmera
+só**: o robô monitora um lado em cada passada. Esta mudança faz as etapas 1 (câmera no robô e
+frames) e 2 (publicação pelo driver) do plano. Ainda nada grava as fotos; o nó de gravação é
+a etapa 4.
+
+**Para usar**
+```bash
+cd ~/projects/ros2_gazebo_mestrado
+git pull
+# rodar cada caso algumas vezes em cada modo (comandos do registro de 2026-10-26), depois:
+python3 agrobot_webots/scripts/compare_methods.py ~/.ros/agrobot_missions
+```
+Os CSVs e os logs das 32 rodadas deste registro estão nos arquivos do projeto, em
+`resultados/passo3_comparacao/` (`compare.md` é a saída do script, `per_run.md` a do
+`summarize_missions.py`, `logs_launch.tar.gz` os logs do `ros2 launch`). Para refazer as
+tabelas: `python3 agrobot_webots/scripts/compare_methods.py <essa pasta>`.
+
+**O que mudou**
+- `agrobot_webots/scripts/compare_methods.py` (novo): lê os mesmos CSVs do
+  `summarize_missions.py` e imprime uma linha por caso e modo, juntando as rodadas:
+  waypoints atingidos segundo o Nav2 (soma e rodadas completas), waypoints em que o robô
+  esteve de verdade a até 0,5 m do alvo ("no alvo"), ATE médio ± desvio padrão, a média e o
+  maior dos erros máximos, o maior erro de yaw e o tempo médio. Depois lista os waypoints
+  perdidos com o erro de localização no momento em que o Nav2 desistiu (até 0,5 m conta como
+  falha de navegação; acima, de localização).
+- `README.md`: o script na estrutura do repositório e na seção das missões, o resumo dos
+  resultados no lugar do anterior (que era de uma ou duas rodadas) e o problema da cabeceira
+  leste em "Known issues".
+- Nenhuma mudança no launch, nos parâmetros nem no driver.
+
+**Por quê "no alvo".** O "atingidos" é o que o Nav2 acha. Com a localização errada, o Nav2
+dá o waypoint como atingido com o robô em outro lugar: na rodada 1 do caso 3 com VSLAM, ele
+marcou 11/11, mas os três últimos foram "atingidos" na entrelinha y = -1,8, a 1,8 m dos
+alvos. O "no alvo" usa a pose verdadeira (`/ground_truth/odom`) e mostra isso.
+
+**Como foi rodado** (nuvem Linux sem GPU, 4 CPUs; Webots R2025a com `--no-rendering` e
+`xvfb-run` do `WebotsLauncher`; ROS 2 Jazzy do RoboStack com Python 3.14, Nav2 1.3.13,
+slam_toolbox 2.8.5, rtabmap 0.23.13, robot_localization 3.8.3 e `webots_ros2_driver`
+2025.0.0; launch real `simulation.launch.py ... rviz:=false`, sem nenhuma mudança no código)
+- Três repetições de cada caso e modo, intercaladas (repetição 1 de todos, depois a 2, depois
+  a 3), sempre com `ekf:=true`. Modos: `ekf`, `ekf:=true slam:=true` e
+  `ekf:=true vslam:=true`. No caso 2, cada mapeamento com VSLAM foi seguido de uma rodada de
+  localização no mapa dele (`vslam_localization:=true`).
+- Cada rodada terminava quando o `waypoint_mission` registrava o fim da missão, ou depois de
+  15 (caso 1), 25 (caso 2) ou 40 min (caso 3) de relógio. Só a rodada 2 do caso 3 com SLAM
+  bateu no limite.
+- A simulação ficou perto do tempo real (caso 1: 76 s de simulação em ~115 s de relógio,
+  contando a subida).
+
+**Resultado por caso e método** (3 rodadas cada; ATE = raiz do erro quadrático médio da
+posição estimada contra a verdadeira, sem alinhamento; "erro máx." = maior erro de posição
+de cada rodada, média das rodadas e, entre parênteses, o maior de todas)
+
+| Caso | Método | Atingidos (Nav2) | Rodadas completas | No alvo (≤ 0,5 m) | ATE (m) | Erro máx. (m) | Yaw máx. (°) | Tempo médio (s) |
+|---|---|---|---|---|---|---|---|---|
+| 1 arena | EKF | 15/15 | 3/3 | 15/15 | 0,08 ± 0,00 | 0,13 (0,13) | 1,4 | 76 |
+| 1 arena | SLAM LiDAR | 15/15 | 3/3 | 15/15 | 0,03 ± 0,00 | 0,07 (0,08) | 5,0 | 76 |
+| 1 arena | VSLAM | 15/15 | 3/3 | 15/15 | 0,08 ± 0,00 | 0,18 (0,20) | 6,1 | 75 |
+| 2 ida e volta | EKF | 13/15 | 1/3 | 12/15 | 0,29 ± 0,17 | 0,72 (1,56) | 2,4 | 170 |
+| 2 ida e volta | SLAM LiDAR | 10/15 | 0/3 | 7/15 | 2,12 ± 1,65 | 4,47 (8,61) | 51,5 | 265 |
+| 2 ida e volta | VSLAM, mapeamento | 15/15 | 3/3 | 15/15 | 0,15 ± 0,04 | 0,33 (0,51) | 4,3 | 120 |
+| 2 ida e volta | VSLAM, localização no mapa salvo | 14/15 | 2/3 | 14/15 | 0,13 ± 0,06 | 0,27 (0,43) | 4,5 | 119 |
+| 3 serpentina | EKF | 30/33 | 1/3 | 26/33 | 0,47 ± 0,32 | 1,01 (1,82) | 3,4 | 271 |
+| 3 serpentina | SLAM LiDAR (2 rodadas + 1 que não terminou) | 12/22 | 0/3 | 8/22 | 2,97 ± 2,41 | 5,52 (8,24) | 38,9 | 533 |
+| 3 serpentina | VSLAM | 28/33 | 1/3 | 20/33 | 1,05 ± 0,89 | 1,86 (3,21) | 8,3 | 350 |
+
+**Rodadas** (saída do `summarize_missions.py`; erro final = distância verdadeira até o
+último waypoint)
+
+| Caso | Método | Rodada | Atingidos | Tempo (s) | Distância (m) | Erro final (m) | ATE (m) | Erro máx. (m) | Yaw máx. (°) |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | EKF | 1 / 2 / 3 | 5/5 / 5/5 / 5/5 | 77 / 76 / 76 | 10,5 / 10,6 / 10,6 | 0,19 / 0,17 / 0,19 | 0,08 / 0,08 / 0,08 | 0,13 / 0,12 / 0,13 | 1,4 / 1,2 / 1,3 |
+| 1 | SLAM LiDAR | 1 / 2 / 3 | 5/5 / 5/5 / 5/5 | 77 / 76 / 75 | 11,0 / 10,7 / 11,0 | 0,10 / 0,13 / 0,07 | 0,03 / 0,02 / 0,03 | 0,08 / 0,06 / 0,07 | 4,0 / 3,7 / 5,0 |
+| 1 | VSLAM | 1 / 2 / 3 | 5/5 / 5/5 / 5/5 | 75 / 75 / 75 | 10,6 / 10,6 / 10,6 | 0,21 / 0,23 / 0,24 | 0,08 / 0,08 / 0,08 | 0,16 / 0,19 / 0,20 | 2,4 / 4,1 / 6,1 |
+| 2 | EKF | 1 / 2 / 3 | 4/5 / 5/5 / 4/5 | 264 / 123 / 124 | 42,2 / 27,2 / 26,6 | 1,67 / 0,22 / 0,28 | 0,49 / 0,16 / 0,23 | 1,56 / 0,26 / 0,33 | 1,9 / 2,2 / 2,4 |
+| 2 | SLAM LiDAR | 1 / 2 / 3 | 4/5 / 3/5 / 3/5 | 267 / 236 / 291 | 33,8 / 34,2 / 44,2 | 0,19 / 8,54 / 4,35 | 0,58 / 3,87 / 1,92 | 0,90 / 8,61 / 3,91 | 27,2 / 51,5 / 24,3 |
+| 2 | VSLAM, mapeamento | 1 / 2 / 3 | 5/5 / 5/5 / 5/5 | 120 / 132 / 107 | 26,1 / 29,8 / 27,2 | 0,09 / 0,10 / 0,43 | 0,13 / 0,13 / 0,20 | 0,24 / 0,25 / 0,51 | 1,4 / 2,9 / 4,3 |
+| 2 | VSLAM, localização | 1 / 2 / 3 | 4/5 / 5/5 / 5/5 | 148 / 109 / 99 | 38,7 / 25,6 / 25,6 | 12,03 / 0,26 / 0,11 | 0,18 / 0,15 / 0,06 | 0,43 / 0,28 / 0,11 | 2,5 / 2,1 / 4,5 |
+| 3 | EKF | 1 / 2 / 3 | 9/11 / 11/11 / 10/11 | 303 / 243 / 267 | 54,9 / 51,7 / 56,8 | 0,52 / 1,76 / 0,08 | 0,31 / 0,83 / 0,26 | 0,72 / 1,82 / 0,48 | 3,4 / 2,1 / 3,4 |
+| 3 | SLAM LiDAR | 1 / 2 / 3 | 5/11 / não terminou / 7/11 | 553 / — / 513 | 77,4 / — / 70,0 | 2,32 / — / 0,50 | 4,67 / — / 1,26 | 8,24 / — / 2,80 | 38,9 / — / 15,7 |
+| 3 | VSLAM | 1 / 2 / 3 | 11/11 / 8/11 / 9/11 | 242 / 462 / 345 | 51,4 / 78,7 / 59,0 | 1,82 / 2,48 / 0,30 | 0,87 / 2,01 / 0,26 | 1,90 / 3,21 / 0,46 | 4,1 / 8,3 / 4,7 |
+
+**Falhas na plantação** (de cada rodada com waypoint perdido ou "atingido" longe do alvo;
+causa pelo log do Nav2 e pela trajetória verdadeira contra a estimada)
+
+| Caso | Método | Rodada | O que aconteceu | Tipo |
+|---|---|---|---|---|
+| 2 | EKF | 1 | Na cabeceira leste, o robô passou da entrelinha y = 1,8 e entrou na y = 3,6; perdeu o `meio_y1.8`. Manobrando entre as fileiras, o erro de localização subiu até 0,7 m e chegou a 1,6 m na volta à partida | navegação (cabeceira leste), depois deriva |
+| 2 | EKF | 3 | O planejador não achou caminho do meio da entrelinha y = 0 até a `cabeceira_leste_y0` ("Failed to create plan with tolerance of: 0.300000"), com a localização certa (0,19 m) | navegação (cabeceira leste) |
+| 2 | SLAM LiDAR | 1 | Na cabeceira leste, o scan matching deu saltos de 0,3 a 0,5 m de uma amostra para a seguinte (0,2 s) e o yaw errou até 27°; perdeu o `meio_y1.8` e chegou a dois waypoints a 0,7 m deles | localização |
+| 2 | SLAM LiDAR | 2 | Mesma cabeceira; yaw até 51° errado, o robô terminou em y = 7,9, fora da rota; 2 perdidos | localização |
+| 2 | SLAM LiDAR | 3 | Saltos na cabeceira leste e o erro crescendo depois (até 3,9 m); 2 perdidos | localização |
+| 2 | VSLAM, localização | 1 | O planejador recusou a `partida`: "Goal Coordinates of(0.000000, 0.000000) was outside bounds". O robô estava na cabeceira leste (12,0; 0,3), com a localização certa (0,28 m). Não investigado | navegação (costmap global no mapa salvo) |
+| 3 | EKF | 1 | A travessia da cabeceira leste de y = -1,8 para y = 0 (`cabeceira_leste_y0_volta`) falhou no planejador (localização 0,10 m); o robô voltou pela entrelinha -1,8 e perdeu também o `meio_y0_volta` | navegação (cabeceira leste) |
+| 3 | EKF | 2 | Preso na mesma travessia, contra a pedra perto de (11,8; -1,5), com as rodas girando: em 6 s a odometria andou 1,4 m para o norte com o robô parado. O robô voltou pela entrelinha -1,8 achando que estava na 0, e o Nav2 deu os 3 últimos como atingidos a 1,7–1,8 m deles | localização (patinagem) |
+| 3 | EKF | 3 | Perdeu o `meio_y0_volta` com a localização certa (0,21 m) | navegação |
+| 3 | SLAM LiDAR | 1 | Saltos na cabeceira leste (até 0,4 m por amostra) e na oeste (1,7 m), yaw até 39°, erro até 8,2 m; 6 perdidos | localização |
+| 3 | SLAM LiDAR | 2 | Preso na travessia da cabeceira leste (waypoint 9) por ~25 min de relógio, com o Nav2 passando caminho novo ao controlador sem desistir; não gravou CSV | navegação (cabeceira leste), não terminou |
+| 3 | SLAM LiDAR | 3 | Salto de 0,67 m por amostra na cabeceira oeste, erro até 2,8 m; 4 perdidos | localização |
+| 3 | VSLAM | 1 | Igual à rodada 2 do EKF: preso em (10,7; -1,7), a odometria escorregou 1,6 m para o norte em 6 s. Nenhum fechamento de laço corrigiu (a proximidade só busca nós a até 1 m da pose do EKF). Os 3 últimos "atingidos" a 1,8 m, na entrelinha errada | localização (patinagem não corrigida) |
+| 3 | VSLAM | 2 | Na cabeceira leste (de y = 0 para y = 1,8), o robô passou da entrelinha e foi até y ≈ 5,4. Ali, preso entre as fileiras, o robô era arrastado sem as rodas girarem (estimativa parada, pose verdadeira andando) e o erro subiu de 0,3 para 1,1 m em 80 s, chegando a 3 m; 3 perdidos e 5 "atingidos" longe | navegação (cabeceira leste), depois deriva |
+| 3 | VSLAM | 3 | A travessia da cabeceira leste de y = -1,8 para y = 0 falhou no planejador (localização 0,26 m); perdeu também o `meio_y0_volta` | navegação (cabeceira leste) |
+
+- A cabeceira leste (planejador, entrelinha errada ou robô preso) apareceu em 7 das 15
+  rodadas da plantação com EKF ou VSLAM, mais a recusa da `partida` na localização. Nas 6
+  rodadas com o SLAM por LiDAR houve saltos de pose ou yaw errado, a maioria na cabeceira
+  leste.
+- A travessia de y = -1,8 para y = 0 no caso 3 (waypoint 9) deu problema em 4 das 6 rodadas
+  com EKF ou VSLAM. A pedra em (11,8; -1,5) fica a ~1 m do waypoint 8 (10,8; -1,8).
+- Na arena, só avisos de "collision ahead" do controlador perto do caixote do norte, sem
+  perda de waypoint.
+
+**O que os números dizem**
+- **Arena (caso 1):** os três chegaram a tudo, com pouca variação entre rodadas. O SLAM por
+  LiDAR localizou melhor (ATE 0,03 m); EKF e VSLAM empataram (0,08 m). Paredes lisas e
+  perto dão um bom scan, e pouca textura para a câmera, como previsto.
+- **Plantação, ida e volta (caso 2):** o VSLAM foi o melhor: 15/15 no mapeamento e 14/15 na
+  localização no mapa salvo, com ATE de 0,13–0,15 m, metade do EKF (0,29 m). A única perda
+  da localização foi do planejador, com a localização certa. O SLAM por LiDAR foi o pior
+  (7/15 no alvo, yaw até 51°).
+- **Plantação, serpentina (caso 3):** nenhum método foi confiável. O EKF teve ATE menor que o
+  VSLAM (0,47 contra 1,05 m), mas a diferença vem de duas rodadas do VSLAM (a 1, com a
+  patinagem não corrigida, e a 2, que se perdeu na entrelinha y = 5,4); na rodada 3 o VSLAM
+  ficou em 0,26 m, como o EKF. Com 3 rodadas e falhas desse tamanho, a média não separa os
+  dois.
+- **O que pesou mais na plantação não foi a localização, e sim o Nav2 na cabeceira leste.**
+  As 8 rodadas da plantação com EKF ou VSLAM que passaram por ela sem problema tiveram ATE
+  de 0,06 a 0,26 m.
+- **O custo do fechamento só por proximidade (PR #13) apareceu:** quando a odometria
+  escorrega mais de ~1 m (robô preso com as rodas girando), o RTAB-Map não procura o lugar
+  certo e o erro fica. A detecção global corrigiria isso, mas era ela que trazia os
+  fechamentos falsos entre entrelinhas.
+- Comparado com as rodadas anteriores (uma ou duas por modo, registros de 2026-10-26 e
+  2026-10-29), a arena e o caso 2 repetiram o que se viu. O caso 3 com EKF e com VSLAM tinha
+  dado 11/11 com ATE de 0,16–0,19 m; aqui isso aconteceu em 2 das 6 rodadas. A diferença é
+  a cabeceira leste, que falha em algumas rodadas e não em outras.
+
+**Para a dissertação.** Para comparar a localização sem a navegação no meio:
+1. Resolver a cabeceira leste antes das rodadas finais (fora deste registro): afastar o
+   waypoint 8 da pedra, pôr um waypoint intermediário na cabeceira, ou ajustar o costmap
+   global e o planejador ali.
+2. Reduzir o efeito da patinagem: detectar o robô preso (rodas girando e a IMU sem
+   aceleração) e não integrar a odometria das rodas, ou aumentar o raio da proximidade do
+   RTAB-Map. Hoje uma patinagem de 1,5 m some do EKF e do VSLAM.
+3. Ruído nos sensores (registro de 2026-10-26), para o EKF não ficar favorecido pelo yaw
+   perfeito.
+4. Mais rodadas por caso (5 ou mais), já que a variação entre rodadas é grande na plantação.
+
+**Não testado:** Windows/WSL, RViz, sensores com ruído, mais de 3 rodadas por caso e modo, a
+localização do VSLAM com o robô começando fora do primeiro nó. Os fechamentos de laço de
+cada rodada do VSLAM não foram contados (os bancos não foram analisados desta vez).
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+# câmera de aquisição ligada (por padrão fica desligada):
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true data_camera:=true
+# em outro terminal: desligar e religar com a simulação rodando
+ros2 service call /data_camera/enable std_srvs/srv/SetBool "{data: false}"
+ros2 service call /data_camera/enable std_srvs/srv/SetBool "{data: true}"
+```
+No RViz, marque o painel "Data Camera" (vem desmarcado, porque cada imagem tem 4,9 MB). O
+`agrobot_description` entra no build porque o URDF mudou.
+
+**O que mudou**
+- `agrobot_webots/protos/DataCamera.proto` (novo): uma `Camera` de cor (`data_camera`),
+  1280 × 960, FOV horizontal de 90° (vertical de 73,7°), sem ruído, com um corpo de
+  4 × 5 × 5 cm atrás do centro óptico.
+- `agrobot_webots/protos/agrobot.proto`: a `DataCamera` em (0; 0; 0,66) do `base_link`
+  (~0,90 m do chão), girada 90° para olhar para a esquerda (+y), sem inclinação, e um mastro
+  só visual (sem massa nem colisão) da travessa do topo do quadro até o corpo da câmera.
+- `agrobot_description/urdf/agrobot.urdf`: `data_camera_link` (mesma pose do PROTO) e
+  `data_camera_optical_frame` (z saindo da lente, x para a direita, y para baixo); o device
+  desligado no `webots_ros2_driver` (`<ros><enabled>false</enabled>`, como os da RGB-D); a
+  propriedade `dataCameraPeriod` (1024 ms) do plugin.
+- `agrobot_webots/agrobot_webots/agrobot_driver.py`: com `dataCameraPeriod` maior que 0,
+  liga a câmera e publica `/data_camera/image_raw` (`bgra8`) e `/data_camera/camera_info`
+  (fx = fy = 640 px, cx = 639,5, cy = 479,5, sem distorção) a cada 1024 ms, com o carimbo do
+  passo em que a imagem foi feita e QoS confiável. O serviço `/data_camera/enable`
+  (`std_srvs/SetBool`) desliga e religa a câmera com a simulação rodando; desligada, o
+  Webots não a renderiza. A cada 60 s de simulação, loga quantos ms cada quadro custa. Sem a
+  propriedade, ou com 0, nada disso existe. `make_camera_info` passou a receber o frame.
+- `agrobot_webots/launch/simulation.launch.py`: argumento `data_camera` (padrão `false`).
+  Sem `data_camera:=true`, o driver recebe um URDF com `dataCameraPeriod` 0.
+- `agrobot_webots/rviz/nav.rviz`, `nav_slam.rviz`, `nav_vslam.rviz` e `goal.rviz`: painel de
+  imagem "Data Camera", desmarcado.
+- `README.md` e este manual (seções 1g, 2 e 4): tópicos, argumento, propriedade e sensor novos.
+
+**Por quê**
+- *Câmera separada da RGB-D:* a RGB-D olha para a frente em 424 × 240 e serve à localização;
+  mexer nela mudaria os resultados já medidos. A de aquisição olha de lado, de perto, em alta
+  resolução e baixa taxa, e não entra no RTAB-Map nem no EKF.
+- *Para a esquerda, no centro do robô (x = 0, y = 0):* com o robô no centro da entrelinha, a
+  linha dos colmos fica a 0,9 m e a imagem cobre 1,80 m ao longo da fileira e 1,35 m de
+  altura (de ~0,23 a ~1,58 m do chão; as plantas têm de 0,9 a 1,6 m), ~1,4 mm por pixel.
+  Sobre o centro de giro, um erro de yaw da localização desloca menos a pose da câmera. O
+  plano falava em x = 0,30 m; ali não há estrutura do quadro embaixo, e em x = 0 o mastro
+  apoia na travessa que já existe.
+- *0,90 m do chão:* a borda de baixo da imagem desce 0,75 m a cada 1 m de distância. Na face
+  de fora do pneu (y = 0,55 m) ela passa a 0,2475 m do `base_link`, e o topo da roda fica a
+  0,20 m: ~5 cm de folga. A 0,85 m a roda já tocaria o canto da imagem.
+- *4:3 (1280 × 960), e não 16:9:* em 1280 × 720 a altura coberta a 0,9 m cai para 1,01 m e
+  corta a base ou o topo das plantas.
+- *1024 ms:* a 0,4 m/s (velocidade do Nav2) é uma foto a cada 0,41 m, 77% de sobreposição na
+  linha dos colmos e cada colmo em ~4 fotos. São 4,8 MB por segundo de simulação, contra
+  8,5 MB/s da RGB-D.
+- *Desligada por padrão:* as rodadas de navegação e de comparação não ficam mais lentas nem
+  mudam. Com `data_camera:=false` o device nem é tocado.
+- *Publicar no nosso driver:* como na RGB-D, o carimbo tem que ser o do passo em que a imagem
+  foi feita, para casar com o TF `map → data_camera_optical_frame` na georreferência das
+  fotos. O agendamento usa o mesmo contador inteiro de ms da RGB-D (a primeira imagem sai
+  dois períodos depois de ligar, 2,048 s).
+
+**Como foi conferido** (sem o Webots: nesta sessão da nuvem não foi possível executar o
+Webots nem o ROS 2)
+- *Geometria:* um script projetou na câmera de aquisição pontos de todas as peças do robô
+  (malha do chassi, as 4 rodas com garras, calotas e eixos, travessa, hastes, RGB-D, LiDAR,
+  mastro e o corpo da própria câmera). Nenhum cai dentro da imagem; o mais próximo são as
+  rodas esquerdas, 12% para fora da borda de baixo. O mastro e a câmera ficam atrás do plano
+  da imagem da RGB-D (0,38 a 0,48 m atrás), então não aparecem no VSLAM.
+- *Lógica do driver:* o código do `AgrobotDriver` rodou com um Webots e um ROS simulados em
+  Python (devices e publicadores de mentira). Com período de 1024 ms, as imagens saem em
+  2048, 3072, ... ms, uma por período, com `camera_info` de mesmo carimbo, e a imagem
+  publicada é a do carimbo; o serviço desliga (nada mais é publicado), responde sem erro a
+  um pedido repetido e religa (primeira imagem 2048 ms depois); com período 0 ou sem a
+  propriedade nada é criado; sem o device no robô sai um aviso; período que não é múltiplo de
+  32 ms dá erro.
+- *Launch:* o `driver_urdf()` foi rodado nas 8 combinações de `ekf`, `camera` e
+  `data_camera`, e com um URDF de período 512.
+- URDF e os 4 arquivos do RViz abrem como XML e YAML válidos; `flake8` sem avisos nos dois
+  arquivos Python alterados.
+
+**Não testado:** tudo o que depende do Webots e do ROS de verdade. Em especial: o Webots
+carregar o `DataCamera.proto` sem erro, a imagem renderizada (enquadramento das plantas,
+nenhuma peça do robô na imagem), o `webots_ros2_driver`, a taxa e o custo reais por quadro,
+o RViz e o Windows/WSL. O primeiro teste no PC do Kauê é também a etapa 3 do plano (medir a
+velocidade da simulação com a câmera ligada e desligada).
