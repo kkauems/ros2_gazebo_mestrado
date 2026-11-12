@@ -1,0 +1,246 @@
+#VRML_SIM R2025a utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# Oliveira para o mundo olive_grove.wbt: tronco curto e torto, pernadas e copa
+# verde-acinzentada, feita só com geometria própria (sem texturas). Os padrões
+# imitam as oliveiras de um olival tradicional do planalto mirandês (3 a 4 m).
+# Só o tronco tem boundingObject (o robô bate nele e o LiDAR o vê); a copa e
+# as pernadas são só visuais e, com trunkHeight >= 1 m, ficam acima do robô.
+# A origem fica no chão, na base do tronco.
+# template language: javascript
+
+PROTO OliveTree [
+  field SFVec3f    translation   0 0 0
+  field SFRotation rotation      0 0 1 0
+  field SFString   name          "olive tree"
+  field SFFloat    height        3.4    # Altura total (m).
+  field SFFloat    trunkHeight   1.1    # Altura do tronco até as pernadas (m).
+  field SFFloat    trunkRadius   0.14   # Raio do tronco (m).
+  field SFFloat    crownRadius   1.4    # Raio da copa (m).
+  field SFInt32    seed          1      # Varia o tronco, as pernadas e a copa.
+  field SFColor    leafColor     0.42 0.5 0.36
+  field SFColor    barkColor     0.33 0.29 0.24
+]
+{
+  %<
+    const trunkHeight = Math.max(fields.trunkHeight.value, 0.5);
+    const height = Math.max(fields.height.value, trunkHeight + 1.0);
+    const trunkRadius = Math.max(fields.trunkRadius.value, 0.05);
+    const crownRadius = Math.max(fields.crownRadius.value, 0.5);
+
+    // Gerador pseudoaleatório simples e determinístico (LCG).
+    let state = (fields.seed.value * 2654435761) % 4294967296;
+    if (state < 0)
+      state += 4294967296;
+    function random() {
+      state = (1664525 * state + 1013904223) % 4294967296;
+      return state / 4294967296;
+    }
+    function between(a, b) {
+      return a + (b - a) * random();
+    }
+
+    // Malha: lista de pontos e de faces (índices), com as faces viradas para
+    // fora (o IndexedFaceSet do Webots só desenha um lado). Só triângulos:
+    // com os pontos sorteados, um quadrilátero pode não ser plano e o Webots
+    // avisa ("Tessellation Error").
+    function mesh() {
+      return {points: [], faces: []};
+    }
+    function coordinates(m) {
+      return m.points.map(p => `${p[0].toFixed(3)} ${p[1].toFixed(3)} ${p[2].toFixed(3)}`).join(', ');
+    }
+    function indices(m) {
+      return m.faces.map(f => f.join(' ') + ' -1').join(', ');
+    }
+
+    // Tubo ao longo de centros (de baixo para cima), com um raio por anel e
+    // os anéis no plano horizontal. Tampa no topo.
+    function tube(m, centers, radii, sides, wobble) {
+      const first = m.points.length;
+      for (let i = 0; i < centers.length; ++i) {
+        for (let j = 0; j < sides; ++j) {
+          const angle = 2 * Math.PI * j / sides;
+          const r = radii[i] * (1 + wobble * (random() - 0.5));
+          m.points.push([centers[i][0] + r * Math.cos(angle), centers[i][1] + r * Math.sin(angle), centers[i][2]]);
+        }
+      }
+      for (let i = 0; i < centers.length - 1; ++i) {
+        for (let j = 0; j < sides; ++j) {
+          const a = first + i * sides + j;
+          const b = first + i * sides + (j + 1) % sides;
+          m.faces.push([a, b, b + sides]);
+          m.faces.push([a, b + sides, a + sides]);
+        }
+      }
+      const top = centers[centers.length - 1];
+      m.points.push([top[0], top[1], top[2]]);
+      const last = first + (centers.length - 1) * sides;
+      for (let j = 0; j < sides; ++j)
+        m.faces.push([m.points.length - 1, last + j, last + (j + 1) % sides]);
+    }
+
+    // Bola irregular (parte da copa), achatada na vertical.
+    function blob(m, center, radius, flatten) {
+      const rings = 5;
+      const sectors = 8;
+      const first = m.points.length;
+      for (let i = 1; i < rings; ++i) {
+        const polar = Math.PI * (1 - i / rings);  // de baixo para cima
+        for (let j = 0; j < sectors; ++j) {
+          const angle = 2 * Math.PI * (j + 0.5 * (i % 2)) / sectors;
+          const r = radius * between(0.78, 1.12);
+          m.points.push([
+            center[0] + r * Math.sin(polar) * Math.cos(angle),
+            center[1] + r * Math.sin(polar) * Math.sin(angle),
+            center[2] + flatten * r * Math.cos(polar)]);
+        }
+      }
+      const bottom = m.points.length;
+      m.points.push([center[0], center[1], center[2] - flatten * radius * 0.9]);
+      const top = m.points.length;
+      m.points.push([center[0], center[1], center[2] + flatten * radius]);
+      for (let i = 0; i < rings - 2; ++i) {
+        for (let j = 0; j < sectors; ++j) {
+          const a = first + i * sectors + j;
+          const b = first + i * sectors + (j + 1) % sectors;
+          m.faces.push([a, b, b + sectors]);
+          m.faces.push([a, b + sectors, a + sectors]);
+        }
+      }
+      const lastRing = first + (rings - 2) * sectors;
+      for (let j = 0; j < sectors; ++j) {
+        m.faces.push([bottom, first + (j + 1) % sectors, first + j]);
+        m.faces.push([top, lastRing + j, lastRing + (j + 1) % sectors]);
+      }
+    }
+
+    // Tronco: torto, mais largo na base, com a seção irregular.
+    const bark = mesh();
+    const lean = between(0, 2 * Math.PI);
+    const leanAmount = between(0.05, 0.22) * trunkHeight;
+    const trunkRings = 6;
+    let centers = [];
+    let radii = [];
+    for (let i = 0; i < trunkRings; ++i) {
+      const t = i / (trunkRings - 1);
+      const sway = 0.06 * Math.sin(3.0 * t + lean);
+      centers.push([
+        (leanAmount * t * t + sway) * Math.cos(lean),
+        (leanAmount * t * t + sway) * Math.sin(lean),
+        trunkHeight * t - (i === 0 ? 0.15 : 0)]);
+      radii.push(trunkRadius * (1.0 + 0.55 * Math.pow(1 - t, 3) - 0.2 * t));
+    }
+    tube(bark, centers, radii, 9, 0.3);
+    const fork = centers[trunkRings - 1];
+
+    // Pernadas: saem do topo do tronco, para fora e para cima, até a copa.
+    const leavesA = mesh();
+    const leavesB = mesh();
+    const branchCount = 3 + Math.floor(3 * random());
+    const crownBase = trunkHeight + 0.25;
+    const crownHeight = height - crownBase;
+    const blobRadius = 0.5 * crownRadius;
+    const flatten = Math.min(0.5 * crownHeight / blobRadius, 0.95);
+    const firstAngle = between(0, 2 * Math.PI);
+    for (let k = 0; k < branchCount; ++k) {
+      const angle = firstAngle + 2 * Math.PI * (k + between(-0.25, 0.25)) / branchCount;
+      const reach = (crownRadius - blobRadius) * between(0.85, 1.05);
+      const tipZ = crownBase + flatten * blobRadius + between(0.0, 0.3) * crownHeight;
+      const tip = [fork[0] + reach * Math.cos(angle), fork[1] + reach * Math.sin(angle), tipZ];
+      const middle = [
+        fork[0] + 0.4 * (tip[0] - fork[0]),
+        fork[1] + 0.4 * (tip[1] - fork[1]),
+        fork[2] + 0.65 * (tip[2] - fork[2])];
+      tube(bark, [[fork[0], fork[1], fork[2] - 0.15], middle, tip],
+           [0.5 * trunkRadius, 0.33 * trunkRadius, 0.15 * trunkRadius], 6, 0.15);
+      blob(k % 2 ? leavesB : leavesA, tip, blobRadius * between(0.9, 1.1), flatten);
+      // Tufo menor entre as pernadas, mais para fora ou mais alto.
+      const between2 = angle + Math.PI / branchCount;
+      const r2 = reach * between(0.5, 1.0);
+      blob(k % 2 ? leavesA : leavesB,
+           [fork[0] + r2 * Math.cos(between2), fork[1] + r2 * Math.sin(between2),
+            tipZ + between(0.1, 0.35) * crownHeight],
+           blobRadius * between(0.6, 0.85), flatten);
+    }
+    // Topo da copa.
+    blob(leavesA, [fork[0], fork[1], height - flatten * blobRadius * 0.95], blobRadius * 0.95, flatten);
+
+    const leaf = fields.leafColor.value;
+    const barkColor = fields.barkColor.value;
+  >%
+  Solid {
+    translation IS translation
+    rotation IS rotation
+    name IS name
+    model "olive tree"
+    children [
+      Shape {
+        appearance PBRAppearance {
+          baseColor %<= barkColor.r.toFixed(3) >% %<= barkColor.g.toFixed(3) >% %<= barkColor.b.toFixed(3) >%
+          roughness 1
+          metalness 0
+        }
+        geometry IndexedFaceSet {
+          creaseAngle 0.6
+          coord Coordinate {
+            point [
+              %<= coordinates(bark) >%
+            ]
+          }
+          coordIndex [
+            %<= indices(bark) >%
+          ]
+        }
+      }
+      Shape {
+        appearance PBRAppearance {
+          baseColor %<= leaf.r.toFixed(3) >% %<= leaf.g.toFixed(3) >% %<= leaf.b.toFixed(3) >%
+          roughness 0.9
+          metalness 0
+        }
+        geometry IndexedFaceSet {
+          creaseAngle 0.3
+          coord Coordinate {
+            point [
+              %<= coordinates(leavesA) >%
+            ]
+          }
+          coordIndex [
+            %<= indices(leavesA) >%
+          ]
+        }
+      }
+      %< if (leavesB.points.length > 0) { >%
+      Shape {
+        appearance PBRAppearance {
+          baseColor %<= (leaf.r * 1.28).toFixed(3) >% %<= (leaf.g * 1.22).toFixed(3) >% %<= (leaf.b * 1.3).toFixed(3) >%
+          roughness 0.9
+          metalness 0
+        }
+        geometry IndexedFaceSet {
+          creaseAngle 0.3
+          coord Coordinate {
+            point [
+              %<= coordinates(leavesB) >%
+            ]
+          }
+          coordIndex [
+            %<= indices(leavesB) >%
+          ]
+        }
+      }
+      %< } >%
+    ]
+    boundingObject Pose {
+      translation 0 0 %<= (trunkHeight / 2).toFixed(4) >%
+      children [
+        Cylinder {
+          height %<= trunkHeight.toFixed(4) >%
+          radius %<= (trunkRadius * 1.1).toFixed(4) >%
+        }
+      ]
+    }
+    locked TRUE
+  }
+}

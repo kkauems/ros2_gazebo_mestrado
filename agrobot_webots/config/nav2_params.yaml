@@ -98,6 +98,12 @@ local_costmap:
           max_obstacle_height: 2.0
           clearing: true
           marking: true
+          # Raio sem retorno (+inf do Webots) também limpa o caminho até
+          # raytrace_max_range. Sem isso, em lugar aberto (olive_grove.wbt)
+          # só as fatias até troncos e muros ficavam livres, o resto do
+          # costmap global ficava desconhecido e o caminho planejado
+          # serpenteava entre essas fatias (testado).
+          inf_is_valid: true
           raytrace_max_range: 6.0
           raytrace_min_range: 0.0
           obstacle_max_range: 5.0
@@ -140,6 +146,12 @@ global_costmap:
           max_obstacle_height: 2.0
           clearing: true
           marking: true
+          # Raio sem retorno (+inf do Webots) também limpa o caminho até
+          # raytrace_max_range. Sem isso, em lugar aberto (olive_grove.wbt)
+          # só as fatias até troncos e muros ficavam livres, o resto do
+          # costmap global ficava desconhecido e o caminho planejado
+          # serpenteava entre essas fatias (testado).
+          inf_is_valid: true
           raytrace_max_range: 6.0
           raytrace_min_range: 0.0
           obstacle_max_range: 5.0

@@ -22,6 +22,7 @@ reactive obstacle avoidance and stability tests).
 | `/clock` from Webots sim time | Webots | New on 2026-10-07 |
 | Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route); the ellipse wasn't checked in RViz, not yet on Windows |
 | Crop-field test world (`plantation_field.wbt`): 6 plant rows, uneven ground, clods, stones and branches, `world:=plantation_field.wbt` | Webots | New on 2026-10-09, tested in Webots R2025a on Linux (headless) with the real driver, Nav2 and slam_toolbox, not yet on Windows. See [Plantation field](#plantation-field-world) |
+| Olive-grove test world (`olive_grove.wbt`), based on a traditional grove on the Douro Internacional plateau: 7 m tree grid on a gentle slope, stony red soil, vineyard, dirt road, `world:=olive_grove.wbt` | Webots | New on 2026-11-12, tested in Webots R2025a on Linux (headless) with Nav2 and RTAB-Map, not yet on Windows. See [Olive grove](#olive-grove-world) |
 | RGB-D camera for VSLAM (`/vslam_camera/...`: color, registered depth, `camera_info`, one stamp), `camera:=false` turns it off | Webots | New on 2026-10-20, tested in Webots R2025a on Linux (headless), measured with the `AgrobotDriver` code run outside `webots_ros2_driver`; on 2026-10-21 also started with `webots_ros2_driver` itself (topics published, none with `camera:=false`). Not yet in RViz or on Windows ([details](claude/manual.md#3-o-robô-no-webots)) |
 | RGB data acquisition camera for crop monitoring (`/data_camera/image_raw`, `/data_camera/camera_info`), looking left at the plant row, 1280 × 960 about once per second, off by default, `data_camera:=true` | Webots | New on 2026-11-12. **Not run in Webots yet** (not even on Linux): only the geometry and the driver logic were checked, outside the simulator ([details](claude/manual.md#6-câmera-rgb-de-aquisição-de-dados-data_cameratrue)) |
 | VSLAM with RTAB-Map (camera + lidar check): TF `map → odom`, `/rtabmap/map`, mapping and localization on a saved map, `vslam:=true` (needs `ekf:=true`) | Webots | New on 2026-10-21, tested in Webots R2025a on Linux (headless) on the crop field and the arena, without Nav2, with the driver code run outside `webots_ros2_driver` (and 40 s with `webots_ros2_driver` itself); not yet in RViz or on Windows. See [VSLAM](#vslam-rtab-map) |
@@ -48,6 +49,9 @@ agrobot_webots/          Webots simulation + Nav2 (ament_python)
   worlds/plantation_field.wbt  crop field on uneven ground (generated, don't edit by hand)
   protos/CropPlant.proto   corn-like plant for the field (only the stalk collides)
   scripts/generate_plantation_field.py  generates plantation_field.wbt (fixed seed)
+  worlds/olive_grove.wbt   traditional olive grove on a gentle slope (generated, don't edit by hand)
+  protos/OliveTree.proto   olive tree for the grove (only the trunk collides)
+  scripts/generate_olive_grove.py  generates olive_grove.wbt (fixed seed)
   scripts/summarize_missions.py  table of the waypoint mission CSVs (one row per run)
   scripts/compare_methods.py  same CSVs, one row per case and mode (mean of the runs)
   launch/simulation.launch.py  Webots + driver + robot_state_publisher + Nav2 + RViz
@@ -114,7 +118,7 @@ Launch arguments:
 
 | Argument | Default | Effect |
 |---|---|---|
-| `world` | `obstacle_arena.wbt` | World file in `agrobot_webots/worlds/`. `plantation_field.wbt` is the crop field ([below](#plantation-field-world)). `goal_navigation.launch.py` takes the same argument |
+| `world` | `obstacle_arena.wbt` | World file in `agrobot_webots/worlds/`. `plantation_field.wbt` is the crop field ([below](#plantation-field-world)) and `olive_grove.wbt` the olive grove ([below](#olive-grove-world)). `goal_navigation.launch.py` takes the same argument |
 | `nav` | `true` | Start the Nav2 servers (`navigation.launch.py`) |
 | `rviz` | `true` | Start RViz with `rviz/nav.rviz` (`rviz/nav_slam.rviz` with `slam:=true`, `rviz/nav_vslam.rviz` with `vslam:=true`) |
 | `ekf` | `false` | `true`: the `robot_localization` EKF fuses `/wheel/odom` + `/imu/data` and publishes `/odom` and TF `odom → base_link` (the driver stops publishing them). `goal_navigation.launch.py` takes the same argument |
@@ -205,6 +209,51 @@ ros2 service call /local_costmap/clear_entirely_local_costmap nav2_msgs/srv/Clea
 reports an obstacle in the strip it needs free in front of the robot, and it gives up after
 40 s. It did the same with the 8 cm lidar; the cause wasn't investigated. Measurements are in
 [claude/manual.md](claude/manual.md#3-o-robô-no-webots).
+
+### Olive grove world
+
+```bash
+ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true vslam:=true
+ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true vslam:=true \
+    waypoints:=caso4_olival_ida_volta
+```
+
+A traditional olive grove modeled on one at Vilarinho dos Galegos (Mogadouro), on the Douro
+Internacional plateau (x east along the rows, y north and uphill, world frame):
+- 120 × 100 m `ElevationGrid` of red tilled soil that rises to the north: 2–3% across the
+  grove (about 1.3 m from the first to the last row), with wide gentle waves and fine
+  roughness. Wheel–soil friction is 0.8.
+- 67 `OliveTree`s on a 7 × 7 m grid (7 rows of 10 places, x = -31.5 to 31.5,
+  y = -21 to 21), with a few missing and young trees; 2.3–3.9 m tall, trunks 1–1.25 m.
+  Only the trunk collides, and the lidar sees only trunks: the grove is open, with few
+  returns.
+- Flat stone chips all over the grove (2–4 cm, the robot drives over them); small stones and
+  five bigger blocks in the tree lines (the lidar sees the blocks).
+- Around it: a vineyard to the north (4 rows with posts, y = 28.5 to 36), a dirt road to the
+  south (y = -30.5 to -27) and an irrigation tank with a pump house to the east (x = 45).
+- The robot starts at world `(-36, -3.5)` facing +x, in the west headland. So in `odom`/`map`
+  the lanes between rows are at y = -14, -7, 0, 7, 14 and 21, the trees run from x = 4.5 to
+  67.5, and the east headland is at x ≈ 68–74. The gaps across the rows (to drive up or down
+  the slope) are at x = 8, 15, 22, 29, ...
+
+The world is generated. To change it, edit the parameters in
+[generate_olive_grove.py](agrobot_webots/scripts/generate_olive_grove.py) and run
+`python3 agrobot_webots/scripts/generate_olive_grove.py` (`--seed N` for another layout,
+`--slope 0.05` for a steeper hill, `--slope 0` for flat ground), then rebuild
+`agrobot_webots`.
+
+**Results in the cloud** (Webots R2025a headless, `ekf:=true vslam:=true`): both cases reached
+every waypoint, with no "collision ahead" stops and no recovery spins (case 4: 15/15 in
+449 s; case 5: 12/12 in 350 s). The robot slides downhill on the side slope, which the
+wheels and the IMU can't see, so the pose error grows to 0.6 m (case 4) and 1.4 m (case 5).
+RTAB-Map didn't correct it: on the way back the robot sees the trees from other angles and
+closes no loop. Use `--slope 0` for a flat grove.
+
+**Nav2 in open ground.** Webots returns +inf for lidar rays that hit nothing, and in the
+grove most rays do. The costmaps now clear along those rays too (`inf_is_valid: true` in
+`nav2_params.yaml`). Before that, only the slices toward trunks were known free, the planned
+path zigzagged between them, and the skid-steer slip in all those turns put the EKF pose
+about 1 m off after 50 m.
 
 ### Waypoint missions
 
@@ -297,6 +346,8 @@ ros2 service call /waypoint_mission/save std_srvs/srv/Trigger    # write the lis
 | `caso1_arena_circuito` | `obstacle_arena.wbt` | south of the center crate, east, north, east again, back to the start | ~10 m |
 | `caso2_plantacao_ida_volta` | `plantation_field.wbt` | middle lane to the east headland, back along lane y = 1.8, to the start | ~26 m |
 | `caso3_plantacao_serpentina` | `plantation_field.wbt` | lanes y = 0 (east), 1.8 (west), −1.8 (east), and 0 again (west) to the start | ~51 m |
+| `caso4_olival_ida_volta` | `olive_grove.wbt` | lane y = 0 to the east headland, back along lane y = 7, to the start | ~160 m |
+| `caso5_olival_encosta` | `olive_grove.wbt` | across the rows up the slope at x = 8, along the top lane, down at x = 29, back along lane y = -7 | ~115 m |
 
 Run each case with `ekf:=true` (EKF only, Nav2 in `odom`), `ekf:=true slam:=true` (lidar
 SLAM, Nav2 in `map`), `ekf:=true vslam:=true` (RTAB-Map mapping, Nav2 in `map`) and, after a
