@@ -338,9 +338,9 @@ class DataRecorder(Node):
                     f'Sem TF {self.frame} -> {CAMERA_FRAME} no carimbo da '
                     f'foto ({error}); gravada sem a pose estimada.')
             self.pending.pop(0)
-            self.handle(message, estimated)
+            self.save_photo(message, estimated)
 
-    def handle(self, message, estimated):
+    def save_photo(self, message, estimated):
         real = self.true_pose(message.header.stamp)
         reference = estimated or real
         distance = None
@@ -403,7 +403,7 @@ class DataRecorder(Node):
         self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=CSV_FIELDS)
         self.csv_writer.writeheader()
 
-    def close(self):
+    def finish(self):
         if self.csv_file is not None:
             self.csv_file.close()
             self.get_logger().info(
@@ -418,7 +418,7 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.close()
+        node.finish()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
