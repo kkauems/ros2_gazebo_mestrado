@@ -51,7 +51,7 @@ Fechar o Webots encerra o launch inteiro.
 | `camera` | `true` | Câmera RGB-D do VSLAM. `false` alivia a CPU nas rodadas sem VSLAM |
 | `vslam` | `false` | RTAB-Map publica `map → odom` e o mapa. Exige `ekf:=true` e `camera:=true` (o launch para com erro se faltar) |
 | `vslam_localization` | `false` | Com `vslam:=true`: localiza num mapa salvo em vez de mapear |
-| `vslam_db` | `dados/vslam/<mundo>.db` | Banco do RTAB-Map. **O mapeamento apaga o banco ao começar** |
+| `vslam_db` | `dados/vslam/<mundo>.db` | Banco do RTAB-Map (o mapa). Um nome sem pasta (`vslam_db:=olival_mapa1`) vai para `dados/vslam/<nome>.db`. O mapeamento começa num banco vazio; um mapa que já existia com o mesmo nome vira `<nome>_<data>.db` |
 | `rtabmap_viz` | `false` | Abre a janela do `rtabmap_viz` |
 | `data_camera` | `false` | Câmera RGB de aquisição de dados (seção 6) |
 | `data_record` | `true` | Com `data_camera:=true`, grava as fotos com a pose de cada uma (seção 6). `false` só mostra as imagens |
@@ -77,7 +77,7 @@ ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:
 
 # Mapear conduzindo o robô (no outro terminal: ros2 run agrobot_webots teleop_keyboard)
 ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true vslam:=true \
-    nav:=false teleop:=keyboard
+    vslam_db:=olival_mapa1 nav:=false teleop:=keyboard
 
 # Com a câmera de aquisição ligada, gravando as fotos
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
@@ -93,8 +93,9 @@ ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:
   no centro do mundo.
 - **Durante o mapeamento, deixe o RViz aberto:** a grade `/rtabmap/map` só é montada
   enquanto alguém a assina.
-- Para guardar um mapa, copie o `.db` antes de mapear de novo o mesmo mundo, ou use
-  `vslam_db:=...`.
+- **O mapa é salvo quando a simulação fecha** (feche o Webots ou Ctrl-C no launch): o
+  rtabmap grava o banco ao sair e o launch espera até 2 min por ele. A linha "Mapa salvo em
+  ..." no log confirma. Dê nomes aos mapas com `vslam_db:=<nome>`.
 - A localização exige que o robô comece onde começou o mapeamento (os mundos já fixam essa
   pose).
 
@@ -260,13 +261,43 @@ Nav2 (velocity_smoother) ─► /cmd_vel_nav_out ─┴► cmd_vel_mux ─► /c
   tecla muda a velocidade e o robô a mantém, sem precisar segurar (a repetição da tecla
   segurada dá trancos). `w`/`s` ou setas: ±0,1 m/s; `a`/`d`: ±0,2 rad/s; espaço: parar e
   devolver ao Nav2; `p`: segurar parado (o Nav2 não comanda); `q`: sair.
-- **Para mapear:** `vslam:=true nav:=false teleop:=...`, com o RViz aberto. Protocolo de
-  condução para o RTAB-Map fechar laços: parado ~10 s na partida, uma volta pelo perímetro
-  voltando à partida, depois as entrelinhas, revisitando de tempos em tempos uma entrelinha
-  **no mesmo sentido** de antes (a câmera não reconhece o lugar visto de costas), a
-  0,3 a 0,4 m/s e terminando parado na partida.
-- Depois, os waypoints do operador saem do mapa salvo com `vslam_localization:=true
-  waypoints:=rviz` (seção 7).
+
+**Do mapa às missões de aquisição** (exemplo no olival, mapa `olival_mapa1`):
+
+1. **Mapear conduzindo:**
+   ```bash
+   ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true \
+       vslam:=true vslam_db:=olival_mapa1 nav:=false teleop:=keyboard
+   ros2 run agrobot_webots teleop_keyboard      # no outro terminal
+   ```
+   A grade aparece no RViz (`/rtabmap/map`) enquanto o robô anda. Protocolo de condução
+   para o RTAB-Map fechar laços: parado ~10 s na partida, uma volta pelo perímetro voltando
+   à partida, depois as entrelinhas, revisitando de tempos em tempos uma entrelinha **no
+   mesmo sentido** de antes (a câmera não reconhece o lugar visto de costas), a 0,3 a
+   0,4 m/s e terminando parado na partida.
+2. **Salvar:** opcionalmente, guarde também a grade como imagem (para a dissertação ou para
+   conferir), com a simulação ainda aberta:
+   `ros2 run nav2_map_server map_saver_cli -t /rtabmap/map -f dados/vslam/olival_mapa1`
+   (gera `.pgm` e `.yaml`). Depois feche o Webots e espere a linha "Mapa salvo em
+   dados/vslam/olival_mapa1.db" no log. O mapa é o `.db`; a imagem não é usada para navegar.
+3. **Marcar os waypoints no mapa:**
+   ```bash
+   ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true \
+       vslam:=true vslam_localization:=true vslam_db:=olival_mapa1 waypoints:=rviz
+   ```
+   O robô começa no primeiro nó do mapa e o mapa salvo aparece no RViz. Marque os pontos com
+   **Publish Point** (no máximo ~12 m entre dois seguidos) e grave com
+   `ros2 service call /waypoint_mission/save std_srvs/srv/Trigger`, que cria
+   `dados/missions/rviz_<data>.yaml` com `map: olival_mapa1`. Pode já rodar com `start`.
+4. **Rodar a missão de aquisição** quantas vezes quiser, no mesmo mapa:
+   ```bash
+   ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true \
+       vslam:=true vslam_localization:=true vslam_db:=olival_mapa1 \
+       waypoints:=dados/missions/rviz_<data>.yaml data_camera:=true
+   ```
+   A missão é recusada se o `map:` do arquivo não for o mapa em uso: as coordenadas só
+   valem no mapa em que foram marcadas. Com `teleop:=keyboard` junto, dá para tomar o
+   controle no meio da missão.
 
 ## 6. Câmera RGB de aquisição de dados (`data_camera:=true`)
 
@@ -334,7 +365,9 @@ As coordenadas estão no frame da partida, então a mesma lista vale com e sem V
 **Waypoints clicados (`waypoints:=rviz`):** no RViz, ferramenta **Publish Point**, um
 clique por ponto; depois `ros2 service call /waypoint_mission/start std_srvs/srv/Trigger`.
 Também há `undo`, `clear` e `save` (grava a lista em `dados/missions/` no formato
-dos casos, para rodar de novo com `waypoints:=<arquivo>`).
+dos casos, para rodar de novo com `waypoints:=<arquivo>`). Com VSLAM, o arquivo leva o nome
+do mapa (`map:`), e a missão só roda nesse mapa. O passo a passo do mapa às missões está
+na seção 5 (teleoperação).
 
 **Resultados:** cada rodada grava em `dados/missions/` um
 `<caso>_<modo>_<data>_waypoints.csv` (um por waypoint) e um `_trajetoria.csv` (pose estimada
@@ -366,8 +399,8 @@ CPU no limite os resultados variam entre rodadas.
 - Quase tudo foi validado na nuvem Linux, headless e sem GPU; os testes no Windows/WSL e no
   RViz na tela ainda são poucos. A câmera de aquisição ainda não rodou no Webots.
 - A profundidade da RGB-D e o IMU não têm ruído na simulação.
-- A teleoperação (joystick, teclado e `cmd_vel_mux`) ainda não rodou no Webots; só a lógica
-  foi testada fora do simulador.
+- O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
+  aviso "Mapa salvo" e o `map:` nas missões só foram conferidos fora do simulador.
 - O Nav2 às vezes não acha caminho na travessia da cabeceira leste da plantação
   ("Failed to create plan with tolerance of 0.3") e perde waypoints ali.
 - Ao girar no lugar na arena, a quina do robô pode empurrar a `cardboard box(2)`.
