@@ -22,7 +22,7 @@ reactive obstacle avoidance and stability tests).
 | `/clock` from Webots sim time | Webots | New on 2026-10-07 |
 | Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route); the ellipse wasn't checked in RViz, not yet on Windows |
 | Crop-field test world (`plantation_field.wbt`): 6 plant rows, uneven ground, clods, stones and branches, `world:=plantation_field.wbt` | Webots | New on 2026-10-09, tested in Webots R2025a on Linux (headless) with the real driver, Nav2 and slam_toolbox, not yet on Windows. See [Plantation field](#plantation-field-world) |
-| Olive-grove test world (`olive_grove.wbt`), based on a traditional grove on the Douro Internacional plateau: 7 m tree grid on a gentle slope, stony red soil, vineyard, dirt road, `world:=olive_grove.wbt` | Webots | New on 2026-11-12, tested in Webots R2025a on Linux (headless) with Nav2 and RTAB-Map, not yet on Windows. See [Olive grove](#olive-grove-world) |
+| Olive-grove test world (`olive_grove.wbt`), based on a traditional grove on the Douro Internacional plateau: 7 m tree grid on a 4–5% slope, uneven stony red soil, pruning piles, stone heaps and rocks in the lanes, vineyard, dirt road, `world:=olive_grove.wbt` | Webots | New on 2026-11-12, tested in Webots R2025a on Linux (headless) with Nav2 and RTAB-Map, not yet on Windows. See [Olive grove](#olive-grove-world) |
 | RGB-D camera for VSLAM (`/vslam_camera/...`: color, registered depth, `camera_info`, one stamp), `camera:=false` turns it off | Webots | New on 2026-10-20, tested in Webots R2025a on Linux (headless), measured with the `AgrobotDriver` code run outside `webots_ros2_driver`; on 2026-10-21 also started with `webots_ros2_driver` itself (topics published, none with `camera:=false`). Not yet in RViz or on Windows ([details](claude/manual.md#3-o-robô-no-webots)) |
 | RGB data acquisition camera for crop monitoring (`/data_camera/image_raw`, `/data_camera/camera_info`), looking left at the plant row, 1280 × 960 about once per second, off by default, `data_camera:=true` | Webots | New on 2026-11-12. **Not run in Webots yet** (not even on Linux): only the geometry and the driver logic were checked, outside the simulator ([details](claude/manual.md#6-câmera-rgb-de-aquisição-de-dados-data_cameratrue)) |
 | VSLAM with RTAB-Map (camera + lidar check): TF `map → odom`, `/rtabmap/map`, mapping and localization on a saved map, `vslam:=true` (needs `ekf:=true`) | Webots | New on 2026-10-21, tested in Webots R2025a on Linux (headless) on the crop field and the arena, without Nav2, with the driver code run outside `webots_ros2_driver` (and 40 s with `webots_ros2_driver` itself); not yet in RViz or on Windows. See [VSLAM](#vslam-rtab-map) |
@@ -49,7 +49,7 @@ agrobot_webots/          Webots simulation + Nav2 (ament_python)
   worlds/plantation_field.wbt  crop field on uneven ground (generated, don't edit by hand)
   protos/CropPlant.proto   corn-like plant for the field (only the stalk collides)
   scripts/generate_plantation_field.py  generates plantation_field.wbt (fixed seed)
-  worlds/olive_grove.wbt   traditional olive grove on a gentle slope (generated, don't edit by hand)
+  worlds/olive_grove.wbt   traditional olive grove on a slope (generated, don't edit by hand)
   protos/OliveTree.proto   olive tree for the grove (only the trunk collides)
   scripts/generate_olive_grove.py  generates olive_grove.wbt (fixed seed)
   scripts/summarize_missions.py  table of the waypoint mission CSVs (one row per run)
@@ -220,15 +220,21 @@ ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true
 
 A traditional olive grove modeled on one at Vilarinho dos Galegos (Mogadouro), on the Douro
 Internacional plateau (x east along the rows, y north and uphill, world frame):
-- 120 × 100 m `ElevationGrid` of red tilled soil that rises to the north: 2–3% across the
-  grove (about 1.3 m from the first to the last row), with wide gentle waves and fine
-  roughness. Wheel–soil friction is 0.8.
-- 67 `OliveTree`s on a 7 × 7 m grid (7 rows of 10 places, x = -31.5 to 31.5,
+- Red tilled soil that rises to the north: 4–5% across the grove (about 2.4 m from the
+  first to the last row). Over the grove, a 100 × 84 m `ElevationGrid` (0.5 m cells) makes
+  the ground uneven: wide gentle waves, noise at three scales (12, 4 and 1.5 m) and
+  scattered mounds and hollows (2–5 cm high, 1.2–2.5 m wide). Around it, a coarser 400 m
+  grid follows the same slope. Wheel–soil friction is 0.8.
+- 65 `OliveTree`s on a 7 × 7 m grid (7 rows of 10 places, x = -31.5 to 31.5,
   y = -21 to 21), with a few missing and young trees; 2.3–3.9 m tall, trunks 1–1.25 m.
-  Only the trunk collides, and the lidar sees only trunks: the grove is open, with few
+  Only the trunk collides, and the lidar sees only the trunks: the tree lines are open, with few
   returns.
-- Flat stone chips all over the grove (2–4 cm, the robot drives over them); small stones and
-  five bigger blocks in the tree lines (the lidar sees the blocks).
+- Obstacles the lidar sees: 10 piles of pruned branches (1.6–2.6 m long, 0.45–0.75 m tall)
+  and 2 stone heaps in the lanes, 2 stone heaps in the headlands, and 12 rock blocks (15–23 cm
+  tall, half in the lanes, half between trees in the tree lines). They stay at least 2.5 m
+  from the case 4 and case 5 waypoints, so Nav2 has to drive around the ones in the lanes.
+- Things the robot drives over: fallen branches in the lanes (4–7 cm) and flat stone chips
+  all over the grove (2–4 cm); small stones only in the tree lines.
 - Around it: a vineyard to the north (4 rows with posts, y = 28.5 to 36), a dirt road to the
   south (y = -30.5 to -27) and an irrigation tank with a pump house to the east (x = 45).
 - The robot starts at world `(-36, -3.5)` facing +x, in the west headland. So in `odom`/`map`
@@ -239,15 +245,24 @@ Internacional plateau (x east along the rows, y north and uphill, world frame):
 The world is generated. To change it, edit the parameters in
 [generate_olive_grove.py](agrobot_webots/scripts/generate_olive_grove.py) and run
 `python3 agrobot_webots/scripts/generate_olive_grove.py` (`--seed N` for another layout,
-`--slope 0.05` for a steeper hill, `--slope 0` for flat ground), then rebuild
-`agrobot_webots`.
+`--slope 0.03` for a gentler hill, `--slope 0` for flat ground, `--noise 0.5` or `--noise 0`
+for less or no unevenness), then rebuild `agrobot_webots`.
 
-**Results in the cloud** (Webots R2025a headless, `ekf:=true vslam:=true`): both cases reached
-every waypoint, with no "collision ahead" stops and no recovery spins (case 4: 15/15 in
-449 s; case 5: 12/12 in 350 s). The robot slides downhill on the side slope, which the
-wheels and the IMU can't see, so the pose error grows to 0.6 m (case 4) and 1.4 m (case 5).
-RTAB-Map didn't correct it: on the way back the robot sees the trees from other angles and
-closes no loop. Use `--slope 0` for a flat grove.
+The bumps are wide and shallow on purpose. The lidar is a single plane about 13 cm above the
+ground, and Nav2 marks obstacles up to 5 m away. In tests, bumps a few meters wide and more
+than 2–3 cm high tilted the robot enough for that plane to hit the ground ahead, and Nav2
+saw obstacles that weren't there (over 20 times more ground hits than on flat ground). With the
+current values the hits are about the same as with `--noise 0`.
+
+**Results in the cloud** (Webots R2025a headless, `ekf:=true vslam:=true slip_check:=false`,
+4–5% slope, uneven ground and the obstacles above): both cases reached every waypoint, with
+no "collision ahead" stops, no recovery spins and no phantom obstacles from the ground
+(case 4: 15/15 in 450 s; case 5: 12/12 in 349 s). The robot slides downhill when it turns or
+drives over a branch on the side slope, and the wheels and the IMU can't see that, so the
+pose error grows to 1.6 m (case 4, all of it on the way back, where it drove around
+obstacles) and 1.4 m (case 5). With the old 2–3% slope it was 0.6 m and 1.4 m. RTAB-Map
+didn't correct it: on the way back the robot sees the trees from other angles and closes no
+loop. `--slope 0.03` brings back the gentler slope and `--slope 0` gives a flat grove.
 
 **Nav2 in open ground.** Webots returns +inf for lidar rays that hit nothing, and in the
 grove most rays do. The costmaps now clear along those rays too (`inf_is_valid: true` in
