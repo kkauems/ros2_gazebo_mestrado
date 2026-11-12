@@ -53,6 +53,9 @@ Fechar o Webots encerra o launch inteiro.
 | `vslam_db` | `~/.ros/agrobot_vslam/<mundo>.db` | Banco do RTAB-Map. **O mapeamento apaga o banco ao começar** |
 | `rtabmap_viz` | `false` | Abre a janela do `rtabmap_viz` |
 | `data_camera` | `false` | Câmera RGB de aquisição de dados (seção 6) |
+| `data_record` | `false` | Grava as fotos da câmera de aquisição com a pose de cada uma (seção 6). Exige `data_camera:=true` |
+| `data_dir` | `~/.ros/agrobot_fotos` | Pasta das fotos gravadas |
+| `data_min_distance` | `0.3` | Distância mínima (m) entre duas fotos gravadas |
 | `waypoints` | vazio | Missão de waypoints: nome de uma lista em `config/waypoints/`, caminho de um `.yaml`, ou `rviz` para clicar os pontos |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 8) |
 
@@ -70,9 +73,9 @@ ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
     waypoints:=caso3_plantacao_serpentina
 
-# Com a câmera de aquisição ligada
+# Com a câmera de aquisição ligada, gravando as fotos
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
-    data_camera:=true
+    data_camera:=true data_record:=true
 ```
 
 - **Objetivo avulso:** no RViz, ferramenta **Nav2 Goal**. Sem SLAM/VSLAM as coordenadas
@@ -226,9 +229,31 @@ Desligada por padrão, para não pesar nas rodadas de navegação.
   ros2 service call /data_camera/enable std_srvs/srv/SetBool "{data: true}"
   ```
 - No RViz, o painel "Data Camera" vem desmarcado.
-- Ainda não há nó que grave as fotos (etapa 4 do plano em
-  `planejamento/camera_rgb_aquisicao.md`, nos arquivos do projeto), e a câmera ainda não foi
-  rodada no Webots.
+
+**Gravação das fotos (`data_record:=true`, nó `data_recorder`).** Uma pasta por execução,
+`~/.ros/agrobot_fotos/<mundo>_<modo>_<data>/` (o modo é o mesmo rótulo dos CSVs das missões,
+como `ekf+vslam`), com:
+- `000001.png`, `000002.png`, ...: as fotos em RGB, sem perdas (~2 a 3 MB cada);
+- `fotos.csv`: uma linha por foto, com o tempo de simulação, a pose **estimada** da câmera
+  (`est_*`, pelo TF `map → data_camera_optical_frame` no carimbo da foto; `odom` sem
+  SLAM/VSLAM), a pose **verdadeira** (`real_*`, do `/ground_truth/odom` do mesmo carimbo,
+  trazida para o frame da partida como no `waypoint_mission`) e o erro entre as duas
+  (`erro_xy_m`, `erro_z_m`, `erro_yaw_rad`). Cada pose tem x, y, z do centro óptico,
+  roll/pitch/yaw do `data_camera_link` (yaw ≈ yaw do robô + 90°) e o quaternion do frame
+  óptico, para projetar pontos na imagem;
+- `camera_info.yaml`: intrínsecos, no formato do `camera_calibration_parsers`.
+
+Regras do gravador:
+- Só grava uma foto se a câmera andou pelo menos `data_min_distance` (0,3 m) desde a última,
+  então o robô parado (nas paradas dos waypoints, por exemplo) não enche o disco.
+- Espera até 1 s de simulação pelo TF do carimbo da foto. Se não chegar, grava a foto com as
+  colunas `est_*` vazias e avisa no log.
+- A pose verdadeira é relativa à primeira mensagem do `/ground_truth/odom` que o nó recebe; por
+  isso ele tem que subir junto com a simulação (o launch faz isso).
+- Ainda não está ligado às missões de waypoints: grava enquanto a câmera estiver ligada e o
+  robô andando. Para gravar só um trecho, use o serviço `/data_camera/enable`.
+
+A câmera e o gravador ainda não foram rodados no Webots (só conferidos fora do simulador).
 
 ## 7. Missões de waypoints e casos de estudo
 

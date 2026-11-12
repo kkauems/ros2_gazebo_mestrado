@@ -369,6 +369,20 @@ def generate_launch_description():
 
     navigation = OpaqueFunction(function=start_navigation)
 
+    def run_label(context):
+        # Rótulo do modo nos nomes dos arquivos (CSVs das missões e pasta
+        # das fotos): ekf, ekf+slam, ekf+vslam, ekf+vslam-loc, ...
+        modes = [m for m in ('ekf', 'slam', 'vslam') if flag(context, m)]
+        if slip_check_on(context):
+            # EKF com a checagem de patinagem pela odometria visual.
+            modes[modes.index('ekf')] = 'ekf-vo'
+        if 'vslam' in modes and flag(context, 'vslam_localization'):
+            # Localização num mapa salvo: outro rótulo nos CSVs, para não
+            # misturar com as rodadas de mapeamento. Hífen, e não '_', porque
+            # o summarize_missions.py separa caso, modo e data por '_'.
+            modes[modes.index('vslam')] = 'vslam-loc'
+        return '+'.join(modes) or 'odom'
+
     def start_mission(context):
         # waypoints:=caso2_plantacao_ida_volta (config/waypoints/) ou um
         # caminho para um .yaml; waypoints:=rviz para clicar os waypoints no
@@ -385,15 +399,6 @@ def generate_launch_description():
             if not os.path.isfile(path):
                 raise RuntimeError(
                     f'Arquivo de waypoints não encontrado: {path}')
-        modes = [m for m in ('ekf', 'slam', 'vslam') if flag(context, m)]
-        if slip_check_on(context):
-            # EKF com a checagem de patinagem pela odometria visual.
-            modes[modes.index('ekf')] = 'ekf-vo'
-        if 'vslam' in modes and flag(context, 'vslam_localization'):
-            # Localização num mapa salvo: outro rótulo nos CSVs, para não
-            # misturar com as rodadas de mapeamento. Hífen, e não '_', porque
-            # o summarize_missions.py separa caso, modo e data por '_'.
-            modes[modes.index('vslam')] = 'vslam-loc'
         return [Node(
             package='agrobot_webots',
             executable='waypoint_mission',
@@ -401,13 +406,47 @@ def generate_launch_description():
             parameters=[{
                 'waypoints_file': path,
                 'frame': global_frame(context),
-                'run_label': '+'.join(modes) or 'odom',
+                'run_label': run_label(context),
                 'world': LaunchConfiguration('world_name').perform(context),
                 'use_sim_time': True,
             }],
         )]
 
     mission = OpaqueFunction(function=start_mission)
+
+    def start_recorder(context):
+        # Grava as fotos da câmera de aquisição com a pose estimada e a
+        # verdadeira de cada uma (data_recorder.py).
+        if not flag(context, 'data_record'):
+            return []
+        parameters = {
+            'frame': global_frame(context),
+            'run_label': run_label(context),
+            'world': LaunchConfiguration('world_name').perform(context),
+            'min_distance': float(
+                LaunchConfiguration('data_min_distance').perform(context)),
+            'use_sim_time': True,
+        }
+        output_dir = LaunchConfiguration('data_dir').perform(context)
+        if output_dir:
+            parameters['output_dir'] = output_dir
+        return [Node(
+            package='agrobot_webots',
+            executable='data_recorder',
+            output='screen',
+            parameters=[parameters],
+        )]
+
+    recorder = OpaqueFunction(function=start_recorder)
+
+    def check_recorder(context):
+        # Antes do Webots, como o start_vslam: sem a câmera não há o que
+        # gravar.
+        if flag(context, 'data_record') and not flag(context, 'data_camera'):
+            raise RuntimeError(
+                'data_record:=true precisa da câmera de aquisição '
+                '(data_camera:=true).')
+        return []
 
     def start_rviz(context):
         # Com slam ou vslam, o RViz usa o frame map; com slam, mostra o /map
@@ -450,6 +489,11 @@ def generate_launch_description():
         # Câmera RGB de aquisição de dados (/data_camera/...), desligada por
         # padrão para não pesar nas rodadas que não coletam imagens.
         DeclareLaunchArgument('data_camera', default_value='false'),
+        # Gravação das fotos (data_recorder): pasta (padrão
+        # ~/.ros/agrobot_fotos) e distância mínima entre fotos (m).
+        DeclareLaunchArgument('data_record', default_value='false'),
+        DeclareLaunchArgument('data_dir', default_value=''),
+        DeclareLaunchArgument('data_min_distance', default_value='0.3'),
         DeclareLaunchArgument('vslam', default_value='false'),
         DeclareLaunchArgument('vslam_localization', default_value='false'),
         DeclareLaunchArgument('vslam_db', default_value=''),
@@ -460,6 +504,7 @@ def generate_launch_description():
         # Antes do Webots: se faltar o ekf, a câmera ou o mapa salvo, o launch
         # para com o erro sem abrir o Webots.
         vslam,
+        OpaqueFunction(function=check_recorder),
         webots,
         agrobot_driver,
         robot_state_publisher,
@@ -468,6 +513,7 @@ def generate_launch_description():
         slam,
         navigation,
         mission,
+        recorder,
         rviz,
         shutdown_on_webots_exit,
     ])
