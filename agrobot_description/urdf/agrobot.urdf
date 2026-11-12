@@ -21,6 +21,13 @@
         <enabled>false</enabled>
       </ros>
     </device>
+    <!-- Câmera RGB de aquisição de dados: imagem e camera_info também saem
+         do AgrobotDriver, com o carimbo do passo -->
+    <device reference="data_camera" type="Camera">
+      <ros>
+        <enabled>false</enabled>
+      </ros>
+    </device>
     <plugin type="agrobot_webots.agrobot_driver.AgrobotDriver">
       <wheelRadius>0.22</wheelRadius>
       <wheelSeparation>0.96</wheelSeparation>
@@ -31,6 +38,10 @@
       <!-- Período da câmera do VSLAM em ms (múltiplo do passo de 32 ms);
            o simulation.launch.py troca para 0 (desligada) com camera:=false -->
       <vslamCameraPeriod>96</vslamCameraPeriod>
+      <!-- Período da câmera de aquisição em ms (múltiplo do passo de 32 ms);
+           o simulation.launch.py só a deixa ligada com data_camera:=true
+           (sem isso troca para 0, desligada) -->
+      <dataCameraPeriod>1024</dataCameraPeriod>
     </plugin>
   </webots>
 
@@ -403,6 +414,35 @@
   <joint name="vslam_camera_optical_joint" type="fixed">
     <parent link="vslam_camera_link"/>
     <child link="vslam_camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <!-- SENSOR: CÂMERA RGB DE AQUISIÇÃO DE DADOS (Webots). Mesma pose da
+       DataCamera no agrobot.proto: sobre o centro do robô, 0,66 m acima do
+       base_link (~0,90 m do chão), olhando para a esquerda (+y). -->
+  <link name="data_camera_link">
+    <visual>
+      <origin xyz="-0.02 0 0"/>
+      <geometry>
+        <box size="0.04 0.05 0.05"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+  </link>
+
+  <joint name="data_camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="data_camera_link"/>
+    <origin xyz="0 0 0.66" rpy="0 0 1.5708"/>
+  </joint>
+
+  <!-- Frame óptico (REP 103): z para a frente da câmera, x para a direita,
+       y para baixo. É o frame_id das imagens. -->
+  <link name="data_camera_optical_frame"/>
+
+  <joint name="data_camera_optical_joint" type="fixed">
+    <parent link="data_camera_link"/>
+    <child link="data_camera_optical_frame"/>
     <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
   </joint>
 

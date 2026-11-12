@@ -71,6 +71,13 @@ with their node clock, which lags the `/clock` of the current step, and VSLAM pa
 depth and odometry by stamp. The URDF disables both, as it does for the lidar. See
 [the change log](#2026-10-20--câmera-rgb-d-do-vslam-etapas-1-e-2).
 
+**g) The RGB data acquisition camera (2026-11-12).** With `dataCameraPeriod` above 0 the
+plugin enables the `data_camera` device and publishes `/data_camera/image_raw` (`bgra8`)
+and `/data_camera/camera_info` every 1024 ms, stamped with the step the image was rendered
+in, and offers `/data_camera/enable` (`std_srvs/SetBool`) to switch it off and on while
+running. *Why the plugin:* same reason as (f); each photo is georeferenced with the TF at
+its stamp. See [the change log](#2026-11-12--câmera-rgb-de-aquisição-de-dados-etapas-1-e-2).
+
 **Timestamps:** everything is stamped with `robot.getTime()` (Webots sim time), so the
 plugin doesn't depend on its private node receiving `/clock`.
 
@@ -107,9 +114,15 @@ Gazebo. The Webots device sits on the robot's root body.
 [VslamCamera.proto](../agrobot_webots/protos/VslamCamera.proto); `vslam_camera_link` and
 `vslam_camera_optical_frame` in the URDF) at (0.45, 0, 0.38) from `base_link`, pitched 15°
 down: 424 × 240, 87° horizontal FOV, depth 0.5–6 m, like an Intel RealSense D455. It is only
-for VSLAM; the data acquisition camera will be a separate RGB camera.
+for VSLAM; the data acquisition camera is the one below.
 *Why a new link instead of using `camera_link`:* same reason as the lidar, Gazebo uses the
 same URDF.
+
+**RGB data acquisition camera (2026-11-12)** (`DataCamera` in the PROTO, from
+[DataCamera.proto](../agrobot_webots/protos/DataCamera.proto); `data_camera_link` and
+`data_camera_optical_frame` in the URDF) on a mast at (0, 0, 0.66) from `base_link`
+(~0.90 m above the ground), looking left (+y): 1280 × 960, 90° horizontal FOV. It
+photographs the plant row beside the robot and is not used for localization.
 
 ### 3. World — [obstacle_arena.wbt](../agrobot_webots/worlds/obstacle_arena.wbt)
 
@@ -139,6 +152,9 @@ New nodes alongside Webots and the driver:
 - **`camera`** (default `true`, 2026-10-20): with `camera:=false` the launch gives the driver
   a URDF with `vslamCameraPeriod` 0, so the VSLAM camera is not enabled and Webots doesn't
   render it.
+- **`data_camera`** (default `false`, 2026-11-12): only with `data_camera:=true` the driver
+  gets `dataCameraPeriod` 1024; otherwise the launch sets it to 0 and the acquisition camera
+  is neither enabled nor rendered.
 - **`vslam`** (default `false`, 2026-10-21): starts RTAB-Map (`rgbd_sync` and `rtabmap`, in
   the `rtabmap` namespace, with [config/rtabmap.yaml](../agrobot_webots/config/rtabmap.yaml)),
   which then owns TF `map → odom`. It needs `ekf:=true` and `camera:=true`, and the launch
@@ -2003,6 +2019,94 @@ tabela de comparação para a dissertação: waypoints atingidos, ATE médio e m
 pose verdadeira, e falhas. O SLAM por LiDAR entra só como comparação e não foi mexido. O
 VSLAM roda com o fechamento de laço só por proximidade do PR #13 (já na main). O problema do
 Nav2 na cabeceira leste ficou fora do escopo; está registrado abaixo onde aconteceu.
+### 2026-11-09 — Peças soltas no modelo do robô do Webots (rodas, sensores)
+
+**Pedido.** Kauê viu partes do robô flutuando e desconectadas no Webots e pediu uma análise
+de quais e como corrigir. Só o Webots foi mexido (`agrobot_webots`); o URDF e a malha do
+`agrobot_description` (usados pelo Gazebo e pelo TF/RViz) ficaram como estavam.
+
+**Análise** (medida na malha `chassis.stl` com o Transform do `agrobot.proto`)
+- **Rodas longe dos motores.** No CAD, os motores e os eixos das rodas estão em
+  x = ±0,2225 m e z = +0,0125 m; as rodas (juntas do URDF/proto) estão em x = ±0,35 m e
+  z = -0,02 m. Cada roda ficava 12,75 cm à frente/atrás do seu motor e 3,25 cm abaixo do eixo.
+  Os eixos do CAD também têm comprimentos diferentes (alguns não chegam à roda). Não dá para
+  pôr as rodas no lugar do CAD: com raio 0,22 m e entre-eixos de 0,445 m, as rodas da frente e
+  de trás se encostariam (e mudaria a cinemática e os resultados).
+- **Chassi 2,5 cm deslocado para +y.** O quadro do CAD vai de y = -0,265 a 0,315 m (centro em
+  +0,025 m), enquanto as rodas são simétricas (y = ±0,48 m).
+- **Sensores no ar.** O quadro é só um contorno de tubos (topo em z = 0,215 m, sem tampo):
+  a IMU (z = 0,35 m) ficava 12 cm acima do quadro, sem nada embaixo; a câmera RGB-D
+  (0,45; 0; 0,38) ficava 16,5 cm acima do tubo frontal; o LiDAR frontal (0,65; 0; -0,10)
+  ficava 21 cm à frente do quadro e abaixo dele.
+- **Não corrigido (só registro):** o `boundingObject` do corpo (caixa 1,2 × 0,8 × 0,35 m) é
+  maior que o quadro visível (0,88 × 0,58 m), ou seja, o robô bate em obstáculos antes de
+  "encostar" visualmente. Mudar isso muda a física e os resultados das missões, então ficou
+  como está. O RL (traseira esquerda) do CAD não tem o acoplamento que os outros três motores
+  têm. O RViz continua mostrando a malha original (do `agrobot_description`).
+
+**O que mudou**
+- `agrobot_webots/scripts/fix_chassis_mesh.py` (novo): lê o CAD original
+  (`agrobot_description/meshes/chassis.stl`, que não muda) e grava
+  `agrobot_webots/meshes/chassis.stl` com os 4 motores (e acoplamentos) movidos para o eixo das
+  rodas (x = ±0,35 m, z = -0,02 m), ainda presos por baixo das longarinas, e sem os eixos do
+  CAD. Rodar de novo dá o mesmo arquivo.
+- `agrobot_webots/meshes/chassis.stl`: gerado pelo script acima.
+- `agrobot_webots/protos/agrobot.proto`:
+  - Transform do chassi com y = -0,275 (era -0,25): quadro centralizado em y = 0.
+  - Suportes só visuais (Shapes no corpo, sem `boundingObject` nem massa, então a física, a
+    odometria, o TF e os dados dos sensores não mudam):
+    - 4 eixos (Cylinder r = 1 cm) do centro do motor (|y| = 0,165 m) até dentro do cubo da roda
+      (|y| = 0,42 m);
+    - travessa no topo do quadro em x = 0 e haste até a IMU;
+    - haste do tubo frontal (x = 0,4175 m) até o corpo da câmera, atrás do centro óptico
+      (fora da imagem);
+    - braço sob o tubo frontal até x = 0,67 m e haste até o topo do LiDAR (z = -0,08 m), acima
+      do plano do scan (z = -0,10 m) e abaixo do campo de visão da câmera (o raio mais baixo da
+      câmera desce 43° e o braço fica a mais de 55° abaixo dela).
+- `claude/img/webots_chassi_antes_depois.png` (novo): vistas lateral e frontal antes e depois
+  (malha + rodas + sensores + suportes, em laranja).
+
+**Como verificar**
+```bash
+python3 agrobot_webots/scripts/fix_chassis_mesh.py   # regenera a malha (deve ficar igual)
+ros2 launch agrobot_webots simulation.launch.py world:=obstacle_arena.wbt
+```
+No Webots, as rodas devem aparecer presas aos eixos dos motores e os três sensores presos ao
+quadro. **Não testado:** o Webots não roda nesta máquina; a verificação foi pela geometria
+(figura acima, gerada com as mesmas poses do proto). Nada da física mudou, então os resultados
+das missões não são afetados.
+
+### 2026-11-09 — Garras das rodas do Webots alinhadas ao pneu
+
+**Pedido.** Kauê achou as garras (retângulos de roda off-road) das rodas tortas e perguntou
+se era melhor tirar ou ajustar. Ajustei (só no `agrobot_webots/protos/agrobot.proto`; o URDF do
+Gazebo não mudou).
+
+**Causa.** As 12 garras de cada roda estavam nas posições certas em volta do pneu, mas giradas
+em torno do eixo z (vertical) e não do eixo da roda (y), e com ângulos que não batiam com a
+posição (23° a mais em cada uma). Por isso cada garra saía torta, atravessando o pneu de lado.
+Além disso, eram mais largas que o pneu (0,18 m contra 0,14 m) e saíam 3,25 cm para fora do
+raio de 0,22 m da colisão, ou seja, entravam no chão visualmente.
+
+**O que mudou** (nas 4 rodas)
+- 16 garras radiais (Box 0,05 × 0,14 × 0,025 m, `DEF lug`/`USE lug`), giradas em torno do
+  eixo da roda (`rotation 0 1 0 (π/2 − θ)`), com centro em r = 0,2075 m: vão do pneu
+  (0,195 m) até 0,22 m, o raio da colisão e o `wheelRadius` do driver. O robô apoia
+  visualmente na ponta das garras, sem entrar no chão.
+- Pneu visual com raio 0,195 m (era 0,22). O `boundingObject` (cilindro de 0,22 m), a massa e
+  a inércia não mudaram, então a física e a odometria são as mesmas.
+- `claude/img/webots_garras_roda_antes_depois.png` (novo): uma roda antes e depois.
+
+**Não testado** no Webots (não roda nesta máquina); conferido pela geometria na figura.
+
+### 2026-11-12 — Câmera RGB de aquisição de dados (etapas 1 e 2)
+
+**Pedido.** Kauê pediu para começar a pôr no robô os sensores de aquisição de dados para
+monitorização, começando por uma câmera RGB, e, com o plano em mãos
+(`planejamento/camera_rgb_aquisicao.md`, nos arquivos do projeto), decidiu por **uma câmera
+só**: o robô monitora um lado em cada passada. Esta mudança faz as etapas 1 (câmera no robô e
+frames) e 2 (publicação pelo driver) do plano. Ainda nada grava as fotos; o nó de gravação é
+a etapa 4.
 
 **Para usar**
 ```bash
@@ -2150,3 +2254,87 @@ causa pelo log do Nav2 e pela trajetória verdadeira contra a estimada)
 **Não testado:** Windows/WSL, RViz, sensores com ruído, mais de 3 rodadas por caso e modo, a
 localização do VSLAM com o robô começando fora do primeiro nó. Os fechamentos de laço de
 cada rodada do VSLAM não foram contados (os bancos não foram analisados desta vez).
+colcon build --symlink-install --packages-select agrobot_description agrobot_webots
+source install/setup.bash
+# câmera de aquisição ligada (por padrão fica desligada):
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true data_camera:=true
+# em outro terminal: desligar e religar com a simulação rodando
+ros2 service call /data_camera/enable std_srvs/srv/SetBool "{data: false}"
+ros2 service call /data_camera/enable std_srvs/srv/SetBool "{data: true}"
+```
+No RViz, marque o painel "Data Camera" (vem desmarcado, porque cada imagem tem 4,9 MB). O
+`agrobot_description` entra no build porque o URDF mudou.
+
+**O que mudou**
+- `agrobot_webots/protos/DataCamera.proto` (novo): uma `Camera` de cor (`data_camera`),
+  1280 × 960, FOV horizontal de 90° (vertical de 73,7°), sem ruído, com um corpo de
+  4 × 5 × 5 cm atrás do centro óptico.
+- `agrobot_webots/protos/agrobot.proto`: a `DataCamera` em (0; 0; 0,66) do `base_link`
+  (~0,90 m do chão), girada 90° para olhar para a esquerda (+y), sem inclinação, e um mastro
+  só visual (sem massa nem colisão) da travessa do topo do quadro até o corpo da câmera.
+- `agrobot_description/urdf/agrobot.urdf`: `data_camera_link` (mesma pose do PROTO) e
+  `data_camera_optical_frame` (z saindo da lente, x para a direita, y para baixo); o device
+  desligado no `webots_ros2_driver` (`<ros><enabled>false</enabled>`, como os da RGB-D); a
+  propriedade `dataCameraPeriod` (1024 ms) do plugin.
+- `agrobot_webots/agrobot_webots/agrobot_driver.py`: com `dataCameraPeriod` maior que 0,
+  liga a câmera e publica `/data_camera/image_raw` (`bgra8`) e `/data_camera/camera_info`
+  (fx = fy = 640 px, cx = 639,5, cy = 479,5, sem distorção) a cada 1024 ms, com o carimbo do
+  passo em que a imagem foi feita e QoS confiável. O serviço `/data_camera/enable`
+  (`std_srvs/SetBool`) desliga e religa a câmera com a simulação rodando; desligada, o
+  Webots não a renderiza. A cada 60 s de simulação, loga quantos ms cada quadro custa. Sem a
+  propriedade, ou com 0, nada disso existe. `make_camera_info` passou a receber o frame.
+- `agrobot_webots/launch/simulation.launch.py`: argumento `data_camera` (padrão `false`).
+  Sem `data_camera:=true`, o driver recebe um URDF com `dataCameraPeriod` 0.
+- `agrobot_webots/rviz/nav.rviz`, `nav_slam.rviz`, `nav_vslam.rviz` e `goal.rviz`: painel de
+  imagem "Data Camera", desmarcado.
+- `README.md` e este manual (seções 1g, 2 e 4): tópicos, argumento, propriedade e sensor novos.
+
+**Por quê**
+- *Câmera separada da RGB-D:* a RGB-D olha para a frente em 424 × 240 e serve à localização;
+  mexer nela mudaria os resultados já medidos. A de aquisição olha de lado, de perto, em alta
+  resolução e baixa taxa, e não entra no RTAB-Map nem no EKF.
+- *Para a esquerda, no centro do robô (x = 0, y = 0):* com o robô no centro da entrelinha, a
+  linha dos colmos fica a 0,9 m e a imagem cobre 1,80 m ao longo da fileira e 1,35 m de
+  altura (de ~0,23 a ~1,58 m do chão; as plantas têm de 0,9 a 1,6 m), ~1,4 mm por pixel.
+  Sobre o centro de giro, um erro de yaw da localização desloca menos a pose da câmera. O
+  plano falava em x = 0,30 m; ali não há estrutura do quadro embaixo, e em x = 0 o mastro
+  apoia na travessa que já existe.
+- *0,90 m do chão:* a borda de baixo da imagem desce 0,75 m a cada 1 m de distância. Na face
+  de fora do pneu (y = 0,55 m) ela passa a 0,2475 m do `base_link`, e o topo da roda fica a
+  0,20 m: ~5 cm de folga. A 0,85 m a roda já tocaria o canto da imagem.
+- *4:3 (1280 × 960), e não 16:9:* em 1280 × 720 a altura coberta a 0,9 m cai para 1,01 m e
+  corta a base ou o topo das plantas.
+- *1024 ms:* a 0,4 m/s (velocidade do Nav2) é uma foto a cada 0,41 m, 77% de sobreposição na
+  linha dos colmos e cada colmo em ~4 fotos. São 4,8 MB por segundo de simulação, contra
+  8,5 MB/s da RGB-D.
+- *Desligada por padrão:* as rodadas de navegação e de comparação não ficam mais lentas nem
+  mudam. Com `data_camera:=false` o device nem é tocado.
+- *Publicar no nosso driver:* como na RGB-D, o carimbo tem que ser o do passo em que a imagem
+  foi feita, para casar com o TF `map → data_camera_optical_frame` na georreferência das
+  fotos. O agendamento usa o mesmo contador inteiro de ms da RGB-D (a primeira imagem sai
+  dois períodos depois de ligar, 2,048 s).
+
+**Como foi conferido** (sem o Webots: nesta sessão da nuvem não foi possível executar o
+Webots nem o ROS 2)
+- *Geometria:* um script projetou na câmera de aquisição pontos de todas as peças do robô
+  (malha do chassi, as 4 rodas com garras, calotas e eixos, travessa, hastes, RGB-D, LiDAR,
+  mastro e o corpo da própria câmera). Nenhum cai dentro da imagem; o mais próximo são as
+  rodas esquerdas, 12% para fora da borda de baixo. O mastro e a câmera ficam atrás do plano
+  da imagem da RGB-D (0,38 a 0,48 m atrás), então não aparecem no VSLAM.
+- *Lógica do driver:* o código do `AgrobotDriver` rodou com um Webots e um ROS simulados em
+  Python (devices e publicadores de mentira). Com período de 1024 ms, as imagens saem em
+  2048, 3072, ... ms, uma por período, com `camera_info` de mesmo carimbo, e a imagem
+  publicada é a do carimbo; o serviço desliga (nada mais é publicado), responde sem erro a
+  um pedido repetido e religa (primeira imagem 2048 ms depois); com período 0 ou sem a
+  propriedade nada é criado; sem o device no robô sai um aviso; período que não é múltiplo de
+  32 ms dá erro.
+- *Launch:* o `driver_urdf()` foi rodado nas 8 combinações de `ekf`, `camera` e
+  `data_camera`, e com um URDF de período 512.
+- URDF e os 4 arquivos do RViz abrem como XML e YAML válidos; `flake8` sem avisos nos dois
+  arquivos Python alterados.
+
+**Não testado:** tudo o que depende do Webots e do ROS de verdade. Em especial: o Webots
+carregar o `DataCamera.proto` sem erro, a imagem renderizada (enquadramento das plantas,
+nenhuma peça do robô na imagem), o `webots_ros2_driver`, a taxa e o custo reais por quadro,
+o RViz e o Windows/WSL. O primeiro teste no PC do Kauê é também a etapa 3 do plano (medir a
+velocidade da simulação com a câmera ligada e desligada).

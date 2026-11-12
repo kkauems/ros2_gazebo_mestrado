@@ -10,6 +10,7 @@ from nav_msgs.msg import Odometry
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import CameraInfo, Image, Imu, JointState, LaserScan
+from std_srvs.srv import SetBool
 from tf2_ros import TransformBroadcaster
 
 # Variâncias da /imu/data. O IMU do Webots não tem ruído; estes valores só
@@ -38,6 +39,15 @@ VSLAM_DEPTH_TOPIC = '/vslam_camera/aligned_depth_to_color/image_raw'
 VSLAM_DEPTH_INFO_TOPIC = '/vslam_camera/aligned_depth_to_color/camera_info'
 # Média do custo de publicação no log a cada tantos segundos de simulação.
 VSLAM_LOG_PERIOD = 60.0
+
+# Câmera RGB de aquisição de dados (DataCamera.proto): só cor, resolução alta
+# e taxa baixa. Não entra na localização.
+DATA_CAMERA_DEVICE = 'data_camera'
+DATA_CAMERA_FRAME = 'data_camera_optical_frame'
+DATA_CAMERA_IMAGE_TOPIC = '/data_camera/image_raw'
+DATA_CAMERA_INFO_TOPIC = '/data_camera/camera_info'
+DATA_CAMERA_ENABLE_SERVICE = '/data_camera/enable'
+DATA_CAMERA_LOG_PERIOD = 60.0
 
 
 def quaternion_from_matrix(m):
@@ -124,6 +134,7 @@ class AgrobotDriver:
         self.robot_node = (self.robot.getSelf()
                            if hasattr(self.robot, 'getSelf') else None)
         self.init_vslam_camera(properties)
+        self.init_data_camera(properties)
 
         self.x = 0.0
         self.y = 0.0
@@ -183,6 +194,24 @@ class AgrobotDriver:
             self.node.get_logger().warn(
                 f'{VSLAM_COLOR_DEVICE} ou {VSLAM_DEPTH_DEVICE} não existe no '
                 'robô; a câmera do VSLAM fica desligada.')
+        if self.data_period_ms > 0:
+            self.data_image_publisher = self.node.create_publisher(
+                Image, DATA_CAMERA_IMAGE_TOPIC,
+                QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE))
+            self.data_info_publisher = self.node.create_publisher(
+                CameraInfo, DATA_CAMERA_INFO_TOPIC,
+                QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE))
+            # Liga e desliga em execução: desligada, o Webots não a renderiza.
+            self.node.create_service(
+                SetBool, DATA_CAMERA_ENABLE_SERVICE,
+                self.data_camera_enable_callback)
+            self.node.get_logger().info(
+                f'Câmera de aquisição: {self.data_width} x {self.data_height} '
+                f'a cada {self.data_period_ms} ms.')
+        elif self.data_missing:
+            self.node.get_logger().warn(
+                f'{DATA_CAMERA_DEVICE} não existe no robô; a câmera de '
+                'aquisição fica desligada.')
         self.node.get_logger().info('Controlador Webots do agrobot iniciado.')
 
     def init_vslam_camera(self, properties):
@@ -215,7 +244,8 @@ class AgrobotDriver:
         self.vslam_period_ms = period
         self.vslam_width = width
         self.vslam_height = height
-        self.vslam_camera_info = self.make_camera_info(width, height, fov)
+        self.vslam_camera_info = self.make_camera_info(
+            width, height, fov, VSLAM_FRAME)
         self.vslam_color.enable(period)
         self.vslam_depth.enable(period)
         # Os dois sensores atualizam a cada período contado de agora. Publicar
@@ -226,8 +256,65 @@ class AgrobotDriver:
         self.vslam_cost = 0.0
         self.vslam_next_log = VSLAM_LOG_PERIOD
 
+    def init_data_camera(self, properties):
+        # Publicada aqui, e não pelo Ros2Camera do webots_ros2_driver, pelo
+        # mesmo motivo da câmera do VSLAM: o carimbo tem que ser o do passo
+        # em que a imagem foi feita, para casar com o TF na georreferência.
+        # Sem a propriedade (ou com 0) a câmera fica desligada.
+        period = int(properties.get('dataCameraPeriod', 0))
+        self.data_period_ms = 0
+        self.data_missing = False
+        self.data_enabled = False
+        if period <= 0:
+            return
+        self.data_camera = self.robot.getDevice(DATA_CAMERA_DEVICE)
+        if self.data_camera is None:
+            self.data_missing = True
+            return
+        if period % self.time_step != 0:
+            raise ValueError(
+                f'dataCameraPeriod ({period} ms) tem que ser múltiplo do '
+                f'passo da simulação ({self.time_step} ms).')
+        self.data_period_ms = period
+        self.data_width = self.data_camera.getWidth()
+        self.data_height = self.data_camera.getHeight()
+        self.data_camera_info = self.make_camera_info(
+            self.data_width, self.data_height, self.data_camera.getFov(),
+            DATA_CAMERA_FRAME)
+        self.data_frames = 0
+        self.data_cost = 0.0
+        self.data_next_log = DATA_CAMERA_LOG_PERIOD
+        self.enable_data_camera()
+
+    def enable_data_camera(self):
+        self.data_camera.enable(self.data_period_ms)
+        # Como na câmera do VSLAM: a imagem atualiza a cada período contado
+        # de agora, e o tempo inteiro em ms mantém a publicação em fase.
+        self.data_enable_ms = round(self.robot.getTime() * 1000.0)
+        self.data_enabled = True
+
+    def data_camera_enable_callback(self, request, response):
+        if request.data == self.data_enabled:
+            response.success = True
+            response.message = (
+                'A câmera de aquisição já estava '
+                + ('ligada.' if request.data else 'desligada.'))
+            return response
+        if request.data:
+            self.enable_data_camera()
+            response.message = (
+                f'Câmera de aquisição ligada; a primeira imagem sai em '
+                f'{2 * self.data_period_ms} ms de simulação.')
+        else:
+            self.data_camera.disable()
+            self.data_enabled = False
+            response.message = 'Câmera de aquisição desligada.'
+        response.success = True
+        self.node.get_logger().info(response.message)
+        return response
+
     @staticmethod
-    def make_camera_info(width, height, fov):
+    def make_camera_info(width, height, fov, frame):
         # Câmera pinhole sem distorção. O FOV do Webots é o horizontal e os
         # pixels são quadrados. Centro óptico na convenção do OpenCV (centro
         # do pixel 0 na coordenada 0): (w - 1) / 2.
@@ -235,7 +322,7 @@ class AgrobotDriver:
         cx = (width - 1) / 2.0
         cy = (height - 1) / 2.0
         info = CameraInfo()
-        info.header.frame_id = VSLAM_FRAME
+        info.header.frame_id = frame
         info.width = width
         info.height = height
         info.distortion_model = 'plumb_bob'
@@ -298,6 +385,11 @@ class AgrobotDriver:
             if (elapsed >= 2 * self.vslam_period_ms
                     and elapsed % self.vslam_period_ms == 0):
                 self.publish_vslam_camera(now, stamp)
+        if self.data_enabled:
+            elapsed = round(now * 1000.0) - self.data_enable_ms
+            if (elapsed >= 2 * self.data_period_ms
+                    and elapsed % self.data_period_ms == 0):
+                self.publish_data_camera(now, stamp)
 
     def publish_vslam_camera(self, now, stamp):
         start = time.perf_counter()
@@ -353,6 +445,40 @@ class AgrobotDriver:
                 'por quadro para ler e publicar.')
             self.vslam_frames = 0
             self.vslam_cost = 0.0
+
+    def publish_data_camera(self, now, stamp):
+        start = time.perf_counter()
+        try:
+            image = self.data_camera.getImage()
+        except ValueError:
+            # Ponteiro nulo: o Webots ainda não entregou imagem.
+            return
+        if not image:
+            return
+        message = Image()
+        message.header.stamp = stamp
+        message.header.frame_id = DATA_CAMERA_FRAME
+        message.width = self.data_width
+        message.height = self.data_height
+        message.encoding = 'bgra8'
+        message.step = 4 * self.data_width
+        # array('B') copia os bytes de uma vez; por lista custaria vários ms.
+        message.data = array.array('B', image)
+        info = self.data_camera_info
+        info.header.stamp = stamp
+        self.data_image_publisher.publish(message)
+        self.data_info_publisher.publish(info)
+
+        self.data_frames += 1
+        self.data_cost += time.perf_counter() - start
+        if now >= self.data_next_log:
+            self.data_next_log = now + DATA_CAMERA_LOG_PERIOD
+            self.node.get_logger().info(
+                f'Câmera de aquisição: {self.data_frames} quadros, '
+                f'{1000.0 * self.data_cost / self.data_frames:.1f} ms '
+                'por quadro para ler e publicar.')
+            self.data_frames = 0
+            self.data_cost = 0.0
 
     def publish_ground_truth(self, stamp):
         """Pose e velocidade verdadeiras do base_link no frame do mundo."""

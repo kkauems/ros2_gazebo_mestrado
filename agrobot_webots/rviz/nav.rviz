@@ -37,6 +37,15 @@ Visualization Manager:
         Value: /vslam_camera/color/image_raw
         Reliability Policy: Reliable
       Normalize Range: true
+    # Câmera de aquisição de dados (data_camera:=true). Desligado por
+    # padrão: marcado, o RViz recebe 4,9 MB por imagem.
+    - Class: rviz_default_plugins/Image
+      Name: Data Camera
+      Enabled: false
+      Topic:
+        Value: /data_camera/image_raw
+        Reliability Policy: Reliable
+      Normalize Range: true
     - Class: rviz_default_plugins/Map
       Name: Global Costmap
       Enabled: true
