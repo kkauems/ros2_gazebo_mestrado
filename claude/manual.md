@@ -14,7 +14,8 @@ Não é um histórico de alterações; o histórico está no `git log` e nos PRs
 ```bash
 sudo apt install ros-jazzy-webots-ros2 ros-jazzy-navigation2 ros-jazzy-rviz2 \
                  ros-jazzy-robot-state-publisher ros-jazzy-robot-localization \
-                 ros-jazzy-rtabmap-ros ros-jazzy-slam-toolbox
+                 ros-jazzy-rtabmap-ros ros-jazzy-slam-toolbox \
+                 ros-jazzy-joy ros-jazzy-teleop-twist-joy
 cd ~/projects/ros2_gazebo_mestrado
 source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install --packages-select agrobot_description agrobot_webots
@@ -57,6 +58,7 @@ Fechar o Webots encerra o launch inteiro.
 | `data_dir` | `dados/fotos/` | Pasta das fotos gravadas |
 | `data_min_distance` | `0.3` | Distância mínima (m) entre duas fotos gravadas |
 | `waypoints` | vazio | Missão de waypoints: nome de uma lista em `config/waypoints/`, caminho de um `.yaml`, ou `rviz` para clicar os pontos |
+| `teleop` | vazio | Teleoperação: `joy` (joystick) ou `keyboard` (teclado, num terminal próprio). O operador tem prioridade sobre o Nav2 (seção 5) |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 8) |
 
 ### Usos mais comuns
@@ -72,6 +74,10 @@ ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:
 # Missão de waypoints de um caso de estudo
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
     waypoints:=caso3_plantacao_serpentina
+
+# Mapear conduzindo o robô (no outro terminal: ros2 run agrobot_webots teleop_keyboard)
+ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true vslam:=true \
+    nav:=false teleop:=keyboard
 
 # Com a câmera de aquisição ligada, gravando as fotos
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
@@ -135,6 +141,9 @@ EKF), `/wheel/odom`, `/imu/data`, `/scan`, `/joint_states`, as câmeras e o
   bitola como mais larga faz o giro comandado bater com o real.
 - **Câmeras por contador inteiro de ms:** evita publicar uma imagem de um passo diferente do
   carimbo.
+- **Para sem comando:** se o `/cmd_vel` parar de chegar por 1 s de simulação, o robô para.
+  O Nav2 e a teleoperação publicam continuamente enquanto andam; sem isso, um nó que caísse
+  deixaria o robô seguindo o último comando.
 - As propriedades do plugin (`publishOdom`, `vslamCameraPeriod`, `dataCameraPeriod`) vêm do
   URDF, não de parâmetros ROS. Por isso o launch grava uma cópia do URDF com os valores de
   `ekf`, `camera` e `data_camera`.
@@ -225,6 +234,39 @@ Nav2: planeja em map, controla em odom ─► /cmd_vel ─► driver
   mais de ~12 m são recusados.
 - `default_server_timeout` 1000 ms: com câmera e RTAB-Map a CPU fica cheia e o planner
   demora a aceitar o pedido.
+
+### Teleoperação e mapeamento manual (`teleop:=joy|keyboard`)
+
+O primeiro mapa do campo real vai ser feito com um operador conduzindo o robô (plano em
+`planejamento/primeiro_mapa_campo.md` nos arquivos do projeto); a simulação serve de ensaio.
+
+```
+joystick / teclado ─► /cmd_vel_teleop ─┐
+Nav2 (velocity_smoother) ─► /cmd_vel_nav_out ─┴► cmd_vel_mux ─► /cmd_vel ─► driver
+```
+
+- **`cmd_vel_mux`:** o operador tem prioridade. Enquanto chegam comandos dele, o Nav2 é
+  ignorado; 0,5 s depois que ele para, o Nav2 volta a comandar **sem cancelar a missão**.
+  Assim dá para tomar o controle no meio de uma missão e devolvê-lo. Quem comanda sai em
+  `/cmd_vel_mux/source`. Sem `teleop`, o mux não sobe e o Nav2 manda direto no `/cmd_vel`.
+- **Joystick (`teleop:=joy`):** `game_controller_node` (pacote `joy`, mesmo mapeamento para
+  Xbox, PlayStation e genéricos) + `teleop_twist_joy`, configurados em
+  `config/teleop_joy.yaml`. Segure **LB/L1** para andar (botão de homem-morto: soltou,
+  parou) ou **RB/R1** para o modo rápido; analógico esquerdo para frente/ré e giro. Até
+  0,3 m/s e 0,6 rad/s (rápido: 0,5 m/s e 1,0 rad/s). No WSL, o controle USB precisa ser
+  repassado ao Linux com o `usbipd-win`; sem isso, use o teclado.
+- **Teclado (`teleop:=keyboard`):** o launch não tem terminal, então rode
+  `ros2 run agrobot_webots teleop_keyboard` num outro. Funciona como piloto automático: cada
+  tecla muda a velocidade e o robô a mantém, sem precisar segurar (a repetição da tecla
+  segurada dá trancos). `w`/`s` ou setas: ±0,1 m/s; `a`/`d`: ±0,2 rad/s; espaço: parar e
+  devolver ao Nav2; `p`: segurar parado (o Nav2 não comanda); `q`: sair.
+- **Para mapear:** `vslam:=true nav:=false teleop:=...`, com o RViz aberto. Protocolo de
+  condução para o RTAB-Map fechar laços: parado ~10 s na partida, uma volta pelo perímetro
+  voltando à partida, depois as entrelinhas, revisitando de tempos em tempos uma entrelinha
+  **no mesmo sentido** de antes (a câmera não reconhece o lugar visto de costas), a
+  0,3 a 0,4 m/s e terminando parado na partida.
+- Depois, os waypoints do operador saem do mapa salvo com `vslam_localization:=true
+  waypoints:=rviz` (seção 7).
 
 ## 6. Câmera RGB de aquisição de dados (`data_camera:=true`)
 
@@ -324,6 +366,8 @@ CPU no limite os resultados variam entre rodadas.
 - Quase tudo foi validado na nuvem Linux, headless e sem GPU; os testes no Windows/WSL e no
   RViz na tela ainda são poucos. A câmera de aquisição ainda não rodou no Webots.
 - A profundidade da RGB-D e o IMU não têm ruído na simulação.
+- A teleoperação (joystick, teclado e `cmd_vel_mux`) ainda não rodou no Webots; só a lógica
+  foi testada fora do simulador.
 - O Nav2 às vezes não acha caminho na travessia da cabeceira leste da plantação
   ("Failed to create plan with tolerance of 0.3") e perde waypoints ali.
 - Ao girar no lugar na arena, a quina do robô pode empurrar a `cardboard box(2)`.

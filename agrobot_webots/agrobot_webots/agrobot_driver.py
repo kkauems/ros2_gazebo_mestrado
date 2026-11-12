@@ -67,6 +67,12 @@ def quaternion_from_matrix(m):
     return ((r02 + r20) / s, (r12 + r21) / s, 0.25 * s, (r10 - r01) / s)
 
 
+# Sem /cmd_vel por mais que isto (s de simulação), o robô para. O Nav2 e a
+# teleoperação publicam continuamente enquanto andam; se o nó que comandava
+# cai (ou o operador some), o robô não segue com o último comando.
+CMD_VEL_TIMEOUT = 1.0
+
+
 WHEEL_JOINTS = [
     'front_left_wheel_joint',
     'rear_left_wheel_joint',
@@ -90,6 +96,7 @@ class AgrobotDriver:
             'publishOdom', 'true').strip().lower() == 'true'
         self.linear_velocity = 0.0
         self.angular_velocity = 0.0
+        self.last_cmd_time = None
 
         self.left_motors = [
             self.get_motor('front_left_wheel_joint'),
@@ -346,9 +353,16 @@ class AgrobotDriver:
     def cmd_vel_callback(self, message):
         self.linear_velocity = message.linear.x
         self.angular_velocity = message.angular.z
+        self.last_cmd_time = self.robot.getTime()
 
     def step(self):
         rclpy.spin_once(self.node, timeout_sec=0.0)
+        if (self.last_cmd_time is not None
+                and self.robot.getTime() - self.last_cmd_time
+                > CMD_VEL_TIMEOUT):
+            self.linear_velocity = 0.0
+            self.angular_velocity = 0.0
+            self.last_cmd_time = None
 
         separation = self.wheel_separation * self.wheel_separation_scale
         left_speed = (

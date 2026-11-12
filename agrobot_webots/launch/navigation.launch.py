@@ -50,6 +50,9 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument('global_frame', default_value='odom'),
+        # Saída final do Nav2. Com teleop, vai para o cmd_vel_mux
+        # (cmd_vel_nav_out), que dá prioridade ao operador.
+        DeclareLaunchArgument('cmd_vel_out', default_value='cmd_vel'),
         Node(
             package='nav2_controller',
             executable='controller_server',
@@ -88,7 +91,7 @@ def generate_launch_description():
             parameters=common,
             remappings=[
                 ('cmd_vel', 'cmd_vel_nav'),
-                ('cmd_vel_smoothed', 'cmd_vel'),
+                ('cmd_vel_smoothed', LaunchConfiguration('cmd_vel_out')),
             ],
         ),
         Node(

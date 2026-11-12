@@ -8,6 +8,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
     IncludeLaunchDescription,
+    LogInfo,
     OpaqueFunction,
     RegisterEventHandler,
     SetLaunchConfiguration,
@@ -110,6 +111,20 @@ def data_dir(*parts):
 
 def flag(context, name):
     return LaunchConfiguration(name).perform(context).lower() == 'true'
+
+
+TELEOP_MODES = ('joy', 'keyboard')
+
+
+def teleop_mode(context):
+    """'joy', 'keyboard' ou '' (sem teleoperação)."""
+    mode = LaunchConfiguration('teleop').perform(context).strip().lower()
+    if mode in ('', 'false', 'none'):
+        return ''
+    if mode not in TELEOP_MODES:
+        raise RuntimeError(
+            f'teleop:={mode} não existe; use teleop:=joy ou teleop:=keyboard.')
+    return mode
 
 
 def slip_check_on(context):
@@ -395,14 +410,61 @@ def generate_launch_description():
         return 'map' if mapped else 'odom'
 
     def start_navigation(context):
+        # Com teleop, o Nav2 manda para o cmd_vel_mux, e não direto ao driver.
+        cmd_vel_out = 'cmd_vel_nav_out' if teleop_mode(context) else 'cmd_vel'
         return [IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(webots_share, 'launch', 'navigation.launch.py')),
-            launch_arguments={'global_frame': global_frame(context)}.items(),
+            launch_arguments={
+                'global_frame': global_frame(context),
+                'cmd_vel_out': cmd_vel_out,
+            }.items(),
             condition=IfCondition(LaunchConfiguration('nav')),
         )]
 
     navigation = OpaqueFunction(function=start_navigation)
+
+    # Teleoperação (teleop:=joy ou teleop:=keyboard): o operador manda em
+    # /cmd_vel_teleop e o cmd_vel_mux junta com o Nav2, com prioridade para o
+    # operador. É o modo do mapeamento manual com o RTAB-Map e de tomar o
+    # controle no meio de uma missão.
+    def start_teleop(context):
+        mode = teleop_mode(context)
+        if not mode:
+            return []
+        nodes = [Node(
+            package='agrobot_webots',
+            executable='cmd_vel_mux',
+            output='screen',
+            parameters=[{'use_sim_time': True}],
+        )]
+        if mode == 'joy':
+            config = os.path.join(webots_share, 'config', 'teleop_joy.yaml')
+            nodes += [
+                Node(
+                    package='joy',
+                    executable='game_controller_node',
+                    name='joy_node',
+                    output='screen',
+                    parameters=[config],
+                ),
+                Node(
+                    package='teleop_twist_joy',
+                    executable='teleop_node',
+                    name='teleop_twist_joy_node',
+                    output='screen',
+                    parameters=[config],
+                    remappings=[('cmd_vel', '/cmd_vel_teleop')],
+                ),
+            ]
+        else:
+            # O teclado precisa de um terminal; o launch não tem um.
+            nodes.append(LogInfo(msg=(
+                'teleop:=keyboard: rode num outro terminal '
+                '"ros2 run agrobot_webots teleop_keyboard".')))
+        return nodes
+
+    teleop = OpaqueFunction(function=start_teleop)
 
     def run_label(context):
         # Rótulo do modo nos nomes dos arquivos (CSVs das missões e pasta
@@ -530,9 +592,13 @@ def generate_launch_description():
         # Checagem de patinagem das rodas pela odometria visual (com
         # ekf:=true e camera:=true; sem efeito sem eles).
         DeclareLaunchArgument('slip_check', default_value='true'),
+        # Teleoperação: joy (joystick) ou keyboard (teclado, num terminal
+        # próprio). Vazio: sem teleoperação, o Nav2 manda direto no /cmd_vel.
+        DeclareLaunchArgument('teleop', default_value=''),
         # Antes do Webots: se faltar o ekf, a câmera ou o mapa salvo, o launch
         # para com o erro sem abrir o Webots.
         vslam,
+        teleop,
         webots,
         agrobot_driver,
         robot_state_publisher,
