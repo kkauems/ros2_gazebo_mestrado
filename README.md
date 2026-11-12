@@ -120,10 +120,13 @@ Launch arguments:
 | `ekf` | `false` | `true`: the `robot_localization` EKF fuses `/wheel/odom` + `/imu/data` and publishes `/odom` and TF `odom → base_link` (the driver stops publishing them). `goal_navigation.launch.py` takes the same argument |
 | `camera` | `true` | `false`: the driver doesn't enable the VSLAM RGB-D camera, so Webots doesn't render it and the `/vslam_camera/...` topics don't exist |
 | `data_camera` | `false` | `true`: the driver enables the RGB data acquisition camera and publishes `/data_camera/image_raw` and `/data_camera/camera_info` (4.9 MB per image, about one per second). It can be switched off and on while running with `ros2 service call /data_camera/enable std_srvs/srv/SetBool "{data: false}"`. With `false` (default) Webots doesn't render it and neither the topics nor the service exist |
+| `data_record` | `true` | With `data_camera:=true`, the `data_recorder` node saves the acquisition camera images as PNG, with the estimated and true camera pose of each one, in `dados/fotos/<world>_<mode>_<date>/` in the project (ignored by git) (`fotos.csv`, `camera_info.yaml`). `false` only shows the images ([details](claude/manual.md#6-câmera-rgb-de-aquisição-de-dados-data_cameratrue)) |
+| `data_dir` | `dados/fotos/` in the project | Folder for the saved photos |
+| `data_min_distance` | `0.3` | Minimum distance (m) the camera must move between two saved photos |
 | `slam` | `false` | `true`: `slam_toolbox` builds `/map` from `/scan` and publishes TF `map → odom` and `/pose`; `ekf_map_node` fuses `/wheel/odom` + `/imu/data` + `/pose` into `/odometry/map`. RViz shows the map and the `/odometry/map` covariance ellipse (magnified 20×); an `/odom` ellipse for comparison is in the Displays panel, off by default and meaningful only with `ekf:=true`. Nav2 plans in `map` (bt_navigator, global costmap, behaviors); the controller and the local costmap stay in `odom`. Works with `ekf:=true` or `false` |
 | `vslam` | `false` | `true`: RTAB-Map maps with the RGB-D camera and the lidar and publishes TF `map → odom`, `/rtabmap/map` and `/rtabmap/mapPath` ([VSLAM](#vslam-rtab-map)). Needs `ekf:=true` and `camera:=true`. With `slam:=true` too, slam_toolbox keeps running without TF, for comparison. Nav2 plans in `map`, as with `slam:=true` |
 | `vslam_localization` | `false` | With `vslam:=true`: localize on a saved RTAB-Map database instead of mapping (the database isn't changed) |
-| `vslam_db` | `~/.ros/agrobot_vslam/<world>.db` | RTAB-Map database. Mapping erases it at start |
+| `vslam_db` | `dados/vslam/<world>.db` in the project | RTAB-Map database. Mapping erases it at start |
 | `slip_check` | `true` | With `ekf:=true` and `camera:=true`: wheel-slip check. `rgbd_odometry` (RTAB-Map) measures the robot's speed from the RGB-D camera (`/vo/odom`), and `wheel_slip_monitor` compares it with the wheels. When they disagree (robot stuck with the wheels spinning, or dragged with them stopped), the EKF gets the camera's speed instead of the wheels' (`/wheel/odom_checked`). The CSV mode becomes `ekf-vo`. `false`: the EKF reads `/wheel/odom` directly, as before |
 | `rtabmap_viz` | `false` | With `vslam:=true`: also open the `rtabmap_viz` window (loop closures, features) |
 | `waypoints` | (empty) | Name of a waypoint list in `config/waypoints/` (without `.yaml`), a path to a `.yaml`, or `rviz` to click the waypoints in RViz. Starts `waypoint_mission`, which drives the robot through the list once Nav2 is up ([below](#waypoint-missions)) |
@@ -234,7 +237,7 @@ waypoints:
 - Each waypoint must be less than ~12 m from the previous one (the global costmap window).
 
 In RViz, the **Waypoints** display shows the list: orange pending, blue current, green
-reached, red missed. At the end, the node writes two CSV files to `~/.ros/agrobot_missions/`,
+reached, red missed. At the end, the node writes two CSV files to `dados/missions/` in the project (ignored by git),
 named `<list>_<mode>_<date>_*.csv`:
 - `*_waypoints.csv`: one row per waypoint, with the status, the time, the estimated pose
   (TF), the true pose (`/ground_truth/odom`), the true error to the target and the
@@ -250,7 +253,7 @@ the last waypoint, ATE (RMS of the localization error along the trajectory), and
 position and heading errors:
 
 ```bash
-python3 agrobot_webots/scripts/summarize_missions.py ~/.ros/agrobot_missions
+python3 agrobot_webots/scripts/summarize_missions.py   # reads dados/missions/; or pass folders/CSVs
 ```
 
 With several runs of each case, [compare_methods.py](agrobot_webots/scripts/compare_methods.py)
@@ -259,7 +262,7 @@ robot really was within 0.5 m of the target, mean ± standard deviation of the A
 errors, and a list of the missed waypoints with the localization error at that moment:
 
 ```bash
-python3 agrobot_webots/scripts/compare_methods.py ~/.ros/agrobot_missions
+python3 agrobot_webots/scripts/compare_methods.py   # reads dados/missions/; or pass folders/CSVs
 ```
 
 **Waypoints clicked in RViz** (`waypoints:=rviz`):
@@ -283,7 +286,7 @@ ros2 service call /waypoint_mission/save std_srvs/srv/Trigger    # write the lis
   `vslam:=true`) and ignored while a mission runs. The Publish Point tool is in all three
   RViz configs (`nav.rviz`, `nav_slam.rviz`, `nav_vslam.rviz`).
 - After a mission ends, `start` drives the same list again, and new clicks add to it.
-- `save` writes `~/.ros/agrobot_missions/rviz_<date>.yaml` in the format above, with the
+- `save` writes `dados/missions/rviz_<date>.yaml` in the format above, with the
   world, so the list can be run again with `waypoints:=<that file>`.
 - The CSV files are named `rviz_<mode>_<date>_*.csv`.
 
@@ -342,7 +345,7 @@ ros2 run tf2_ros tf2_monitor map odom     # map → odom must come from one node
   `/rtabmap/map` and the graph path `/rtabmap/mapPath`, both shown by `rviz/nav_vslam.rviz`.
   The grid is assembled only while someone subscribes to `/rtabmap/map`, so keep RViz open
   while mapping. Drive around with Nav2 goals, a waypoint mission or teleop; Nav2 plans in `map`.
-- **Database.** `~/.ros/agrobot_vslam/<world>.db` (for example `plantation_field.db`), or
+- **Database.** `dados/vslam/<world>.db` in the project (for example `plantation_field.db`), or
   the path given in `vslam_db`. Mapping **erases it when it starts**, so copy the file to
   keep a map. Inspect it with `rtabmap-info <file>`.
 - **Localization** (`vslam_localization:=true`). RTAB-Map loads the saved map (a copy in

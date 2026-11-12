@@ -50,16 +50,19 @@ Fechar o Webots encerra o launch inteiro.
 | `camera` | `true` | Câmera RGB-D do VSLAM. `false` alivia a CPU nas rodadas sem VSLAM |
 | `vslam` | `false` | RTAB-Map publica `map → odom` e o mapa. Exige `ekf:=true` e `camera:=true` (o launch para com erro se faltar) |
 | `vslam_localization` | `false` | Com `vslam:=true`: localiza num mapa salvo em vez de mapear |
-| `vslam_db` | `~/.ros/agrobot_vslam/<mundo>.db` | Banco do RTAB-Map. **O mapeamento apaga o banco ao começar** |
+| `vslam_db` | `dados/vslam/<mundo>.db` | Banco do RTAB-Map. **O mapeamento apaga o banco ao começar** |
 | `rtabmap_viz` | `false` | Abre a janela do `rtabmap_viz` |
 | `data_camera` | `false` | Câmera RGB de aquisição de dados (seção 6) |
+| `data_record` | `true` | Com `data_camera:=true`, grava as fotos com a pose de cada uma (seção 6). `false` só mostra as imagens |
+| `data_dir` | `dados/fotos/` | Pasta das fotos gravadas |
+| `data_min_distance` | `0.3` | Distância mínima (m) entre duas fotos gravadas |
 | `waypoints` | vazio | Missão de waypoints: nome de uma lista em `config/waypoints/`, caminho de um `.yaml`, ou `rviz` para clicar os pontos |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 8) |
 
 ### Usos mais comuns
 
 ```bash
-# Mapear a plantação com o VSLAM (grava ~/.ros/agrobot_vslam/plantation_field.db)
+# Mapear a plantação com o VSLAM (grava dados/vslam/plantation_field.db)
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true
 
 # Localizar no mapa salvo (o arquivo não é alterado; roda numa cópia)
@@ -70,11 +73,15 @@ ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
     waypoints:=caso3_plantacao_serpentina
 
-# Com a câmera de aquisição ligada
+# Com a câmera de aquisição ligada, gravando as fotos
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
     data_camera:=true
 ```
 
+- **Onde ficam os dados:** tudo o que a simulação grava fica em `dados/`, na raiz do projeto
+  (fora do git): `dados/missions/` (CSVs das missões), `dados/fotos/` (câmera de aquisição) e
+  `dados/vslam/` (bancos do RTAB-Map). O launch acha a raiz pelo link do
+  `colcon build --symlink-install`; sem ele, usa a pasta que tem o `install/`.
 - **Objetivo avulso:** no RViz, ferramenta **Nav2 Goal**. Sem SLAM/VSLAM as coordenadas
   estão em `odom`; com `vslam:=true`, em `map`. Os dois nascem na pose inicial do robô, não
   no centro do mundo.
@@ -226,9 +233,32 @@ Desligada por padrão, para não pesar nas rodadas de navegação.
   ros2 service call /data_camera/enable std_srvs/srv/SetBool "{data: true}"
   ```
 - No RViz, o painel "Data Camera" vem desmarcado.
-- Ainda não há nó que grave as fotos (etapa 4 do plano em
-  `planejamento/camera_rgb_aquisicao.md`, nos arquivos do projeto), e a câmera ainda não foi
-  rodada no Webots.
+
+**Gravação das fotos (nó `data_recorder`, sobe com `data_camera:=true`; `data_record:=false`
+desliga).** Uma pasta por execução,
+`dados/fotos/<mundo>_<modo>_<data>/` (o modo é o mesmo rótulo dos CSVs das
+missões, como `ekf+vslam`), com:
+- `000001.png`, `000002.png`, ...: as fotos em RGB, sem perdas (~2 a 3 MB cada);
+- `fotos.csv`: uma linha por foto, com o tempo de simulação, a pose **estimada** da câmera
+  (`est_*`, pelo TF `map → data_camera_optical_frame` no carimbo da foto; `odom` sem
+  SLAM/VSLAM), a pose **verdadeira** (`real_*`, do `/ground_truth/odom` do mesmo carimbo,
+  trazida para o frame da partida como no `waypoint_mission`) e o erro entre as duas
+  (`erro_xy_m`, `erro_z_m`, `erro_yaw_rad`). Cada pose tem x, y, z do centro óptico,
+  roll/pitch/yaw do `data_camera_link` (yaw ≈ yaw do robô + 90°) e o quaternion do frame
+  óptico, para projetar pontos na imagem;
+- `camera_info.yaml`: intrínsecos, no formato do `camera_calibration_parsers`.
+
+Regras do gravador:
+- Só grava uma foto se a câmera andou pelo menos `data_min_distance` (0,3 m) desde a última,
+  então o robô parado (nas paradas dos waypoints, por exemplo) não enche o disco.
+- Espera até 1 s de simulação pelo TF do carimbo da foto. Se não chegar, grava a foto com as
+  colunas `est_*` vazias e avisa no log.
+- A pose verdadeira é relativa à primeira mensagem do `/ground_truth/odom` que o nó recebe; por
+  isso ele tem que subir junto com a simulação (o launch faz isso).
+- Ainda não está ligado às missões de waypoints: grava enquanto a câmera estiver ligada e o
+  robô andando. Para gravar só um trecho, use o serviço `/data_camera/enable`.
+
+A câmera e o gravador ainda não foram rodados no Webots (só conferidos fora do simulador).
 
 ## 7. Missões de waypoints e casos de estudo
 
@@ -247,16 +277,16 @@ As coordenadas estão no frame da partida, então a mesma lista vale com e sem V
 
 **Waypoints clicados (`waypoints:=rviz`):** no RViz, ferramenta **Publish Point**, um
 clique por ponto; depois `ros2 service call /waypoint_mission/start std_srvs/srv/Trigger`.
-Também há `undo`, `clear` e `save` (grava a lista em `~/.ros/agrobot_missions/` no formato
+Também há `undo`, `clear` e `save` (grava a lista em `dados/missions/` no formato
 dos casos, para rodar de novo com `waypoints:=<arquivo>`).
 
-**Resultados:** cada rodada grava em `~/.ros/agrobot_missions/` um
+**Resultados:** cada rodada grava em `dados/missions/` um
 `<caso>_<modo>_<data>_waypoints.csv` (um por waypoint) e um `_trajetoria.csv` (pose estimada
 e verdadeira a 5 Hz). O modo é `ekf`, `ekf+vslam`, `ekf+vslam-loc` ou `ekf+slam`. Para a
 tabela (atingidos, tempo, distância, erro final, ATE, erro máximo):
 
 ```bash
-python3 agrobot_webots/scripts/summarize_missions.py ~/.ros/agrobot_missions
+python3 agrobot_webots/scripts/summarize_missions.py   # lê dados/missions/; ou passe pastas/CSVs
 ```
 
 Compare pelo ATE e pelo erro máximo, não pelo erro final: o robô chega perto de onde ele

@@ -6,7 +6,8 @@ Lê os mesmos CSVs do summarize_missions.py e imprime uma tabela em Markdown
 com uma linha por caso e modo (todas as rodadas juntas), e depois a lista
 dos waypoints perdidos:
 
-    python3 agrobot_webots/scripts/compare_methods.py ~/.ros/agrobot_missions
+    python3 agrobot_webots/scripts/compare_methods.py            # dados/missions/ do projeto
+    python3 agrobot_webots/scripts/compare_methods.py <pasta ou CSVs>
 
 Colunas:
 - rodadas: quantas rodadas daquele caso e modo;
@@ -65,12 +66,19 @@ def fmt(value, digits=2):
     return '' if value is None else f'{value:.{digits}f}'.replace('.', ',')
 
 
+# dados/missions/ no projeto, onde o launch grava os CSVs das missões.
+MISSIONS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'dados', 'missions')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[1])
     parser.add_argument(
         'paths', nargs='*',
-        default=[os.path.expanduser('~/.ros/agrobot_missions')],
-        help='pastas ou arquivos *_waypoints.csv')
+        default=[MISSIONS_DIR],
+        help='pastas ou arquivos *_waypoints.csv (padrão: dados/missions/ '
+             'do projeto)')
     args = parser.parse_args()
     files = []
     for path in args.paths:

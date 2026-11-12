@@ -4,3 +4,5 @@ build
 install
 log
 .venv
+# Dados gravados pela simulação: missões, fotos e bancos do RTAB-Map
+dados/

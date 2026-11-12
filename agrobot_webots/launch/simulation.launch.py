@@ -65,12 +65,47 @@ def driver_urdf(robot_description, ekf, camera, data_camera=False):
     return path
 
 
-VSLAM_DB_DIR = os.path.join('~', '.ros', 'agrobot_vslam')
 VSLAM_CAMERA = [
     ('rgb/image', '/vslam_camera/color/image_raw'),
     ('rgb/camera_info', '/vslam_camera/color/camera_info'),
     ('depth/image', '/vslam_camera/aligned_depth_to_color/image_raw'),
 ]
+
+
+def project_dir():
+    """
+    Pasta do projeto (o repositório). Tudo o que os nós gravam fica em
+    dados/ dentro dela (data_dir()).
+
+    Com colcon build --symlink-install este arquivo é um link para o fonte, e
+    o realpath cai no repositório. Sem o link, cai no install/ do workspace;
+    então vale a pasta que tem o install/ (no uso normal, o próprio
+    repositório). Se nada disso achar, ~/.ros.
+    """
+    here = os.path.dirname(os.path.realpath(__file__))
+    parents = []
+    while True:
+        parents.append(here)
+        parent = os.path.dirname(here)
+        if parent == here:
+            break
+        here = parent
+    for folder in parents:
+        if os.path.isfile(
+                os.path.join(folder, 'agrobot_webots', 'package.xml')):
+            return folder
+    for folder in parents:
+        if os.path.isdir(os.path.join(folder, 'install')):
+            return folder
+    return os.path.join(os.path.expanduser('~'), '.ros')
+
+
+def data_dir(*parts):
+    """
+    dados/ na raiz do projeto, fora do git: missions/ (CSVs das missões),
+    fotos/ (câmera de aquisição) e vslam/ (bancos do RTAB-Map).
+    """
+    return os.path.join(project_dir(), 'dados', *parts)
 
 
 def flag(context, name):
@@ -100,14 +135,14 @@ def vslam_database(context):
     """
     Banco do RTAB-Map e se ele é de mapeamento.
 
-    O padrão é ~/.ros/agrobot_vslam/<mundo>.db. O mapeamento apaga o banco ao
+    O padrão é dados/vslam/<mundo>.db no projeto. O mapeamento apaga o banco ao
     começar; a localização roda numa cópia, para o mapa salvo não mudar.
     """
     path = LaunchConfiguration('vslam_db').perform(context)
     if not path:
         world = LaunchConfiguration('world').perform(context)
         name = os.path.splitext(os.path.basename(world))[0]
-        path = os.path.join(VSLAM_DB_DIR, name + '.db')
+        path = data_dir('vslam', name + '.db')
     path = os.path.abspath(os.path.expanduser(path))
     if not flag(context, 'vslam_localization'):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -369,6 +404,20 @@ def generate_launch_description():
 
     navigation = OpaqueFunction(function=start_navigation)
 
+    def run_label(context):
+        # Rótulo do modo nos nomes dos arquivos (CSVs das missões e pasta
+        # das fotos): ekf, ekf+slam, ekf+vslam, ekf+vslam-loc, ...
+        modes = [m for m in ('ekf', 'slam', 'vslam') if flag(context, m)]
+        if slip_check_on(context):
+            # EKF com a checagem de patinagem pela odometria visual.
+            modes[modes.index('ekf')] = 'ekf-vo'
+        if 'vslam' in modes and flag(context, 'vslam_localization'):
+            # Localização num mapa salvo: outro rótulo nos CSVs, para não
+            # misturar com as rodadas de mapeamento. Hífen, e não '_', porque
+            # o summarize_missions.py separa caso, modo e data por '_'.
+            modes[modes.index('vslam')] = 'vslam-loc'
+        return '+'.join(modes) or 'odom'
+
     def start_mission(context):
         # waypoints:=caso2_plantacao_ida_volta (config/waypoints/) ou um
         # caminho para um .yaml; waypoints:=rviz para clicar os waypoints no
@@ -385,15 +434,6 @@ def generate_launch_description():
             if not os.path.isfile(path):
                 raise RuntimeError(
                     f'Arquivo de waypoints não encontrado: {path}')
-        modes = [m for m in ('ekf', 'slam', 'vslam') if flag(context, m)]
-        if slip_check_on(context):
-            # EKF com a checagem de patinagem pela odometria visual.
-            modes[modes.index('ekf')] = 'ekf-vo'
-        if 'vslam' in modes and flag(context, 'vslam_localization'):
-            # Localização num mapa salvo: outro rótulo nos CSVs, para não
-            # misturar com as rodadas de mapeamento. Hífen, e não '_', porque
-            # o summarize_missions.py separa caso, modo e data por '_'.
-            modes[modes.index('vslam')] = 'vslam-loc'
         return [Node(
             package='agrobot_webots',
             executable='waypoint_mission',
@@ -401,13 +441,40 @@ def generate_launch_description():
             parameters=[{
                 'waypoints_file': path,
                 'frame': global_frame(context),
-                'run_label': '+'.join(modes) or 'odom',
+                'run_label': run_label(context),
                 'world': LaunchConfiguration('world_name').perform(context),
+                'output_dir': data_dir('missions'),
                 'use_sim_time': True,
             }],
         )]
 
     mission = OpaqueFunction(function=start_mission)
+
+    def start_recorder(context):
+        # Grava as fotos da câmera de aquisição com a pose estimada e a
+        # verdadeira de cada uma (data_recorder.py). Sobe junto com a câmera
+        # (data_camera:=true); data_record:=false só mostra as imagens.
+        if not (flag(context, 'data_camera') and flag(context, 'data_record')):
+            return []
+        parameters = {
+            'frame': global_frame(context),
+            'run_label': run_label(context),
+            'world': LaunchConfiguration('world_name').perform(context),
+            'min_distance': float(
+                LaunchConfiguration('data_min_distance').perform(context)),
+            'use_sim_time': True,
+        }
+        parameters['output_dir'] = (
+            LaunchConfiguration('data_dir').perform(context)
+            or data_dir('fotos'))
+        return [Node(
+            package='agrobot_webots',
+            executable='data_recorder',
+            output='screen',
+            parameters=[parameters],
+        )]
+
+    recorder = OpaqueFunction(function=start_recorder)
 
     def start_rviz(context):
         # Com slam ou vslam, o RViz usa o frame map; com slam, mostra o /map
@@ -450,6 +517,12 @@ def generate_launch_description():
         # Câmera RGB de aquisição de dados (/data_camera/...), desligada por
         # padrão para não pesar nas rodadas que não coletam imagens.
         DeclareLaunchArgument('data_camera', default_value='false'),
+        # Gravação das fotos (data_recorder), ligada sempre que a câmera de
+        # aquisição estiver: pasta (padrão dados/fotos/ no projeto) e
+        # distância mínima entre fotos (m).
+        DeclareLaunchArgument('data_record', default_value='true'),
+        DeclareLaunchArgument('data_dir', default_value=''),
+        DeclareLaunchArgument('data_min_distance', default_value='0.3'),
         DeclareLaunchArgument('vslam', default_value='false'),
         DeclareLaunchArgument('vslam_localization', default_value='false'),
         DeclareLaunchArgument('vslam_db', default_value=''),
@@ -468,6 +541,7 @@ def generate_launch_description():
         slam,
         navigation,
         mission,
+        recorder,
         rviz,
         shutdown_on_webots_exit,
     ])
