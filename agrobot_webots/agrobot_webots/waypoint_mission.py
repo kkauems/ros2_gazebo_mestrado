@@ -28,7 +28,8 @@ clique do Publish Point acrescenta um waypoint e a missão espera os serviços:
     ~/clear   apaga todos
     ~/save    grava a lista no formato acima (output_dir/rviz_<data>.yaml)
 
-Saídas, em output_dir (padrão ~/.ros/agrobot_missions):
+Saídas, em output_dir (o launch passa missions/ na raiz do projeto; rodando
+o nó sozinho, o padrão é ~/.ros/agrobot_missions):
     <caso>_<modo>_<data>_waypoints.csv   uma linha por waypoint
     <caso>_<modo>_<data>_trajetoria.csv  pose estimada e verdadeira no tempo
 A pose verdadeira vem de /ground_truth/odom (Supervisor do Webots), trazida

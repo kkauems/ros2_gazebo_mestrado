@@ -54,7 +54,7 @@ Fechar o Webots encerra o launch inteiro.
 | `rtabmap_viz` | `false` | Abre a janela do `rtabmap_viz` |
 | `data_camera` | `false` | Câmera RGB de aquisição de dados (seção 6) |
 | `data_record` | `false` | Grava as fotos da câmera de aquisição com a pose de cada uma (seção 6). Exige `data_camera:=true` |
-| `data_dir` | `~/.ros/agrobot_fotos` | Pasta das fotos gravadas |
+| `data_dir` | `fotos/` na raiz do projeto | Pasta das fotos gravadas |
 | `data_min_distance` | `0.3` | Distância mínima (m) entre duas fotos gravadas |
 | `waypoints` | vazio | Missão de waypoints: nome de uma lista em `config/waypoints/`, caminho de um `.yaml`, ou `rviz` para clicar os pontos |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 8) |
@@ -231,8 +231,8 @@ Desligada por padrão, para não pesar nas rodadas de navegação.
 - No RViz, o painel "Data Camera" vem desmarcado.
 
 **Gravação das fotos (`data_record:=true`, nó `data_recorder`).** Uma pasta por execução,
-`~/.ros/agrobot_fotos/<mundo>_<modo>_<data>/` (o modo é o mesmo rótulo dos CSVs das missões,
-como `ekf+vslam`), com:
+`fotos/<mundo>_<modo>_<data>/` na raiz do projeto (o modo é o mesmo rótulo dos CSVs das
+missões, como `ekf+vslam`), com:
 - `000001.png`, `000002.png`, ...: as fotos em RGB, sem perdas (~2 a 3 MB cada);
 - `fotos.csv`: uma linha por foto, com o tempo de simulação, a pose **estimada** da câmera
   (`est_*`, pelo TF `map → data_camera_optical_frame` no carimbo da foto; `odom` sem
@@ -272,16 +272,16 @@ As coordenadas estão no frame da partida, então a mesma lista vale com e sem V
 
 **Waypoints clicados (`waypoints:=rviz`):** no RViz, ferramenta **Publish Point**, um
 clique por ponto; depois `ros2 service call /waypoint_mission/start std_srvs/srv/Trigger`.
-Também há `undo`, `clear` e `save` (grava a lista em `~/.ros/agrobot_missions/` no formato
+Também há `undo`, `clear` e `save` (grava a lista em `missions/`, na raiz do projeto, no formato
 dos casos, para rodar de novo com `waypoints:=<arquivo>`).
 
-**Resultados:** cada rodada grava em `~/.ros/agrobot_missions/` um
+**Resultados:** cada rodada grava em `missions/`, na raiz do projeto (fora do git), um
 `<caso>_<modo>_<data>_waypoints.csv` (um por waypoint) e um `_trajetoria.csv` (pose estimada
 e verdadeira a 5 Hz). O modo é `ekf`, `ekf+vslam`, `ekf+vslam-loc` ou `ekf+slam`. Para a
 tabela (atingidos, tempo, distância, erro final, ATE, erro máximo):
 
 ```bash
-python3 agrobot_webots/scripts/summarize_missions.py ~/.ros/agrobot_missions
+python3 agrobot_webots/scripts/summarize_missions.py   # lê missions/; ou passe pastas/CSVs
 ```
 
 Compare pelo ATE e pelo erro máximo, não pelo erro final: o robô chega perto de onde ele

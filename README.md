@@ -120,8 +120,8 @@ Launch arguments:
 | `ekf` | `false` | `true`: the `robot_localization` EKF fuses `/wheel/odom` + `/imu/data` and publishes `/odom` and TF `odom → base_link` (the driver stops publishing them). `goal_navigation.launch.py` takes the same argument |
 | `camera` | `true` | `false`: the driver doesn't enable the VSLAM RGB-D camera, so Webots doesn't render it and the `/vslam_camera/...` topics don't exist |
 | `data_camera` | `false` | `true`: the driver enables the RGB data acquisition camera and publishes `/data_camera/image_raw` and `/data_camera/camera_info` (4.9 MB per image, about one per second). It can be switched off and on while running with `ros2 service call /data_camera/enable std_srvs/srv/SetBool "{data: false}"`. With `false` (default) Webots doesn't render it and neither the topics nor the service exist |
-| `data_record` | `false` | `true`: the `data_recorder` node saves the acquisition camera images as PNG, with the estimated and true camera pose of each one, in `~/.ros/agrobot_fotos/<world>_<mode>_<date>/` (`fotos.csv`, `camera_info.yaml`). Needs `data_camera:=true` ([details](claude/manual.md#6-câmera-rgb-de-aquisição-de-dados-data_cameratrue)) |
-| `data_dir` | `~/.ros/agrobot_fotos` | Folder for the saved photos |
+| `data_record` | `false` | `true`: the `data_recorder` node saves the acquisition camera images as PNG, with the estimated and true camera pose of each one, in `fotos/<world>_<mode>_<date>/` at the project root (ignored by git) (`fotos.csv`, `camera_info.yaml`). Needs `data_camera:=true` ([details](claude/manual.md#6-câmera-rgb-de-aquisição-de-dados-data_cameratrue)) |
+| `data_dir` | `fotos/` at the project root | Folder for the saved photos |
 | `data_min_distance` | `0.3` | Minimum distance (m) the camera must move between two saved photos |
 | `slam` | `false` | `true`: `slam_toolbox` builds `/map` from `/scan` and publishes TF `map → odom` and `/pose`; `ekf_map_node` fuses `/wheel/odom` + `/imu/data` + `/pose` into `/odometry/map`. RViz shows the map and the `/odometry/map` covariance ellipse (magnified 20×); an `/odom` ellipse for comparison is in the Displays panel, off by default and meaningful only with `ekf:=true`. Nav2 plans in `map` (bt_navigator, global costmap, behaviors); the controller and the local costmap stay in `odom`. Works with `ekf:=true` or `false` |
 | `vslam` | `false` | `true`: RTAB-Map maps with the RGB-D camera and the lidar and publishes TF `map → odom`, `/rtabmap/map` and `/rtabmap/mapPath` ([VSLAM](#vslam-rtab-map)). Needs `ekf:=true` and `camera:=true`. With `slam:=true` too, slam_toolbox keeps running without TF, for comparison. Nav2 plans in `map`, as with `slam:=true` |
@@ -237,7 +237,7 @@ waypoints:
 - Each waypoint must be less than ~12 m from the previous one (the global costmap window).
 
 In RViz, the **Waypoints** display shows the list: orange pending, blue current, green
-reached, red missed. At the end, the node writes two CSV files to `~/.ros/agrobot_missions/`,
+reached, red missed. At the end, the node writes two CSV files to `missions/` at the project root (ignored by git),
 named `<list>_<mode>_<date>_*.csv`:
 - `*_waypoints.csv`: one row per waypoint, with the status, the time, the estimated pose
   (TF), the true pose (`/ground_truth/odom`), the true error to the target and the
@@ -253,7 +253,7 @@ the last waypoint, ATE (RMS of the localization error along the trajectory), and
 position and heading errors:
 
 ```bash
-python3 agrobot_webots/scripts/summarize_missions.py ~/.ros/agrobot_missions
+python3 agrobot_webots/scripts/summarize_missions.py   # reads missions/; or pass folders/CSVs
 ```
 
 With several runs of each case, [compare_methods.py](agrobot_webots/scripts/compare_methods.py)
@@ -262,7 +262,7 @@ robot really was within 0.5 m of the target, mean ± standard deviation of the A
 errors, and a list of the missed waypoints with the localization error at that moment:
 
 ```bash
-python3 agrobot_webots/scripts/compare_methods.py ~/.ros/agrobot_missions
+python3 agrobot_webots/scripts/compare_methods.py   # reads missions/; or pass folders/CSVs
 ```
 
 **Waypoints clicked in RViz** (`waypoints:=rviz`):
@@ -286,7 +286,7 @@ ros2 service call /waypoint_mission/save std_srvs/srv/Trigger    # write the lis
   `vslam:=true`) and ignored while a mission runs. The Publish Point tool is in all three
   RViz configs (`nav.rviz`, `nav_slam.rviz`, `nav_vslam.rviz`).
 - After a mission ends, `start` drives the same list again, and new clicks add to it.
-- `save` writes `~/.ros/agrobot_missions/rviz_<date>.yaml` in the format above, with the
+- `save` writes `missions/rviz_<date>.yaml` in the format above, with the
   world, so the list can be run again with `waypoints:=<that file>`.
 - The CSV files are named `rviz_<mode>_<date>_*.csv`.
 

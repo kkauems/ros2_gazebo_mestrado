@@ -5,7 +5,8 @@ Resume as missões de waypoints gravadas pelo waypoint_mission.
 Lê os pares <caso>_<modo>_<data>_waypoints.csv / _trajetoria.csv e imprime
 uma tabela em Markdown, uma linha por rodada:
 
-    python3 agrobot_webots/scripts/summarize_missions.py ~/.ros/agrobot_missions
+    python3 agrobot_webots/scripts/summarize_missions.py            # missions/ do projeto
+    python3 agrobot_webots/scripts/summarize_missions.py <pasta ou CSVs>
 
 Colunas:
 - atingidos: waypoints com status "atingido" / total;
@@ -75,12 +76,19 @@ def summarize(waypoints_path):
     }
 
 
+# missions/ na raiz do projeto, onde o launch grava os CSVs das missões.
+MISSIONS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'missions')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[1])
     parser.add_argument(
         'paths', nargs='*',
-        default=[os.path.expanduser('~/.ros/agrobot_missions')],
-        help='pastas ou arquivos *_waypoints.csv')
+        default=[MISSIONS_DIR],
+        help='pastas ou arquivos *_waypoints.csv (padrão: missions/ do '
+             'projeto)')
     args = parser.parse_args()
     files = []
     for path in args.paths:

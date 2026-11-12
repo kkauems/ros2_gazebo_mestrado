@@ -73,6 +73,33 @@ VSLAM_CAMERA = [
 ]
 
 
+def project_dir():
+    """
+    Pasta do projeto (o repositório), para gravar os dados coletados nela.
+
+    Com colcon build --symlink-install este arquivo é um link para o fonte, e
+    o realpath cai no repositório. Sem o link, cai no install/ do workspace;
+    então vale a pasta que tem o install/ (no uso normal, o próprio
+    repositório). Se nada disso achar, ~/.ros.
+    """
+    here = os.path.dirname(os.path.realpath(__file__))
+    parents = []
+    while True:
+        parents.append(here)
+        parent = os.path.dirname(here)
+        if parent == here:
+            break
+        here = parent
+    for folder in parents:
+        if os.path.isfile(
+                os.path.join(folder, 'agrobot_webots', 'package.xml')):
+            return folder
+    for folder in parents:
+        if os.path.isdir(os.path.join(folder, 'install')):
+            return folder
+    return os.path.join(os.path.expanduser('~'), '.ros')
+
+
 def flag(context, name):
     return LaunchConfiguration(name).perform(context).lower() == 'true'
 
@@ -408,6 +435,7 @@ def generate_launch_description():
                 'frame': global_frame(context),
                 'run_label': run_label(context),
                 'world': LaunchConfiguration('world_name').perform(context),
+                'output_dir': os.path.join(project_dir(), 'missions'),
                 'use_sim_time': True,
             }],
         )]
@@ -427,9 +455,9 @@ def generate_launch_description():
                 LaunchConfiguration('data_min_distance').perform(context)),
             'use_sim_time': True,
         }
-        output_dir = LaunchConfiguration('data_dir').perform(context)
-        if output_dir:
-            parameters['output_dir'] = output_dir
+        parameters['output_dir'] = (
+            LaunchConfiguration('data_dir').perform(context)
+            or os.path.join(project_dir(), 'fotos'))
         return [Node(
             package='agrobot_webots',
             executable='data_recorder',
@@ -489,8 +517,8 @@ def generate_launch_description():
         # Câmera RGB de aquisição de dados (/data_camera/...), desligada por
         # padrão para não pesar nas rodadas que não coletam imagens.
         DeclareLaunchArgument('data_camera', default_value='false'),
-        # Gravação das fotos (data_recorder): pasta (padrão
-        # ~/.ros/agrobot_fotos) e distância mínima entre fotos (m).
+        # Gravação das fotos (data_recorder): pasta (padrão fotos/ na raiz
+        # do projeto) e distância mínima entre fotos (m).
         DeclareLaunchArgument('data_record', default_value='false'),
         DeclareLaunchArgument('data_dir', default_value=''),
         DeclareLaunchArgument('data_min_distance', default_value='0.3'),
