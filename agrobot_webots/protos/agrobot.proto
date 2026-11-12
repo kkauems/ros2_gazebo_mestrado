@@ -5,6 +5,7 @@
 # Extracted from: /home/kkauesm/projects/ros2_gazebo_mestrado/agrobot_description/urdf/agrobot.urdf
 
 EXTERNPROTO "VslamCamera.proto"
+EXTERNPROTO "DataCamera.proto"
 
 PROTO agrobot [
   field  SFVec3f     translation     0 0 0
@@ -72,6 +73,14 @@ PROTO agrobot [
       VslamCamera {
         translation 0.45 0 0.38
         rotation 0 1 0 0.2618
+      }
+      # Câmera RGB de aquisição de dados, na pose do data_camera_link do URDF:
+      # sobre o centro do robô, 0,66 m acima do base_link (~0,90 m do chão),
+      # olhando para a esquerda (+y), sem inclinação. A essa altura a borda
+      # de baixo da imagem passa ~5 cm acima das rodas.
+      DataCamera {
+        translation 0 0 0.66
+        rotation 0 0 1 1.5708
       }
       # Chassi do CAD. A malha deste pacote é gerada por
       # scripts/fix_chassis_mesh.py: motores no eixo das rodas (x = +-0,35 m,
@@ -167,6 +176,20 @@ PROTO agrobot [
             appearance USE aluminium
             geometry Box {
               size 0.03 0.03 0.12
+            }
+          }
+        ]
+      }
+      # Mastro da câmera de aquisição, da travessa do topo do quadro até o
+      # corpo da câmera; fica atrás do corpo (y < 0), fora da imagem dela, e
+      # atrás do plano da imagem da câmera RGB-D (x < 0,45 m).
+      Pose {
+        translation 0 -0.055 0.45
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Box {
+              size 0.03 0.03 0.47
             }
           }
         ]

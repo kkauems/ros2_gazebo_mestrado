@@ -23,6 +23,7 @@ reactive obstacle avoidance and stability tests).
 | Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route); the ellipse wasn't checked in RViz, not yet on Windows |
 | Crop-field test world (`plantation_field.wbt`): 6 plant rows, uneven ground, clods, stones and branches, `world:=plantation_field.wbt` | Webots | New on 2026-10-09, tested in Webots R2025a on Linux (headless) with the real driver, Nav2 and slam_toolbox, not yet on Windows. See [Plantation field](#plantation-field-world) |
 | RGB-D camera for VSLAM (`/vslam_camera/...`: color, registered depth, `camera_info`, one stamp), `camera:=false` turns it off | Webots | New on 2026-10-20, tested in Webots R2025a on Linux (headless), measured with the `AgrobotDriver` code run outside `webots_ros2_driver`; on 2026-10-21 also started with `webots_ros2_driver` itself (topics published, none with `camera:=false`). Not yet in RViz or on Windows ([details](claude/manual.md#2026-10-20--câmera-rgb-d-do-vslam-etapas-1-e-2)) |
+| RGB data acquisition camera for crop monitoring (`/data_camera/image_raw`, `/data_camera/camera_info`), looking left at the plant row, 1280 × 960 about once per second, off by default, `data_camera:=true` | Webots | New on 2026-11-12. **Not run in Webots yet** (not even on Linux): only the geometry and the driver logic were checked, outside the simulator ([details](claude/manual.md#2026-11-12--câmera-rgb-de-aquisição-de-dados-etapas-1-e-2)) |
 | VSLAM with RTAB-Map (camera + lidar check): TF `map → odom`, `/rtabmap/map`, mapping and localization on a saved map, `vslam:=true` (needs `ekf:=true`) | Webots | New on 2026-10-21, tested in Webots R2025a on Linux (headless) on the crop field and the arena, without Nav2, with the driver code run outside `webots_ros2_driver` (and 40 s with `webots_ros2_driver` itself); not yet in RViz or on Windows. See [VSLAM](#vslam-rtab-map) |
 | Waypoint missions: a YAML list of waypoints driven in sequence with Nav2 `FollowWaypoints`, a 3 s stop at each one, markers in RViz and a CSV log with the estimated and true pose, `waypoints:=<case>`, or clicked in RViz with `waypoints:=rviz` | Webots | New on 2026-10-26. Three study cases for comparing EKF, SLAM and VSLAM. Run in Webots R2025a on Linux (headless), not yet on Windows. See [Waypoint missions](#waypoint-missions) |
 | Ground truth from the Webots Supervisor (`/ground_truth/odom`), for measuring errors only | Webots | New on 2026-10-26 |
@@ -117,6 +118,7 @@ Launch arguments:
 | `rviz` | `true` | Start RViz with `rviz/nav.rviz` (`rviz/nav_slam.rviz` with `slam:=true`, `rviz/nav_vslam.rviz` with `vslam:=true`) |
 | `ekf` | `false` | `true`: the `robot_localization` EKF fuses `/wheel/odom` + `/imu/data` and publishes `/odom` and TF `odom → base_link` (the driver stops publishing them). `goal_navigation.launch.py` takes the same argument |
 | `camera` | `true` | `false`: the driver doesn't enable the VSLAM RGB-D camera, so Webots doesn't render it and the `/vslam_camera/...` topics don't exist |
+| `data_camera` | `false` | `true`: the driver enables the RGB data acquisition camera and publishes `/data_camera/image_raw` and `/data_camera/camera_info` (4.9 MB per image, about one per second). It can be switched off and on while running with `ros2 service call /data_camera/enable std_srvs/srv/SetBool "{data: false}"`. With `false` (default) Webots doesn't render it and neither the topics nor the service exist |
 | `slam` | `false` | `true`: `slam_toolbox` builds `/map` from `/scan` and publishes TF `map → odom` and `/pose`; `ekf_map_node` fuses `/wheel/odom` + `/imu/data` + `/pose` into `/odometry/map`. RViz shows the map and the `/odometry/map` covariance ellipse (magnified 20×); an `/odom` ellipse for comparison is in the Displays panel, off by default and meaningful only with `ekf:=true`. Nav2 plans in `map` (bt_navigator, global costmap, behaviors); the controller and the local costmap stay in `odom`. Works with `ekf:=true` or `false` |
 | `vslam` | `false` | `true`: RTAB-Map maps with the RGB-D camera and the lidar and publishes TF `map → odom`, `/rtabmap/map` and `/rtabmap/mapPath` ([VSLAM](#vslam-rtab-map)). Needs `ekf:=true` and `camera:=true`. With `slam:=true` too, slam_toolbox keeps running without TF, for comparison. Nav2 plans in `map`, as with `slam:=true` |
 | `vslam_localization` | `false` | With `vslam:=true`: localize on a saved RTAB-Map database instead of mapping (the database isn't changed) |
@@ -390,7 +392,8 @@ ros2 lifecycle get /bt_navigator        # should be "active [3]"
                                                      │ publishes  /odom, TF odom→base_link (ekf:=false),
                                                      │            /wheel/odom, /imu/data, /clock,
                                                      │            /scan, /joint_states,
-                                                     │            /vslam_camera/... (camera:=true)
+                                                     │            /vslam_camera/... (camera:=true),
+                                                     │            /data_camera/... (data_camera:=true)
 ekf_filter_node (ekf:=true) ◄── /wheel/odom, /imu/data   ──► /odom, TF odom→base_link
 slam_toolbox (slam:=true)   ◄── /scan, TF odom→base_link ──► /map, /pose, TF map→odom
 ekf_map_node (slam:=true)   ◄── /wheel/odom, /imu/data, /pose ──► /odometry/map (no TF)
@@ -422,6 +425,8 @@ waypoint_mission (waypoints:=...) ─FollowWaypoints─► waypoint_follower ─
 | `/vslam_camera/color/camera_info` | `sensor_msgs/CameraInfo` | AgrobotDriver | pinhole, no distortion, fx = fy ≈ 223.5 px |
 | `/vslam_camera/aligned_depth_to_color/image_raw` | `sensor_msgs/Image` | AgrobotDriver | `32FC1`, planar depth in meters, registered to the color image; `+inf` outside 0.5–6 m. Same stamp as the color image |
 | `/vslam_camera/aligned_depth_to_color/camera_info` | `sensor_msgs/CameraInfo` | AgrobotDriver | same as the color one |
+| `/data_camera/image_raw` | `sensor_msgs/Image` | AgrobotDriver (`data_camera:=true`) | `bgra8`, 1280 × 960, every 1024 ms of simulation time, frame `data_camera_optical_frame`, reliable QoS. Stamped with the simulation step the image was rendered in |
+| `/data_camera/camera_info` | `sensor_msgs/CameraInfo` | AgrobotDriver (`data_camera:=true`) | pinhole, no distortion, fx = fy = 640 px, same stamp as the image |
 | `/map` | `nav_msgs/OccupancyGrid` | slam_toolbox (`slam:=true`) | 0.05 m cells, transient local, every 5 s |
 | `/pose` | `geometry_msgs/PoseWithCovarianceStamped` | slam_toolbox (`slam:=true`) | frame `map`, one per processed scan, scan-matching covariance |
 | `/odometry/map` | `nav_msgs/Odometry` | ekf_map_node (`slam:=true`) | frame `map`: wheels + IMU + `/pose`; the ellipse shown in RViz |
@@ -451,6 +456,7 @@ Set in the URDF `<webots><plugin>` block ([agrobot.urdf](agrobot_description/urd
 | `wheelSeparationScale` | 1.33 | effective track = 0.96 × 1.33, calibrated for skid-steer slip in turns |
 | `publishOdom` | true | driver publishes `/odom` + TF; the launch sets it to false with `ekf:=true` |
 | `vslamCameraPeriod` | 96 ms | VSLAM camera period, a multiple of the 32 ms step; the launch sets it to 0 (off) with `camera:=false` |
+| `dataCameraPeriod` | 1024 ms | Data acquisition camera period, a multiple of the 32 ms step; the launch sets it to 0 (off) unless `data_camera:=true` |
 
 Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
 - The robot is a Supervisor (`supervisor TRUE`, since 2026-10-26), so the driver can read
@@ -469,7 +475,15 @@ Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
   Intel RealSense D455 (depth 0.5–6 m). URDF frames: `vslam_camera_link` (x forward) and
   `vslam_camera_optical_frame` (z forward, x right, y down). The old `camera_link` is left
   as it was because the Gazebo package uses the same URDF. Only for VSLAM; the data
-  acquisition camera will be a separate RGB camera
+  acquisition camera is the `DataCamera` below
+- `DataCamera` ([DataCamera.proto](agrobot_webots/protos/DataCamera.proto)): a color
+  `Camera` named `data_camera` for crop monitoring, 1280 × 960 with a 90° horizontal FOV
+  (73.7° vertical). It sits on a mast over the robot's center, at (0, 0, 0.66) from
+  `base_link` (~0.90 m above the ground), looking left (+y) with no pitch. With the robot in
+  the middle of an inter-row, the stalk line is 0.9 m away and the image covers 1.80 m along
+  the row and 1.35 m of height (~1.4 mm per pixel). URDF frames: `data_camera_link` (x out
+  of the lens) and `data_camera_optical_frame` (z out of the lens, x right, y down). It is
+  not used for localization
 
 ### Nav2 configuration (summary)
 
