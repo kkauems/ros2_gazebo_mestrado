@@ -65,7 +65,6 @@ def driver_urdf(robot_description, ekf, camera, data_camera=False):
     return path
 
 
-VSLAM_DB_DIR = os.path.join('~', '.ros', 'agrobot_vslam')
 VSLAM_CAMERA = [
     ('rgb/image', '/vslam_camera/color/image_raw'),
     ('rgb/camera_info', '/vslam_camera/color/camera_info'),
@@ -75,7 +74,8 @@ VSLAM_CAMERA = [
 
 def project_dir():
     """
-    Pasta do projeto (o repositório), para gravar os dados coletados nela.
+    Pasta do projeto (o repositório). Tudo o que os nós gravam fica em
+    dados/ dentro dela (data_dir()).
 
     Com colcon build --symlink-install este arquivo é um link para o fonte, e
     o realpath cai no repositório. Sem o link, cai no install/ do workspace;
@@ -98,6 +98,14 @@ def project_dir():
         if os.path.isdir(os.path.join(folder, 'install')):
             return folder
     return os.path.join(os.path.expanduser('~'), '.ros')
+
+
+def data_dir(*parts):
+    """
+    dados/ na raiz do projeto, fora do git: missions/ (CSVs das missões),
+    fotos/ (câmera de aquisição) e vslam/ (bancos do RTAB-Map).
+    """
+    return os.path.join(project_dir(), 'dados', *parts)
 
 
 def flag(context, name):
@@ -127,14 +135,14 @@ def vslam_database(context):
     """
     Banco do RTAB-Map e se ele é de mapeamento.
 
-    O padrão é ~/.ros/agrobot_vslam/<mundo>.db. O mapeamento apaga o banco ao
+    O padrão é dados/vslam/<mundo>.db no projeto. O mapeamento apaga o banco ao
     começar; a localização roda numa cópia, para o mapa salvo não mudar.
     """
     path = LaunchConfiguration('vslam_db').perform(context)
     if not path:
         world = LaunchConfiguration('world').perform(context)
         name = os.path.splitext(os.path.basename(world))[0]
-        path = os.path.join(VSLAM_DB_DIR, name + '.db')
+        path = data_dir('vslam', name + '.db')
     path = os.path.abspath(os.path.expanduser(path))
     if not flag(context, 'vslam_localization'):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -435,7 +443,7 @@ def generate_launch_description():
                 'frame': global_frame(context),
                 'run_label': run_label(context),
                 'world': LaunchConfiguration('world_name').perform(context),
-                'output_dir': os.path.join(project_dir(), 'missions'),
+                'output_dir': data_dir('missions'),
                 'use_sim_time': True,
             }],
         )]
@@ -458,7 +466,7 @@ def generate_launch_description():
         }
         parameters['output_dir'] = (
             LaunchConfiguration('data_dir').perform(context)
-            or os.path.join(project_dir(), 'fotos'))
+            or data_dir('fotos'))
         return [Node(
             package='agrobot_webots',
             executable='data_recorder',
@@ -510,7 +518,7 @@ def generate_launch_description():
         # padrão para não pesar nas rodadas que não coletam imagens.
         DeclareLaunchArgument('data_camera', default_value='false'),
         # Gravação das fotos (data_recorder), ligada sempre que a câmera de
-        # aquisição estiver: pasta (padrão fotos/ na raiz do projeto) e
+        # aquisição estiver: pasta (padrão dados/fotos/ no projeto) e
         # distância mínima entre fotos (m).
         DeclareLaunchArgument('data_record', default_value='true'),
         DeclareLaunchArgument('data_dir', default_value=''),

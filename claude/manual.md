@@ -50,11 +50,11 @@ Fechar o Webots encerra o launch inteiro.
 | `camera` | `true` | Câmera RGB-D do VSLAM. `false` alivia a CPU nas rodadas sem VSLAM |
 | `vslam` | `false` | RTAB-Map publica `map → odom` e o mapa. Exige `ekf:=true` e `camera:=true` (o launch para com erro se faltar) |
 | `vslam_localization` | `false` | Com `vslam:=true`: localiza num mapa salvo em vez de mapear |
-| `vslam_db` | `~/.ros/agrobot_vslam/<mundo>.db` | Banco do RTAB-Map. **O mapeamento apaga o banco ao começar** |
+| `vslam_db` | `dados/vslam/<mundo>.db` | Banco do RTAB-Map. **O mapeamento apaga o banco ao começar** |
 | `rtabmap_viz` | `false` | Abre a janela do `rtabmap_viz` |
 | `data_camera` | `false` | Câmera RGB de aquisição de dados (seção 6) |
 | `data_record` | `true` | Com `data_camera:=true`, grava as fotos com a pose de cada uma (seção 6). `false` só mostra as imagens |
-| `data_dir` | `fotos/` na raiz do projeto | Pasta das fotos gravadas |
+| `data_dir` | `dados/fotos/` | Pasta das fotos gravadas |
 | `data_min_distance` | `0.3` | Distância mínima (m) entre duas fotos gravadas |
 | `waypoints` | vazio | Missão de waypoints: nome de uma lista em `config/waypoints/`, caminho de um `.yaml`, ou `rviz` para clicar os pontos |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 8) |
@@ -62,7 +62,7 @@ Fechar o Webots encerra o launch inteiro.
 ### Usos mais comuns
 
 ```bash
-# Mapear a plantação com o VSLAM (grava ~/.ros/agrobot_vslam/plantation_field.db)
+# Mapear a plantação com o VSLAM (grava dados/vslam/plantation_field.db)
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true
 
 # Localizar no mapa salvo (o arquivo não é alterado; roda numa cópia)
@@ -78,6 +78,10 @@ ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:
     data_camera:=true
 ```
 
+- **Onde ficam os dados:** tudo o que a simulação grava fica em `dados/`, na raiz do projeto
+  (fora do git): `dados/missions/` (CSVs das missões), `dados/fotos/` (câmera de aquisição) e
+  `dados/vslam/` (bancos do RTAB-Map). O launch acha a raiz pelo link do
+  `colcon build --symlink-install`; sem ele, usa a pasta que tem o `install/`.
 - **Objetivo avulso:** no RViz, ferramenta **Nav2 Goal**. Sem SLAM/VSLAM as coordenadas
   estão em `odom`; com `vslam:=true`, em `map`. Os dois nascem na pose inicial do robô, não
   no centro do mundo.
@@ -232,7 +236,7 @@ Desligada por padrão, para não pesar nas rodadas de navegação.
 
 **Gravação das fotos (nó `data_recorder`, sobe com `data_camera:=true`; `data_record:=false`
 desliga).** Uma pasta por execução,
-`fotos/<mundo>_<modo>_<data>/` na raiz do projeto (o modo é o mesmo rótulo dos CSVs das
+`dados/fotos/<mundo>_<modo>_<data>/` (o modo é o mesmo rótulo dos CSVs das
 missões, como `ekf+vslam`), com:
 - `000001.png`, `000002.png`, ...: as fotos em RGB, sem perdas (~2 a 3 MB cada);
 - `fotos.csv`: uma linha por foto, com o tempo de simulação, a pose **estimada** da câmera
@@ -273,16 +277,16 @@ As coordenadas estão no frame da partida, então a mesma lista vale com e sem V
 
 **Waypoints clicados (`waypoints:=rviz`):** no RViz, ferramenta **Publish Point**, um
 clique por ponto; depois `ros2 service call /waypoint_mission/start std_srvs/srv/Trigger`.
-Também há `undo`, `clear` e `save` (grava a lista em `missions/`, na raiz do projeto, no formato
+Também há `undo`, `clear` e `save` (grava a lista em `dados/missions/` no formato
 dos casos, para rodar de novo com `waypoints:=<arquivo>`).
 
-**Resultados:** cada rodada grava em `missions/`, na raiz do projeto (fora do git), um
+**Resultados:** cada rodada grava em `dados/missions/` um
 `<caso>_<modo>_<data>_waypoints.csv` (um por waypoint) e um `_trajetoria.csv` (pose estimada
 e verdadeira a 5 Hz). O modo é `ekf`, `ekf+vslam`, `ekf+vslam-loc` ou `ekf+slam`. Para a
 tabela (atingidos, tempo, distância, erro final, ATE, erro máximo):
 
 ```bash
-python3 agrobot_webots/scripts/summarize_missions.py   # lê missions/; ou passe pastas/CSVs
+python3 agrobot_webots/scripts/summarize_missions.py   # lê dados/missions/; ou passe pastas/CSVs
 ```
 
 Compare pelo ATE e pelo erro máximo, não pelo erro final: o robô chega perto de onde ele

@@ -4,7 +4,5 @@ build
 install
 log
 .venv
-# Fotos gravadas pelo data_recorder (data_record:=true)
-fotos/
-# CSVs das missões de waypoints (waypoint_mission)
-missions/
+# Dados gravados pela simulação: missões, fotos e bancos do RTAB-Map
+dados/

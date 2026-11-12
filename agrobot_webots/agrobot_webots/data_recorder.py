@@ -13,8 +13,8 @@ Só grava uma foto se a câmera andou pelo menos min_distance desde a última
 gravada (pela pose estimada; sem ela, pela verdadeira), para não encher o
 disco com o robô parado.
 
-Saída, numa pasta por execução em output_dir (o launch passa fotos/ na raiz
-do projeto; rodando o nó sozinho, o padrão é ~/.ros/agrobot_fotos):
+Saída, numa pasta por execução em output_dir (o launch passa dados/fotos/ no
+projeto; rodando o nó sozinho, o padrão é ~/.ros/agrobot_fotos):
     <mundo>_<modo>_<data>/
         000001.png, 000002.png, ...   RGB, sem perdas
         fotos.csv                     uma linha por foto
