@@ -149,6 +149,40 @@
     Mem/SaveDepth16Format: "false"
     Mem/DepthCompressionFormat: ".png"
 
+# Odometria visual (rgbd_odometry) para a checagem de patinagem
+# (simulation.launch.py, slip_check:=true com ekf:=true): mede a velocidade do
+# robô pela câmera, sem olhar as rodas, e publica em /vo/odom. O
+# wheel_slip_monitor compara com as rodas. Não publica TF (odom -> base_link
+# é do EKF) e não usa chute de movimento: com o EKF como chute, a patinagem
+# entraria na própria referência.
+/rtabmap/rgbd_odometry:
+  ros__parameters:
+    use_sim_time: true
+    frame_id: base_link
+    odom_frame_id: vo_odom       # só no cabeçalho da mensagem; sem TF
+    publish_tf: false
+    subscribe_rgbd: true
+    approx_sync: false
+    topic_queue_size: 10
+    sync_queue_size: 10
+    wait_for_transform: 0.2
+    # Perdida, publica uma mensagem com variância 9999: o wheel_slip_monitor
+    # a descarta e deixa as rodas passarem.
+    publish_null_when_lost: true
+
+    # 6 graus de liberdade: preso na pedra, o robô sobe e balança, e com
+    # Reg/Force3DoF a câmera se perdia a cada sacudida (caso 3). Só vx e vy
+    # (no base_link) são usados.
+    Reg/Force3DoF: "false"
+    Reg/Strategy: "0"            # só visual (o ICP com o /scan fica no rtabmap)
+    Odom/Strategy: "0"           # quadro contra mapa local (F2M), o padrão
+    # Perdida, recomeça no quadro seguinte: só a velocidade interessa.
+    Odom/ResetCountdown: "1"
+    # Mesmo detector e profundidade máxima do rtabmap acima.
+    Vis/FeatureType: "8"
+    Vis/MaxDepth: "5.0"
+    Vis/MinInliers: "15"
+
 # Interface gráfica do RTAB-Map (rtabmap_viz:=true): as mesmas entradas.
 /rtabmap/rtabmap_viz:
   ros__parameters:
