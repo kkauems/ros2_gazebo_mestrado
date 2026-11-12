@@ -22,8 +22,8 @@ reactive obstacle avoidance and stability tests).
 | `/clock` from Webots sim time | Webots | New on 2026-10-07 |
 | Lidar SLAM (`slam_toolbox`): `/map`, `map → odom`, and a `map`-frame EKF whose covariance ellipse shrinks where the lidar pins the pose, `slam:=true` | Webots | New on 2026-10-08. Run in Webots R2025a on Linux (headless) with Nav2 on 2026-10-09 (crop-field route); the ellipse wasn't checked in RViz, not yet on Windows |
 | Crop-field test world (`plantation_field.wbt`): 6 plant rows, uneven ground, clods, stones and branches, `world:=plantation_field.wbt` | Webots | New on 2026-10-09, tested in Webots R2025a on Linux (headless) with the real driver, Nav2 and slam_toolbox, not yet on Windows. See [Plantation field](#plantation-field-world) |
-| RGB-D camera for VSLAM (`/vslam_camera/...`: color, registered depth, `camera_info`, one stamp), `camera:=false` turns it off | Webots | New on 2026-10-20, tested in Webots R2025a on Linux (headless), measured with the `AgrobotDriver` code run outside `webots_ros2_driver`; on 2026-10-21 also started with `webots_ros2_driver` itself (topics published, none with `camera:=false`). Not yet in RViz or on Windows ([details](claude/manual.md#2026-10-20--câmera-rgb-d-do-vslam-etapas-1-e-2)) |
-| RGB data acquisition camera for crop monitoring (`/data_camera/image_raw`, `/data_camera/camera_info`), looking left at the plant row, 1280 × 960 about once per second, off by default, `data_camera:=true` | Webots | New on 2026-11-12. **Not run in Webots yet** (not even on Linux): only the geometry and the driver logic were checked, outside the simulator ([details](claude/manual.md#2026-11-12--câmera-rgb-de-aquisição-de-dados-etapas-1-e-2)) |
+| RGB-D camera for VSLAM (`/vslam_camera/...`: color, registered depth, `camera_info`, one stamp), `camera:=false` turns it off | Webots | New on 2026-10-20, tested in Webots R2025a on Linux (headless), measured with the `AgrobotDriver` code run outside `webots_ros2_driver`; on 2026-10-21 also started with `webots_ros2_driver` itself (topics published, none with `camera:=false`). Not yet in RViz or on Windows ([details](claude/manual.md#3-o-robô-no-webots)) |
+| RGB data acquisition camera for crop monitoring (`/data_camera/image_raw`, `/data_camera/camera_info`), looking left at the plant row, 1280 × 960 about once per second, off by default, `data_camera:=true` | Webots | New on 2026-11-12. **Not run in Webots yet** (not even on Linux): only the geometry and the driver logic were checked, outside the simulator ([details](claude/manual.md#6-câmera-rgb-de-aquisição-de-dados-data_cameratrue)) |
 | VSLAM with RTAB-Map (camera + lidar check): TF `map → odom`, `/rtabmap/map`, mapping and localization on a saved map, `vslam:=true` (needs `ekf:=true`) | Webots | New on 2026-10-21, tested in Webots R2025a on Linux (headless) on the crop field and the arena, without Nav2, with the driver code run outside `webots_ros2_driver` (and 40 s with `webots_ros2_driver` itself); not yet in RViz or on Windows. See [VSLAM](#vslam-rtab-map) |
 | Waypoint missions: a YAML list of waypoints driven in sequence with Nav2 `FollowWaypoints`, a 3 s stop at each one, markers in RViz and a CSV log with the estimated and true pose, `waypoints:=<case>`, or clicked in RViz with `waypoints:=rviz` | Webots | New on 2026-10-26. Three study cases for comparing EKF, SLAM and VSLAM. Run in Webots R2025a on Linux (headless), not yet on Windows. See [Waypoint missions](#waypoint-missions) |
 | Ground truth from the Webots Supervisor (`/ground_truth/odom`), for measuring errors only | Webots | New on 2026-10-26 |
@@ -201,7 +201,7 @@ ros2 service call /local_costmap/clear_entirely_local_costmap nav2_msgs/srv/Clea
 `goal_navigator` (below) does not get into the lanes: just before the first plants it
 reports an obstacle in the strip it needs free in front of the robot, and it gives up after
 40 s. It did the same with the 8 cm lidar; the cause wasn't investigated. Measurements are in
-[claude/manual.md](claude/manual.md#2026-10-09--lidar-frontal-5-cm-mais-alto-13-cm-do-chão).
+[claude/manual.md](claude/manual.md#3-o-robô-no-webots).
 
 ### Waypoint missions
 
@@ -363,7 +363,7 @@ ros2 run tf2_ros tf2_monitor map odom     # map → odom must come from one node
   the serpentine case), so global loop closure is now off (see Mapping above). In the cloud test, 2 laps around the
   y = 0 and y = 1.8 lanes gave a `map` pose error of 0.11 m RMS (0.23 m max, 0.08 m at the
   end), against 0.28 m RMS (0.46 m max, 0.45 m at the end) for the EKF odometry alone.
-  Details in [claude/manual.md](claude/manual.md#2026-10-21--rtab-map-vslam-com-vslamtrue-etapa-5).
+  Details in [claude/manual.md](claude/manual.md#vslam-configrtabmapyaml-vslamtrue).
   The arena has plain walls and floor and few visual features.
 
 ### Goal without Nav2 (`goal_navigator`)
@@ -493,7 +493,7 @@ Sensors in the PROTO ([agrobot.proto](agrobot_webots/protos/agrobot.proto)):
   0.23–0.24 m above the ground, so the scan plane is about 13 cm above the floor (z = 0.18 m
   in the arena's world frame, whose floor top is at z = 0.05). It sees the boxes (0.20 m
   above the floor) and the crates (0.30 m). Until 2026-10-09 it was 5 cm lower; see
-  [claude/manual.md](claude/manual.md#2026-10-09--lidar-frontal-5-cm-mais-alto-13-cm-do-chão)
+  [claude/manual.md](claude/manual.md#3-o-robô-no-webots)
 - `VslamCamera` ([VslamCamera.proto](agrobot_webots/protos/VslamCamera.proto)): a `Camera`
   `vslam_color` and a `RangeFinder` `vslam_depth` at the same pose, with the same 424 × 240
   resolution and 87° horizontal FOV, so the depth is registered to the color image. It sits

@@ -19,7 +19,7 @@ arquivos**. Só lê o repositório para embasar o prompt.
    por assunto.
 2. Consulte o repositório só o necessário para ancorar o prompt em fatos reais:
    - `README.md`: estado atual, layout e problemas conhecidos.
-   - `claude/manual.md`: o que já foi feito e por quê (seção "Registro de alterações").
+   - `claude/manual.md`: resumo de como o projeto funciona (como rodar, algoritmos e por quê).
    - `claude/instructions.md`: plano original do Nav2 no Webots.
    - `utils/commands.md`: comandos que o Kauê usa para build e launch.
    - `agrobot_webots` e `agrobot_description`, que são o caminho oficial. Só leia
@@ -49,9 +49,9 @@ arquivos**. Só lê o repositório para embasar o prompt.
   e simulação só rodam na máquina do Kauê. O prompt deve dizer o que dá para validar na
   nuvem (sintaxe Python, `xmllint`, `grep`, testes flake8/pep257 se disponíveis) e o que o
   Kauê precisa testar localmente, com os comandos exatos.
-- **Regra obrigatória do projeto:** toda alteração no repositório deve ser registrada em
-  `claude/manual.md` (seção "Registro de alterações": data, o que mudou, por quê, como foi
-  validado), no mesmo commit/PR.
+- **Regra obrigatória do projeto:** depois de uma alteração no repositório, atualizar
+  `claude/manual.md` no mesmo commit/PR, **apenas se for relevante para o uso do projeto**
+  (como rodar, quais algoritmos, por quê). O manual é um resumo, não um log.
 - O Kauê escreve em português. O prompt refinado e as respostas ao usuário devem ser em
   português.
 
@@ -72,7 +72,7 @@ Devolva apenas o bloco abaixo (um por assunto), sem comentários antes ou depois
 
 **Restrições:**
 - <o que não mexer, escopo, simulador alvo, compatibilidade com Jazzy>
-- Registrar a alteração em `claude/manual.md` no mesmo commit/PR.
+- Atualizar `claude/manual.md` no mesmo commit/PR, se a alteração mudar o uso do projeto.
 
 **Critérios de pronto:**
 - <verificável: comando, tópico, comportamento na simulação>
@@ -107,7 +107,7 @@ A arena `agrobot_webots/worlds/obstacle_arena.wbt` tem caixas e engradados.
 **Restrições:**
 - Alvo é o Webots; não mexer em `agrobot_gazebo` nem em `agrobot_control` (legado).
 - Não quebrar o modo Nav2 existente (`nav:=true`).
-- Registrar a alteração em `claude/manual.md` no mesmo commit/PR.
+- Atualizar `claude/manual.md` no mesmo commit/PR, se a alteração mudar o uso do projeto.
 
 **Critérios de pronto:**
 - Na nuvem: `python3 -m py_compile` nos arquivos alterados e flake8 do pacote.
