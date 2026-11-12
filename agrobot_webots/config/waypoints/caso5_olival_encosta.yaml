@@ -1,0 +1,29 @@
+# Caso de estudo 5: subida e descida da encosta no olival (olive_grove.wbt),
+# ~115 m. Atravessa as fileiras (perpendicular a elas) pelos vãos de 7 m
+# entre as árvores: sobe 21 m em x = 8, segue pela entrelinha de cima,
+# desce 28 m em x = 29 e volta pela entrelinha y = -7. Declive de 2 a 3%
+# (~0,6 m de desnível), grade de troncos vista de outro ângulo, um laço.
+#
+# Coordenadas no frame da partida (x ao longo das fileiras; o odom e o map
+# nascem aí). No mundo, partida = (-36; -3,5), então mundo = frame + (-36; -3,5).
+# Fileiras de oliveiras em y = -17,5, -10,5, -3,5, 3,5, 10,5, 17,5 e 24,5,
+# com árvores em x = 4,5, 11,5, 18,5, ... 67,5; vãos entre elas em x = 8,
+# 15, 22, 29, ...; entrelinhas em y = -14, -7, 0, 7, 14 e 21. O frame é
+# plano (x, y): a encosta aparece só como distância percorrida.
+#
+# Pontos a cada ~11 m: o costmap global é uma janela de 24 m centrada no
+# robô, e o planejador recusa objetivos fora dela.
+world: olive_grove.wbt
+waypoints:
+  - {name: vao_x8_y0, x: 8.0, y: 0.0}
+  - {name: subida_x8_y10.5, x: 8.0, y: 10.5}
+  - {name: alto_x8_y21, x: 8.0, y: 21.0}
+  - {name: alto_x18.5, x: 18.5, y: 21.0}
+  - {name: alto_x29, x: 29.0, y: 21.0}
+  - {name: descida_x29_y10.5, x: 29.0, y: 10.5}
+  - {name: descida_x29_y0, x: 29.0, y: 0.0}
+  - {name: baixo_x29_y-7, x: 29.0, y: -7.0}
+  - {name: baixo_x18.5, x: 18.5, y: -7.0}
+  - {name: baixo_x8, x: 8.0, y: -7.0}
+  - {name: vao_x8_volta, x: 8.0, y: 0.0}
+  - {name: partida, x: 0.0, y: 0.0}

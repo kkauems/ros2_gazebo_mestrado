@@ -146,10 +146,18 @@ foi mantida para não mudar os resultados.
 |---|---|---|
 | `obstacle_arena.wbt` | Arena 5 × 5 m com paredes, 4 caixotes e 3 caixas. Robô em (-1,0; -0,3) do mundo | Testes rápidos; controle negativo do VSLAM (paredes e chão lisos) |
 | `plantation_field.wbt` | 6 fileiras de plantas (milho) de 9 m, entrelinhas de 1,8 m, terreno ondulado com camalhões, buracos, torrões, pedras e galhos; atrito 0,7. Robô em (-6; 0), no começo da entrelinha do meio | Mundo principal de teste em terreno não estruturado |
+| `olive_grove.wbt` | Olival tradicional do planalto do Douro Internacional (referência: Vilarinho dos Galegos): 67 oliveiras em grade de 7 × 7 m, encosta de 2 a 3% subindo para +y, solo avermelhado com lascas de pedra, vinha, estrada de terra e tanque de rega; atrito 0,8. Robô em (-36; -3,5), na cabeceira oeste | Lugar aberto: o LiDAR só vê troncos esparsos; declive lateral nas entrelinhas; aquisição de dados nas fileiras |
 
 A plantação é gerada por `scripts/generate_plantation_field.py` (semente fixa, `--seed`,
 `--roughness`). **Não edite o `.wbt` à mão**; mude o script e gere de novo. No `odom`, as
 fileiras vão de x = 1,5 a 10,5 e as entrelinhas ficam em y = 0, ±1,8, ±3,6.
+
+O olival é gerado por `scripts/generate_olive_grove.py` (`--seed`, `--slope`; a oliveira é o
+PROTO `OliveTree`, em que só o tronco colide). No `odom`, as entrelinhas ficam em y = -14,
+-7, 0, 7, 14 e 21, as árvores vão de x = 4,5 a 67,5 e os vãos para atravessar as fileiras
+(subir ou descer a encosta) ficam em x = 8, 15, 22, 29... Pedras pequenas só na linha das
+árvores e lascas de 2 a 4 cm no resto: maiores que isso, inclinam o robô e o plano do LiDAR
+(~13 cm do chão) bate no chão à frente.
 
 ## 5. Localização e navegação
 
@@ -202,6 +210,10 @@ Nav2: planeja em map, controla em odom ─► /cmd_vel ─► driver
   0,5 m/s e 1,0 rad/s, tolerância 0,15 m / 0,3 rad.
 - Footprint 1,2 × 1,12 m (as rodas saem do chassi) e inflação 0,7 m.
 - `min_obstacle_height: -1.0` na camada e na fonte: o LiDAR fica abaixo do `base_link`.
+- `inf_is_valid: true` na fonte do scan: raio sem retorno (+inf do Webots) também limpa o
+  costmap. Sem isso, em lugar aberto (olival) quase tudo ficava desconhecido, o caminho
+  serpenteava entre as fatias livres e o escorregamento nas curvas levava o EKF a ~1 m de
+  erro em 50 m.
 - Costmaps sem camada estática, janela global de 24 × 24 m centrada no robô: objetivos a
   mais de ~12 m são recusados.
 - `default_server_timeout` 1000 ms: com câmera e RTAB-Map a CPU fica cheia e o planner
@@ -242,6 +254,8 @@ um waypoint que falha. Sem `yaw` no YAML, o robô chega olhando para o próximo 
 | `caso1_arena_circuito` | arena | ~10 m em volta do caixote do centro | Ambiente fechado; controle negativo do VSLAM |
 | `caso2_plantacao_ida_volta` | plantação | ~26 m: entrelinha y = 0 e volta pela y = 1,8 | Fileiras repetitivas, duas cabeceiras |
 | `caso3_plantacao_serpentina` | plantação | ~51 m por quatro entrelinhas | Deriva acumulada, aliasing entre entrelinhas |
+| `caso4_olival_ida_volta` | olival | ~160 m: entrelinha y = 0 até a cabeceira leste e volta pela y = 7 | Lugar aberto, poucos retornos do LiDAR, declive lateral nas manobras de cabeceira |
+| `caso5_olival_encosta` | olival | ~115 m: sobe a encosta atravessando as fileiras em x = 8 e desce em x = 29 | Subida e descida, grade de troncos vista de frente |
 
 As coordenadas estão no frame da partida, então a mesma lista vale com e sem VSLAM.
 
@@ -283,3 +297,7 @@ CPU no limite os resultados variam entre rodadas.
 - O Nav2 às vezes não acha caminho na travessia da cabeceira leste da plantação
   ("Failed to create plan with tolerance of 0.3") e perde waypoints ali.
 - Ao girar no lugar na arena, a quina do robô pode empurrar a `cardboard box(2)`.
+- No olival, o robô escorrega encosta abaixo no declive lateral (nas entrelinhas e nas
+  manobras), e as rodas e o IMU não veem isso: na nuvem, o erro da pose chegou a 0,6 m no
+  `caso4` e 1,4 m no `caso5`. O RTAB-Map não corrigiu, porque na volta o robô vê as árvores
+  de outro ângulo e não fecha laço. `--slope 0` gera o olival plano.
