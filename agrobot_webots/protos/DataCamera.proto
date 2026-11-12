@@ -1,0 +1,54 @@
+#VRML_SIM R2025a utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# Câmera RGB de aquisição de dados (monitorização das plantas): uma Camera só
+# de cor, de resolução alta e taxa baixa. Não entra na localização; a câmera
+# do VSLAM é a VslamCamera.proto.
+# Valores padrão: 1280 x 960 (4:3) e FOV horizontal de 90 graus (vertical de
+# 73,7 graus). A 0,9 m (linha dos colmos, com o robô no centro da entrelinha)
+# a imagem cobre 1,80 m ao longo da fileira e 1,35 m de altura, ~1,4 mm/pixel.
+# Como no Webots R2025a, a câmera olha para +x, com +z para cima.
+
+PROTO DataCamera [
+  field SFVec3f    translation  0 0 0
+  field SFRotation rotation     0 0 1 0
+  field SFString   name         "data_camera"  # nome do device
+  field SFInt32    width        1280
+  field SFInt32    height       960
+  field SFFloat    fieldOfView  1.5708         # horizontal, rad (90 graus)
+  field SFFloat    near         0.05           # plano de recorte (m)
+  field SFFloat    noise        0.0            # desvio do ruído da cor (fração de 255)
+]
+{
+  Pose {
+    translation IS translation
+    rotation IS rotation
+    children [
+      Camera {
+        name IS name
+        fieldOfView IS fieldOfView
+        width IS width
+        height IS height
+        near IS near
+        noise IS noise
+      }
+      # Corpo (4 x 5 x 5 cm), atrás do centro óptico para não aparecer na
+      # própria imagem.
+      Pose {
+        translation -0.02 0 0
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.05 0.05 0.05
+              roughness 1
+              metalness 0
+            }
+            geometry Box {
+              size 0.04 0.05 0.05
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
