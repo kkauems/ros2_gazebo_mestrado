@@ -53,7 +53,7 @@ Fechar o Webots encerra o launch inteiro.
 | `vslam_db` | `~/.ros/agrobot_vslam/<mundo>.db` | Banco do RTAB-Map. **O mapeamento apaga o banco ao começar** |
 | `rtabmap_viz` | `false` | Abre a janela do `rtabmap_viz` |
 | `data_camera` | `false` | Câmera RGB de aquisição de dados (seção 6) |
-| `data_record` | `false` | Grava as fotos da câmera de aquisição com a pose de cada uma (seção 6). Exige `data_camera:=true` |
+| `data_record` | `true` | Com `data_camera:=true`, grava as fotos com a pose de cada uma (seção 6). `false` só mostra as imagens |
 | `data_dir` | `fotos/` na raiz do projeto | Pasta das fotos gravadas |
 | `data_min_distance` | `0.3` | Distância mínima (m) entre duas fotos gravadas |
 | `waypoints` | vazio | Missão de waypoints: nome de uma lista em `config/waypoints/`, caminho de um `.yaml`, ou `rviz` para clicar os pontos |
@@ -75,7 +75,7 @@ ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:
 
 # Com a câmera de aquisição ligada, gravando as fotos
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
-    data_camera:=true data_record:=true
+    data_camera:=true
 ```
 
 - **Objetivo avulso:** no RViz, ferramenta **Nav2 Goal**. Sem SLAM/VSLAM as coordenadas
@@ -230,7 +230,8 @@ Desligada por padrão, para não pesar nas rodadas de navegação.
   ```
 - No RViz, o painel "Data Camera" vem desmarcado.
 
-**Gravação das fotos (`data_record:=true`, nó `data_recorder`).** Uma pasta por execução,
+**Gravação das fotos (nó `data_recorder`, sobe com `data_camera:=true`; `data_record:=false`
+desliga).** Uma pasta por execução,
 `fotos/<mundo>_<modo>_<data>/` na raiz do projeto (o modo é o mesmo rótulo dos CSVs das
 missões, como `ekf+vslam`), com:
 - `000001.png`, `000002.png`, ...: as fotos em RGB, sem perdas (~2 a 3 MB cada);

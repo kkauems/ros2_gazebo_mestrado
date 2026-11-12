@@ -237,6 +237,8 @@ class DataRecorder(Node):
         self.csv_file = None
         self.csv_writer = None
         self.saved = 0
+        self.received = 0
+        self.warned_no_image = False
         self.skipped = 0
         self.last_position = None
         self.create_timer(0.1, self.process_pending)
@@ -270,6 +272,7 @@ class DataRecorder(Node):
             del self.ground_truth[min(self.ground_truth)]
 
     def image_callback(self, message):
+        self.received += 1
         self.pending.append(message)
         if len(self.pending) > MAX_PENDING:
             self.pending.pop(0)
@@ -314,6 +317,13 @@ class DataRecorder(Node):
 
     def process_pending(self):
         now = self.get_clock().now()
+        if (not self.received and not self.warned_no_image
+                and now.nanoseconds > 15e9):
+            self.warned_no_image = True
+            self.get_logger().warn(
+                f'Nenhuma imagem em {IMAGE_TOPIC} depois de 15 s de '
+                'simulação: a câmera está ligada (data_camera:=true e '
+                '/data_camera/enable)?')
         while self.pending:
             message = self.pending[0]
             stamp = Time.from_msg(message.header.stamp)

@@ -444,8 +444,9 @@ def generate_launch_description():
 
     def start_recorder(context):
         # Grava as fotos da câmera de aquisição com a pose estimada e a
-        # verdadeira de cada uma (data_recorder.py).
-        if not flag(context, 'data_record'):
+        # verdadeira de cada uma (data_recorder.py). Sobe junto com a câmera
+        # (data_camera:=true); data_record:=false só mostra as imagens.
+        if not (flag(context, 'data_camera') and flag(context, 'data_record')):
             return []
         parameters = {
             'frame': global_frame(context),
@@ -466,15 +467,6 @@ def generate_launch_description():
         )]
 
     recorder = OpaqueFunction(function=start_recorder)
-
-    def check_recorder(context):
-        # Antes do Webots, como o start_vslam: sem a câmera não há o que
-        # gravar.
-        if flag(context, 'data_record') and not flag(context, 'data_camera'):
-            raise RuntimeError(
-                'data_record:=true precisa da câmera de aquisição '
-                '(data_camera:=true).')
-        return []
 
     def start_rviz(context):
         # Com slam ou vslam, o RViz usa o frame map; com slam, mostra o /map
@@ -517,9 +509,10 @@ def generate_launch_description():
         # Câmera RGB de aquisição de dados (/data_camera/...), desligada por
         # padrão para não pesar nas rodadas que não coletam imagens.
         DeclareLaunchArgument('data_camera', default_value='false'),
-        # Gravação das fotos (data_recorder): pasta (padrão fotos/ na raiz
-        # do projeto) e distância mínima entre fotos (m).
-        DeclareLaunchArgument('data_record', default_value='false'),
+        # Gravação das fotos (data_recorder), ligada sempre que a câmera de
+        # aquisição estiver: pasta (padrão fotos/ na raiz do projeto) e
+        # distância mínima entre fotos (m).
+        DeclareLaunchArgument('data_record', default_value='true'),
         DeclareLaunchArgument('data_dir', default_value=''),
         DeclareLaunchArgument('data_min_distance', default_value='0.3'),
         DeclareLaunchArgument('vslam', default_value='false'),
@@ -532,7 +525,6 @@ def generate_launch_description():
         # Antes do Webots: se faltar o ekf, a câmera ou o mapa salvo, o launch
         # para com o erro sem abrir o Webots.
         vslam,
-        OpaqueFunction(function=check_recorder),
         webots,
         agrobot_driver,
         robot_state_publisher,
