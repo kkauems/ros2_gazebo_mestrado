@@ -124,6 +124,7 @@ Launch arguments:
 | `vslam` | `false` | `true`: RTAB-Map maps with the RGB-D camera and the lidar and publishes TF `map → odom`, `/rtabmap/map` and `/rtabmap/mapPath` ([VSLAM](#vslam-rtab-map)). Needs `ekf:=true` and `camera:=true`. With `slam:=true` too, slam_toolbox keeps running without TF, for comparison. Nav2 plans in `map`, as with `slam:=true` |
 | `vslam_localization` | `false` | With `vslam:=true`: localize on a saved RTAB-Map database instead of mapping (the database isn't changed) |
 | `vslam_db` | `~/.ros/agrobot_vslam/<world>.db` | RTAB-Map database. Mapping erases it at start |
+| `slip_check` | `true` | With `ekf:=true` and `camera:=true`: wheel-slip check. `rgbd_odometry` (RTAB-Map) measures the robot's speed from the RGB-D camera (`/vo/odom`), and `wheel_slip_monitor` compares it with the wheels. When they disagree (robot stuck with the wheels spinning, or dragged with them stopped), the EKF gets the camera's speed instead of the wheels' (`/wheel/odom_checked`). The CSV mode becomes `ekf-vo`. `false`: the EKF reads `/wheel/odom` directly, as before |
 | `rtabmap_viz` | `false` | With `vslam:=true`: also open the `rtabmap_viz` window (loop closures, features) |
 | `waypoints` | (empty) | Name of a waypoint list in `config/waypoints/` (without `.yaml`), a path to a `.yaml`, or `rviz` to click the waypoints in RViz. Starts `waypoint_mission`, which drives the robot through the list once Nav2 is up ([below](#waypoint-missions)) |
 
@@ -412,12 +413,14 @@ ros2 lifecycle get /bt_navigator        # should be "active [3]"
                                                      │ publishes  /odom, TF odom→base_link (ekf:=false),
                                                      │            /wheel/odom, /imu/data, /clock,
                                                      │            /scan, /joint_states,
-                                                     │            /vslam_camera/... (camera:=true),
-                                                     │            /data_camera/... (data_camera:=true)
-ekf_filter_node (ekf:=true) ◄── /wheel/odom, /imu/data   ──► /odom, TF odom→base_link
+                                                     │            /vslam_camera/... (camera:=true)
+ekf_filter_node (ekf:=true) ◄── /wheel/odom_checked (or /wheel/odom with slip_check:=false), /imu/data
+                                ──► /odom, TF odom→base_link
+rgbd_odometry (slip_check)  ◄── /rtabmap/rgbd_image ──► /vo/odom (camera-only speed, no TF)
+wheel_slip_monitor          ◄── /wheel/odom, /vo/odom ──► /wheel/odom_checked, /wheel/slip
 slam_toolbox (slam:=true)   ◄── /scan, TF odom→base_link ──► /map, /pose, TF map→odom
 ekf_map_node (slam:=true)   ◄── /wheel/odom, /imu/data, /pose ──► /odometry/map (no TF)
-rgbd_sync (vslam:=true)     ◄── /vslam_camera/... ──► /rtabmap/rgbd_image
+rgbd_sync (vslam or slip)   ◄── /vslam_camera/... ──► /rtabmap/rgbd_image
 rtabmap (vslam:=true)       ◄── /rtabmap/rgbd_image, /scan, TF odom→base_link
                                 ──► /rtabmap/map, /rtabmap/mapPath, TF map→odom
    (with vslam:=true, slam_toolbox publishes no TF and its map moves to /slam_toolbox/map,
@@ -437,6 +440,9 @@ waypoint_mission (waypoints:=...) ─FollowWaypoints─► waypoint_follower ─
 | `/cmd_vel` | `geometry_msgs/Twist` | velocity_smoother / you | `linear.x`, `angular.z` only |
 | `/odom` | `nav_msgs/Odometry` | AgrobotDriver, or the EKF with `ekf:=true` | driver: wheel distance + IMU yaw |
 | `/wheel/odom` | `nav_msgs/Odometry` | AgrobotDriver | wheels only (yaw from the wheels too), EKF input |
+| `/wheel/odom_checked` | `nav_msgs/Odometry` | wheel_slip_monitor (`slip_check:=true`) | `/wheel/odom`, with `vx`/`vy` and their variances replaced by the camera's while the wheels slip. EKF input |
+| `/wheel/slip` | `std_msgs/Bool` | wheel_slip_monitor | `true` while the wheels slip, transient local |
+| `/vo/odom` | `nav_msgs/Odometry` | rgbd_odometry (`slip_check:=true`) | visual odometry of the RGB-D camera; only the twist is used. Frame `vo_odom` (not in TF) |
 | `/imu/data` | `sensor_msgs/Imu` | AgrobotDriver | frame `imu_link`: orientation, gyro, accelerometer, sensor-data QoS |
 | `/clock` | `rosgraph_msgs/Clock` | AgrobotDriver | Webots sim time, every step |
 | `/scan` | `sensor_msgs/LaserScan` | AgrobotDriver | frame `front_lidar_link`, 300 rays, 3.0 rad FOV, 0.1–8 m, sensor-data QoS |
@@ -544,6 +550,13 @@ In Gazebo, the robot uses the `gz-sim-diff-drive-system` plugin and the tall `li
   but nothing it fuses measures the distance traveled. `slam:=true` or `vslam:=true`
   corrects it in the `map` frame (`map → odom`; 0.11 m RMS with `vslam:=true` in the same
   test), and Nav2 then plans and takes goals in `map`.
+- **Wheel slip when the robot gets stuck.** Against the stone at the east headland of
+  `plantation_field.wbt`, the wheels can spin with the robot stopped, and the wheel odometry
+  then runs away (1.5 m in 6 s). `slip_check:=true` (the default with `ekf:=true`) catches
+  it with the camera's visual odometry: pushing against a wall for 17 s, the `/odom` error
+  stayed at 0.3 m instead of 7 m. Slips smaller than ~0.1 m/s + 30% of the speed aren't
+  caught (normal skid-steer slip in turns is about that), and if the camera loses tracking
+  for more than 3 s during a slip, the wheels come back.
 - **Lidar SLAM loses its heading in the plantation.** At the east headland of
   `plantation_field.wbt`, slam_toolbox's yaw went 10–23° off in every waypoint run with
   `slam:=true`. The next lane then looks tilted in `map`, its waypoints land on a plant row and

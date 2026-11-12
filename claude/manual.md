@@ -2010,6 +2010,112 @@ canal `robostack-jazzy`; launch real `simulation.launch.py ... rviz:=false`; tab
 **Não testado:** Windows/WSL, RViz, várias rodadas de cada caso (uma ou duas por modo), a
 localização com o robô começando fora do primeiro nó, sensores com ruído.
 
+### 2026-11-02 — Patinagem das rodas: checagem pela odometria visual da câmera
+
+**Pedido.** Na comparação do passo 3 (PR #14), o robô ficou preso contra a pedra perto de
+(11,8; -1,5) na cabeceira leste do caso 3, com as rodas girando: a odometria do EKF andou
+~1,5 m em ~6 s com o robô parado, o RTAB-Map não corrigiu (desde o PR #13 ele só fecha laço
+por proximidade, a até 1 m da pose do EKF) e o robô seguiu na entrelinha errada. Aconteceu na
+rodada 2 do caso 3 com EKF e na rodada 1 com VSLAM. Kauê pediu para corrigir: "isso não pode
+acontecer".
+
+**O que mudou**
+- `agrobot_webots/agrobot_webots/wheel_slip_monitor.py` (novo): fica entre o driver e o EKF.
+  Recebe as rodas (`/wheel/odom`) e a odometria visual da câmera (`/vo/odom`) e republica as
+  rodas em `/wheel/odom_checked`, que o EKF passa a ler.
+  - A cada quadro da câmera, compara a velocidade dela com a média das rodas no mesmo
+    intervalo entre quadros (a câmera chega atrasada; comparar com a última mensagem das
+    rodas dava falso alarme nas acelerações).
+  - Patinagem = as duas discordam por mais de 0,10 m/s + 30% da velocidade durante 0,5 s.
+    Patinando, vx e vy das rodas são trocados pelos da câmera, com a variância dela (piso de
+    (5 cm/s)²). Termina quando as duas concordam durante 1 s.
+  - Se a câmera se perde por alguns quadros durante a patinagem (o robô sacudindo contra a
+    pedra), a última velocidade dela continua valendo, com o desvio-padrão crescendo
+    0,1 m/s por segundo, por até 3 s (`hold_time`). Depois disso, as rodas voltam.
+  - Sem odometria visual (nó desligado, câmera perdida), as rodas passam sem mudança.
+  - `/wheel/slip` (`std_msgs/Bool`, transient local): `true` enquanto patina. O log avisa o
+    início e o fim de cada patinagem.
+  - Só a velocidade linear é trocada; o yaw continua vindo da IMU.
+- `agrobot_webots/config/rtabmap.yaml`: seção nova `/rtabmap/rgbd_odometry`. Odometria
+  visual quadro contra mapa local (F2M), GFTT/ORB como o rtabmap, profundidade até 5 m,
+  `Vis/MinInliers` 15, sem TF (`publish_tf: false`, `odom_frame_id: vo_odom`) e sem chute
+  de movimento (com o EKF como chute, a patinagem entraria na própria referência). 6 graus de
+  liberdade (`Reg/Force3DoF` false): preso na pedra o robô sobe e balança, e com 3 graus a
+  câmera se perdia a cada sacudida. Perdida, recomeça no quadro seguinte
+  (`Odom/ResetCountdown` 1) e publica variância 9999, que o monitor descarta.
+- `agrobot_webots/launch/simulation.launch.py`: argumento `slip_check` (padrão `true`).
+  Com `ekf:=true` e `camera:=true`, sobe o `rgbd_odometry` (namespace `rtabmap`,
+  `odom` → `/vo/odom`), o `wheel_slip_monitor` e, sem `vslam:=true`, o `rgbd_sync`
+  (função `rgbd_sync_node`, usada também pelo VSLAM). O EKF virou `OpaqueFunction` para
+  trocar `odom0` para `/wheel/odom_checked`. O modo nos CSVs da missão passa a ser
+  `ekf-vo` (por exemplo `ekf-vo+vslam`), para não misturar com as rodadas antigas.
+  `slip_check:=false` volta ao arranjo anterior.
+- `agrobot_webots/setup.py` (executável `wheel_slip_monitor`), `package.xml`
+  (`rtabmap_odom`, `std_msgs`), `README.md` (argumento, tópicos, arquitetura, "Known
+  issues").
+- O fechamento de laço do RTAB-Map não mudou (continua só por proximidade, PR #13).
+
+**Por quê**
+- *A causa é a odometria, não o RTAB-Map.* Com o robô parado e as rodas girando, nada que o
+  EKF funde mede o deslocamento (a IMU vê aceleração zero parado e a velocidade constante).
+  O erro entra no `odom`, e a proximidade do RTAB-Map parte dele. Corrigindo a odometria,
+  o erro não chega a 1 m e a proximidade continua bastando, sem religar a detecção global
+  (que trazia os fechamentos falsos entre entrelinhas iguais).
+- *Câmera e não LiDAR como referência:* a câmera olha o chão, que tem textura em toda a
+  plantação, inclusive nas cabeceiras; o scan das fileiras se repete ao longo da entrelinha.
+  A câmera já existe com `vslam:=true` (a localização oficial).
+- *Trocar as rodas, e não fundir a câmera sempre no EKF:* fora da patinagem o EKF fica
+  igual ao validado antes; só a patinagem muda o comportamento. Fundir as duas sempre
+  deixaria o filtro na média (metade da patinagem passaria).
+- *Ideia do RTAB-Map com raio maior quando a covariância cresce:* não feita. A covariância do
+  EKF não cresce na patinagem (as rodas dizem que estão certas), e o rtabmap não muda o raio
+  em execução.
+
+**Como foi testado** (nuvem Linux sem GPU, Webots R2025a, `WEBOTS_OFFSCREEN=1`, ROS 2 Jazzy
+do RoboStack com Nav2, robot_localization e rtabmap 0.23.13 do canal `robostack-jazzy`;
+launch real `simulation.launch.py ... ekf:=true vslam:=true rviz:=false`)
+
+Robô preso de propósito (cópias do `plantation_field.wbt` só para o teste, fora do
+repositório; `nav:=false`, `/cmd_vel` constante por 20 s; erro = `/odom` contra a pose
+verdadeira):
+
+| Teste | Erro no fim, sem a checagem | Com a checagem |
+|---|---|---|
+| Parede fixa 1 m à frente, 0,4 m/s (17 s empurrando) | 6,96 m | 0,29 m |
+| A pedra real (5,8; -1,5) do mundo, de frente, 0,25 m/s com giro de 0,2 rad/s (rasteja nela a ~0,06 m/s por ~6 s) | 1,30 m | 0,38 m |
+| A pedra real, de lado, 0,3 m/s com giro de 0,3 rad/s | 1,46 m | 0,49 m |
+
+- Na parede, a patinagem foi detectada 0,5 s depois do choque; o erro que sobra é esse meio
+  segundo mais o atraso da câmera. Nos dois testes da pedra, ~0,35 m do erro já existia
+  antes de ela (é o escorregamento normal nas curvas, que fica abaixo da tolerância).
+
+Caso 3 (serpentina) com `ekf:=true vslam:=true` e a checagem (tabela do
+`summarize_missions.py`):
+
+| Rodada | Atingidos | Tempo (s) | Distância (m) | Erro final (m) | ATE (m) | Erro máx. (m) | Patinagens |
+|---|---|---|---|---|---|---|---|
+| 1 (primeira versão) | 10/11 | 343 | 54,4 | 0,23 | 0,38 | 1,29 | 10 |
+| 2 | 11/11 | 236 | 55,8 | 0,17 | 0,15 | 0,32 | 0 |
+| 3 | 11/11 | 290 | 57,8 | 0,25 | 0,19 | 0,35 | 2 |
+
+- Rodada 1: o robô ficou preso na pedra de novo por ~27 s, entre os waypoints 8 e 9. A
+  patinagem foi detectada, mas a primeira versão do monitor voltava às rodas a cada quadro
+  perdido da câmera e precisava de 0,5 s para detectar de novo: 10 detecções, ~0,2 m vazando
+  em cada uma, erro máximo de 1,29 m (contra ~1,5 m antes). O waypoint 9 saiu "atingido" a
+  0,72 m. Daí vieram o `hold_time`, a comparação pelo intervalo entre quadros e os 6 graus de
+  liberdade da odometria visual, testados nas linhas de cima e nas rodadas 2 e 3.
+- Rodadas 2 e 3: o robô não ficou preso. Nenhum alarme falso que atrapalhasse: na rodada 3,
+  uma detecção de 1,2 s com rodas 0 e câmera 0,21 m/s foi real (o robô girando no lugar
+  desloca o `base_link` de lado, e a pose verdadeira andou 0,25 m/s sem as rodas
+  avançarem); a outra, de 1,2 s, num giro no lugar.
+- Os tempos de relógio foram de 7 a 11 min por rodada do caso 3, como antes.
+- `ament_flake8` e `ament_pep257` no nó novo: sem problemas; no launch, só os avisos de
+  ordem de import que já existem na main.
+
+**Não testado:** Windows/WSL (o custo do `rgbd_odometry` além do RTAB-Map no PC do Kauê),
+RViz, `slip_check` com `ekf:=true` sem `vslam:=true` numa missão (só nos testes de robô
+preso, que rodaram com `vslam:=true`), o robô preso na pedra numa missão com a versão final
+(nas rodadas 2 e 3 ele não ficou preso), sensores com ruído.
 ### 2026-10-29 — Comparação dos métodos de localização nos três casos (passo 3)
 
 **Pedido.** Kauê pediu o passo 3: repetir os três casos de estudo (1 arena, 2 ida e volta
