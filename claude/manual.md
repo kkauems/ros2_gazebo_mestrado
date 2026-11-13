@@ -320,9 +320,21 @@ Desligada por padrão, para não pesar nas rodadas de navegação.
 - No RViz, o painel "Data Camera" vem desmarcado.
 
 **Gravação das fotos (nó `data_recorder`, sobe com `data_camera:=true`; `data_record:=false`
-desliga).** Uma pasta por execução,
-`dados/fotos/<mundo>_<modo>_<data>/` (o modo é o mesmo rótulo dos CSVs das
-missões, como `ekf+vslam`), com:
+desliga).**
+- **Com missão** (`waypoints:=...`): a câmera fica desligada fora da missão. O
+  `waypoint_mission` liga a câmera quando o Nav2 aceita a missão e desliga no fim, e as fotos
+  vão para `dados/fotos/<caso>_<modo>_<data>/`, o **mesmo prefixo** dos CSVs da missão em
+  `dados/missions/` (a data é a do início da missão). Assim cada pasta de fotos casa com a
+  sua trajetória. Com `waypoints:=rviz`, cada `start` abre uma pasta nova.
+- **Sem missão:** grava a execução inteira em `dados/fotos/<mundo>_<modo>_<data>/`.
+
+```bash
+# Missão com aquisição de fotos (localização oficial: EKF+VSLAM)
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
+    waypoints:=caso3_plantacao_serpentina data_camera:=true
+```
+
+Cada pasta tem:
 - `000001.png`, `000002.png`, ...: as fotos em RGB, sem perdas (~2 a 3 MB cada);
 - `fotos.csv`: uma linha por foto, com o tempo de simulação, a pose **estimada** da câmera
   (`est_*`, pelo TF `map → data_camera_optical_frame` no carimbo da foto; `odom` sem
@@ -342,11 +354,15 @@ Regras do gravador:
   colunas `est_*` vazias e avisa no log.
 - A pose verdadeira é relativa à primeira mensagem do `/ground_truth/odom` que o nó recebe; por
   isso ele tem que subir junto com a simulação (o launch faz isso).
-- Ainda não está ligado às missões de waypoints: grava enquanto a câmera estiver ligada e o
-  robô andando. Para gravar só um trecho, use o serviço `/data_camera/enable`.
+- O início e o fim vêm do `waypoint_mission` pelo tópico `/data_recorder/session` (o prefixo
+  no início, uma string vazia no fim). Fora de missão, para gravar só um trecho, use o
+  serviço `/data_camera/enable`.
 
-A câmera já renderizou no Webots (no teste da avaliação, abaixo, por um controlador sem ROS), mas
-o driver e o gravador ainda não rodaram juntos no simulador.
+Conferido no Webots (nuvem, headless) no caso 2 da plantação com EKF+VSLAM: a câmera ficou
+desligada até a missão, gravou 57 fotos em 96 s (erro xy da câmera de 0,13 m em média, 0,22 m
+no máximo) e desligou no fim, com a pasta e os CSVs com o mesmo prefixo. Atenção ao cruzar as
+duas: o `t_s` do `fotos.csv` é o tempo de simulação, e o dos CSVs da missão conta do início da
+missão.
 
 **Avaliação das fotos (`scripts/avaliar_aquisicao.py`, fora da simulação).** Responde quantas
 plantas foram fotografadas e quão bem cada foto está georreferenciada:
@@ -465,7 +481,7 @@ apresentação, os resultados do passo 3 e os próximos passos.
 ## 10. Limites conhecidos
 
 - Quase tudo foi validado na nuvem Linux, headless e sem GPU; os testes no Windows/WSL e no
-  RViz na tela ainda são poucos. A câmera de aquisição só rodou no Webots sem o ROS (seção 6).
+  RViz na tela ainda são poucos. A câmera de aquisição só rodou no Webots na nuvem; falta medir o custo no Windows.
 - A profundidade da RGB-D e o IMU não têm ruído na simulação.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
   aviso "Mapa salvo" e o `map:` nas missões só foram conferidos fora do simulador.

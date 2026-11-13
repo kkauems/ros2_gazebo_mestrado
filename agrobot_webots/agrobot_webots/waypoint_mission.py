@@ -36,6 +36,12 @@ o nó sozinho, o padrão é ~/.ros/agrobot_missions):
 A pose verdadeira vem de /ground_truth/odom (Supervisor do Webots), trazida
 para o frame da partida. Ela só é usada para medir, nunca para navegar.
 
+Com data_camera (o launch liga com data_camera:=true), a câmera de aquisição
+fica desligada fora das missões: no início de cada missão o nó a liga
+(/data_camera/enable) e manda o prefixo <caso>_<modo>_<data> dos CSVs para o
+data_recorder (/data_recorder/session), que grava as fotos numa pasta com
+esse nome; no fim, manda uma string vazia e desliga a câmera.
+
 Tópicos:
     /waypoints/markers   (visualization_msgs/MarkerArray)  saída, para o RViz
     /ground_truth/odom   (nav_msgs/Odometry)               entrada, opcional
@@ -53,9 +59,10 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
-from std_srvs.srv import Trigger
+from std_msgs.msg import String
+from std_srvs.srv import SetBool, Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 import yaml
@@ -78,6 +85,9 @@ WAYPOINT_FIELDS = [
     'erro_est_alvo_m', 'erro_real_alvo_m', 'erro_localizacao_m',
     'erro_localizacao_yaw_rad', 'distancia_real_m',
 ]
+CAMERA_ENABLE_SERVICE = '/data_camera/enable'
+RECORDER_SESSION_TOPIC = '/data_recorder/session'
+
 TRAJECTORY_FIELDS = [
     't_s', 'waypoint_atual', 'est_x', 'est_y', 'est_yaw',
     'real_x', 'real_y', 'real_yaw',
@@ -149,6 +159,9 @@ class WaypointMission(Node):
             'output_dir',
             os.path.join(os.path.expanduser('~'), '.ros', 'agrobot_missions'))
         self.declare_parameter('trajectory_rate', 5.0)
+        # Liga a câmera de aquisição e a gravação das fotos só durante as
+        # missões (data_camera:=true no launch).
+        self.declare_parameter('data_camera', False)
 
         path = self.get_parameter('waypoints_file').value
         self.frame = self.get_parameter('frame').value
@@ -197,6 +210,24 @@ class WaypointMission(Node):
         self.create_service(Trigger, '~/clear', self.clear_service)
         self.create_service(Trigger, '~/save', self.save_service)
 
+        self.data_camera = bool(self.get_parameter('data_camera').value)
+        if self.data_camera:
+            self.camera_client = self.create_client(
+                SetBool, CAMERA_ENABLE_SERVICE)
+            self.session_publisher = self.create_publisher(
+                String, RECORDER_SESSION_TOPIC, QoSProfile(
+                    depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                    durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            # Estado pedido para a câmera e o último confirmado pelo driver.
+            # Os pedidos vão um de cada vez, pelo timer, para um "desliga"
+            # atrasado nunca chegar depois do "liga" da missão. A câmera
+            # nasce ligada no driver; fica desligada até a missão começar.
+            self.camera_wanted = False
+            self.camera_state = None
+            self.camera_call = None
+            self.create_timer(0.5, self.sync_camera)
+
+        self.prefix = None
         self.start_timer = None
         self.reset_progress()
         rate = float(self.get_parameter('trajectory_rate').value)
@@ -236,6 +267,51 @@ class WaypointMission(Node):
             return None
         return (t.transform.translation.x, t.transform.translation.y,
                 yaw_from_quaternion(t.transform.rotation))
+
+    # Câmera de aquisição -------------------------------------------------
+
+    def sync_camera(self):
+        if self.camera_call is not None:
+            if not self.camera_call.done():
+                return
+            call, self.camera_call = self.camera_call, None
+            try:
+                ok = bool(call.result().success)
+            except Exception as error:  # noqa: B902 - só para avisar no log
+                self.get_logger().warn(f'{CAMERA_ENABLE_SERVICE}: {error}')
+                ok = False
+            if ok:
+                self.camera_state = self.camera_sent
+                if not self.camera_sent and self.start_time is None:
+                    self.get_logger().info(
+                        'Câmera de aquisição desligada até o início da '
+                        'missão.')
+        if self.camera_state == self.camera_wanted:
+            return
+        if not self.camera_client.service_is_ready():
+            return
+        request = SetBool.Request()
+        request.data = self.camera_wanted
+        self.camera_sent = self.camera_wanted
+        self.camera_call = self.camera_client.call_async(request)
+
+    def set_camera(self, enabled):
+        self.camera_wanted = enabled
+        self.sync_camera()
+
+    def start_recording(self):
+        if not self.data_camera:
+            return
+        self.set_camera(True)
+        self.session_publisher.publish(String(data=self.prefix))
+        self.get_logger().info(
+            f'Gravação das fotos ligada: dados/fotos/{self.prefix}/')
+
+    def stop_recording(self):
+        if not self.data_camera:
+            return
+        self.session_publisher.publish(String(data=''))
+        self.set_camera(False)
 
     # Edição pelo RViz ------------------------------------------------------
 
@@ -378,6 +454,10 @@ class WaypointMission(Node):
         self.destroy_timer(self.start_timer)
         self.start_timer = None
         self.start_time = self.now_s()
+        # Prefixo comum aos CSVs e à pasta das fotos, com a hora do início.
+        self.prefix = (f'{self.case}_{self.run_label}_'
+                       f'{time.strftime("%Y%m%d-%H%M%S")}')
+        self.start_recording()
         self.last_truth_xy = self.truth[:2] if self.truth else None
         if self.truth is None:
             self.get_logger().warn(
@@ -405,6 +485,7 @@ class WaypointMission(Node):
             self.status[i] = MISSED if i in missed else REACHED
             self.records[i]['status'] = self.status[i]
         self.finished = True
+        self.stop_recording()
         self.publish_markers()
         self.write_csv()
 
@@ -467,9 +548,7 @@ class WaypointMission(Node):
 
     def write_csv(self):
         os.makedirs(self.output_dir, exist_ok=True)
-        prefix = os.path.join(
-            self.output_dir,
-            f'{self.case}_{self.run_label}_{time.strftime("%Y%m%d-%H%M%S")}')
+        prefix = os.path.join(self.output_dir, self.prefix)
         for suffix, fields, rows in (
                 ('waypoints', WAYPOINT_FIELDS, self.records),
                 ('trajetoria', TRAJECTORY_FIELDS, self.trajectory_rows)):
@@ -550,6 +629,8 @@ def main():
     finally:
         if node.goal_handle is not None and not node.finished:
             node.goal_handle.cancel_goal_async()
+            if node.data_camera and rclpy.ok():
+                node.stop_recording()
         node.destroy_node()
         rclpy.try_shutdown()
 

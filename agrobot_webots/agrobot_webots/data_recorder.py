@@ -13,9 +13,16 @@ Só grava uma foto se a câmera andou pelo menos min_distance desde a última
 gravada (pela pose estimada; sem ela, pela verdadeira), para não encher o
 disco com o robô parado.
 
-Saída, numa pasta por execução em output_dir (o launch passa dados/fotos/ no
-projeto; rodando o nó sozinho, o padrão é ~/.ros/agrobot_fotos):
-    <mundo>_<modo>_<data>/
+Ligada a uma missão (wait_for_mission, que o launch liga quando há
+waypoints), só grava entre o início e o fim de cada missão: o waypoint_mission
+publica em /data_recorder/session o prefixo dos CSVs da missão
+(<caso>_<modo>_<data>) no início e uma string vazia no fim, e cada missão
+ganha uma pasta com esse nome. Sem missão, grava a execução inteira numa
+pasta <mundo>_<modo>_<data>.
+
+Saída, em output_dir (o launch passa dados/fotos/ no projeto; rodando o nó
+sozinho, o padrão é ~/.ros/agrobot_fotos):
+    <caso>_<modo>_<data>/   (ou <mundo>_<modo>_<data>/ sem missão)
         000001.png, 000002.png, ...   RGB, sem perdas
         fotos.csv                     uma linha por foto
         camera_info.yaml              intrínsecos (iguais em todas as fotos)
@@ -44,15 +51,22 @@ import rclpy
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 IMAGE_TOPIC = '/data_camera/image_raw'
 INFO_TOPIC = '/data_camera/camera_info'
 GROUND_TRUTH_TOPIC = '/ground_truth/odom'
 CAMERA_FRAME = 'data_camera_optical_frame'
+# Início (prefixo da missão) e fim (string vazia) da gravação, publicados
+# pelo waypoint_mission. Latched, para o nó que subir depois ver o estado.
+SESSION_TOPIC = '/data_recorder/session'
+SESSION_QOS = QoSProfile(
+    depth=1, reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
 # Quanto esperar (tempo de simulação) pelo TF do carimbo da imagem. O
 # map -> odom e o odom -> base_link chegam um pouco depois da imagem.
@@ -211,15 +225,14 @@ class DataRecorder(Node):
             os.path.join(os.path.expanduser('~'), '.ros', 'agrobot_fotos'))
         self.declare_parameter('min_distance', 0.3)
         self.declare_parameter('png_compression', 6)
+        self.declare_parameter('wait_for_mission', False)
 
         self.frame = self.get_parameter('frame').value
         self.robot_frame = self.get_parameter('robot_frame').value
-        label = self.get_parameter('run_label').value or self.frame
-        world = os.path.splitext(self.get_parameter('world').value)[0]
-        name = '_'.join(
-            p for p in (world, label, time.strftime('%Y%m%d-%H%M%S')) if p)
-        self.folder = os.path.join(
-            os.path.expanduser(self.get_parameter('output_dir').value), name)
+        self.output_dir = os.path.expanduser(
+            self.get_parameter('output_dir').value)
+        self.wait_for_mission = bool(
+            self.get_parameter('wait_for_mission').value)
         self.min_distance = float(self.get_parameter('min_distance').value)
         self.png_level = int(self.get_parameter('png_compression').value)
 
@@ -232,6 +245,8 @@ class DataRecorder(Node):
             CameraInfo, INFO_TOPIC, self.info_callback, reliable)
         self.create_subscription(
             Odometry, GROUND_TRUTH_TOPIC, self.ground_truth_callback, 50)
+        self.create_subscription(
+            String, SESSION_TOPIC, self.session_callback, SESSION_QOS)
 
         self.camera_info = None
         self.ground_truth = {}         # carimbo (ns) -> (posição, rotação)
@@ -240,15 +255,48 @@ class DataRecorder(Node):
         self.pending = []
         self.csv_file = None
         self.csv_writer = None
+        self.folder = None
+        self.recording = False
+        self.create_timer(0.1, self.process_pending)
+        if self.wait_for_mission:
+            self.get_logger().info(
+                f'Esperando o início da missão para gravar as fotos em '
+                f'{self.output_dir} (uma a cada {self.min_distance:.2f} m, '
+                f'poses em {self.frame}).')
+        else:
+            label = self.get_parameter('run_label').value or self.frame
+            world = os.path.splitext(self.get_parameter('world').value)[0]
+            self.start_session('_'.join(
+                p for p in (world, label, time.strftime('%Y%m%d-%H%M%S'))
+                if p))
+
+    # Sessões (uma pasta cada) ------------------------------------------------
+
+    def start_session(self, name):
+        self.close_output()
+        self.pending = []
+        self.folder = os.path.join(self.output_dir, name)
         self.saved = 0
         self.received = 0
-        self.warned_no_image = False
         self.skipped = 0
+        self.warned_no_image = False
         self.last_position = None
-        self.create_timer(0.1, self.process_pending)
+        self.session_start = self.get_clock().now()
+        self.recording = True
         self.get_logger().info(
             f'Gravando fotos em {self.folder} (uma a cada '
             f'{self.min_distance:.2f} m, poses em {self.frame}).')
+
+    def stop_session(self):
+        # As fotos já na fila foram feitas durante a missão: process_pending
+        # termina de gravá-las e então fecha a pasta.
+        self.recording = False
+
+    def session_callback(self, message):
+        if message.data:
+            self.start_session(message.data)
+        elif self.recording:
+            self.stop_session()
 
     # Entradas ----------------------------------------------------------------
 
@@ -276,6 +324,8 @@ class DataRecorder(Node):
             del self.ground_truth[min(self.ground_truth)]
 
     def image_callback(self, message):
+        if not self.recording:
+            return
         self.received += 1
         self.pending.append(message)
         if len(self.pending) > MAX_PENDING:
@@ -321,12 +371,15 @@ class DataRecorder(Node):
 
     def process_pending(self):
         now = self.get_clock().now()
-        if (not self.received and not self.warned_no_image
-                and now.nanoseconds > 15e9):
+        if not self.recording and not self.pending:
+            self.close_output()
+            return
+        if (self.recording and not self.received and not self.warned_no_image
+                and now - self.session_start > Duration(seconds=15.0)):
             self.warned_no_image = True
             self.get_logger().warn(
                 f'Nenhuma imagem em {IMAGE_TOPIC} depois de 15 s de '
-                'simulação: a câmera está ligada (data_camera:=true e '
+                'gravação: a câmera está ligada (data_camera:=true e '
                 '/data_camera/enable)?')
         while self.pending:
             message = self.pending[0]
@@ -416,11 +469,18 @@ class DataRecorder(Node):
         self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=CSV_FIELDS)
         self.csv_writer.writeheader()
 
+    def close_output(self):
+        if self.csv_file is None:
+            return
+        self.csv_file.close()
+        self.csv_file = None
+        self.csv_writer = None
+        self.get_logger().info(
+            f'{self.saved} fotos gravadas em {self.folder} '
+            f'({self.skipped} puladas com o robô parado).')
+
     def finish(self):
-        if self.csv_file is not None:
-            self.csv_file.close()
-            self.get_logger().info(
-                f'{self.saved} fotos gravadas em {self.folder}.')
+        self.close_output()
 
 
 def main():
