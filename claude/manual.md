@@ -59,6 +59,7 @@ Fechar o Webots encerra o launch inteiro.
 | `data_min_distance` | `0.3` | Distância mínima (m) entre duas fotos gravadas |
 | `waypoints` | vazio | Missão de waypoints: nome de uma lista em `config/waypoints/`, caminho de um `.yaml`, ou `rviz` para clicar os pontos |
 | `teleop` | vazio | Teleoperação: `joy` (joystick) ou `keyboard` (teclado, num terminal próprio). O operador tem prioridade sobre o Nav2 (seção 5) |
+| `slip_check` | `true` | Checagem de patinagem das rodas pela odometria visual (seção 5). Só age com `ekf:=true` e `camera:=true` |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 9) |
 
 ### Usos mais comuns
@@ -196,11 +197,39 @@ Nav2: planeja em map, controla em odom ─► /cmd_vel ─► driver
 - Na simulação o EKF está favorecido: o `InertialUnit` não tem ruído nem deriva. Para uma
   comparação justa com o robô real, ligar ruído nos sensores do PROTO.
 
+### Checagem de patinagem (`wheel_slip_monitor`, `slip_check:=true`)
+
+Preso numa pedra ou num mourão com as rodas girando, as rodas dizem que o robô anda e o EKF
+vai junto; o IMU não percebe (parado e velocidade constante dão aceleração zero). Por isso um
+`rgbd_odometry` (odometria visual da câmera RGB-D, `/vo/odom`) mede a velocidade sem olhar as
+rodas, e o `wheel_slip_monitor` fica entre o driver e o EKF (`/wheel/odom` →
+`/wheel/odom_checked`). Normalmente as rodas passam sem mudança; durante a patinagem o EKF
+recebe a velocidade da câmera no lugar delas, e `/wheel/slip` fica `true`.
+
+A odometria visual erra de vez em quando, e um alarme falso faz o EKF seguir uma velocidade
+errada. A lógica (em `slip_detector.py`) se protege assim:
+- **Descarta leituras impossíveis:** acima de 0,8 m/s (o robô anda até 0,5) e as 3 primeiras
+  depois de a câmera se perder. Logo depois de recomeçar (`Odom/ResetCountdown: 1`) ela dava
+  picos de ~2 m/s para trás, que eram a origem dos alarmes falsos.
+- **Decide por janela:** só entra em patinagem quando, em 1,5 s, há pelo menos 8 leituras
+  válidas e 80% delas discordam das rodas; sai quando 80% concordam em 1 s. Os alarmes falsos
+  duravam ~1 s; preso, o robô fica vários segundos.
+- **Patinando, usa a mediana da câmera** do último meio segundo; se ela some, segura o último
+  valor com a incerteza crescendo por até 3 s, e depois devolve as rodas.
+
+Por que não pôr a câmera direto no EKF (`twist_rejection_threshold`): na patinagem as rodas
+(30 Hz) puxam o estado, e o teste de Mahalanobis rejeitaria justamente a câmera, que é quem
+está certa; e as variâncias do `rgbd_odometry` às vezes saem quase nulas.
+
+Na plantação, contra um mourão da cerca (0,4 m/s por 22 s, ~8 s preso): detectou em ~1,3 s
+e o erro final da pose ficou em 0,47 m, contra 2,8 m sem a checagem. O que o EKF anda antes
+da detecção (~0,45 m) fica no erro.
+
 ### VSLAM (`config/rtabmap.yaml`, `vslam:=true`)
 
 `rgbd_sync` + `rtabmap` no namespace `rtabmap`, a 1 Hz, 3DoF (x, y, yaw). Escolhas e motivos:
 - **Odometria do EKF, sem odometria visual:** economiza CPU; o RTAB-Map só corrige o
-  `map → odom`.
+  `map → odom`. (A odometria visual da checagem de patinagem não entra no RTAB-Map.)
 - **Um só dono de `map → odom`:** dois publicando fazem o robô pular entre duas poses.
 - **`Reg/Strategy` 2 (visual + ICP com o `/scan`) e `Optimizer/Robust` (Vertigo):** a
   textura do solo se repete a cada 2 m e gerava fechamentos falsos; o ICP e a otimização
