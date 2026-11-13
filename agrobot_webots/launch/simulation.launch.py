@@ -567,6 +567,10 @@ def generate_launch_description():
                 'world': LaunchConfiguration('world_name').perform(context),
                 'map': map_name(context),
                 'output_dir': data_dir('missions'),
+                # Câmera de aquisição e gravação das fotos só durante a
+                # missão, com o mesmo prefixo dos CSVs.
+                'data_camera': (flag(context, 'data_camera')
+                                and flag(context, 'data_record')),
                 'use_sim_time': True,
             }],
         )]
@@ -585,6 +589,10 @@ def generate_launch_description():
             'world': LaunchConfiguration('world_name').perform(context),
             'min_distance': float(
                 LaunchConfiguration('data_min_distance').perform(context)),
+            # Com missão, grava só durante ela (o waypoint_mission avisa o
+            # início e o fim); sem missão, grava a execução inteira.
+            'wait_for_mission': bool(
+                LaunchConfiguration('waypoints').perform(context)),
             'use_sim_time': True,
         }
         parameters['output_dir'] = (

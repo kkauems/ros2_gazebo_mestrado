@@ -111,7 +111,7 @@ window.NOS = [
   {
     id: 'mission', nome: 'waypoint_mission', grupo: 'missao', x: 820, y: 20,
     pacote: 'agrobot_webots', quando: 'waypoints:=<caso> ou waypoints:=rviz',
-    faz: 'Lê a lista de waypoints (YAML ou cliques no RViz) e manda tudo para o FollowWaypoints do Nav2, com parada de 3 s em cada ponto. Grava a pose estimada e a verdadeira em CSV para medir o erro.',
+    faz: 'Lê a lista de waypoints (YAML ou cliques no RViz) e manda tudo para o FollowWaypoints do Nav2, com parada de 3 s em cada ponto. Grava a pose estimada e a verdadeira em CSV para medir o erro. Com data_camera:=true, liga a câmera de aquisição só durante a missão.',
     entradas: ['config/waypoints/*.yaml ou /clicked_point', '/ground_truth/odom (só para medir)'],
     saidas: ['ação FollowWaypoints', '/waypoints/markers', 'dados/missions/*_trajetoria.csv'],
     porque: 'As coordenadas são do frame da partida, então a mesma lista vale com e sem VSLAM. A missão é recusada se o mundo ou o mapa não baterem.',
@@ -193,9 +193,9 @@ window.NOS = [
   {
     id: 'recorder', nome: 'data_recorder', grupo: 'missao', x: 620, y: 480,
     pacote: 'agrobot_webots', quando: 'data_camera:=true (data_record:=true)',
-    faz: 'Grava as fotos da câmera de aquisição em PNG e, para cada uma, a pose estimada da câmera (TF map → data_camera_optical_frame no instante da foto), a pose verdadeira e o erro entre as duas. Só grava se a câmera andou 0,3 m desde a última.',
+    faz: 'Grava as fotos da câmera de aquisição em PNG; com missão, só entre o início e o fim dela, numa pasta com o mesmo prefixo dos CSVs. Para cada foto, a pose estimada da câmera (TF map → data_camera_optical_frame no instante da foto), a pose verdadeira e o erro entre as duas. Só grava se a câmera andou 0,3 m desde a última.',
     entradas: ['/data_camera/image_raw', '/data_camera/camera_info', 'TF', '/ground_truth/odom'],
-    saidas: ['dados/fotos/<mundo>_<modo>_<data>/*.png', 'fotos.csv', 'camera_info.yaml'],
+    saidas: ['dados/fotos/<caso>_<modo>_<data>/*.png', 'fotos.csv', 'camera_info.yaml'],
     porque: 'Cada foto fica georreferenciada: dá para saber de que planta ela é e medir quanto a localização errou ali.',
     arquivo: 'agrobot_webots/agrobot_webots/data_recorder.py',
     partes: ['camdados'], camadas: ['camdados'],
@@ -304,7 +304,7 @@ window.ROTEIRO = [
   },
   {
     titulo: 'Aquisição de dados',
-    texto: '<p>A <b>câmera RGB de aquisição</b> (1280 × 960, uma foto por segundo) olha para a fileira à esquerda. A 0,9 m da fileira, cada foto cobre ~1,8 m de comprimento por 1,35 m de altura.</p><p>O <code>data_recorder</code> grava cada foto com a <b>pose estimada</b> e a <b>verdadeira</b> da câmera, para saber de que planta ela é e quanto a localização errou ali.</p><p class="aviso">Código pronto, ainda não rodado no Webots.</p>',
+    texto: '<p>A <b>câmera RGB de aquisição</b> (1280 × 960, uma foto por segundo) olha para a fileira à esquerda. A 0,9 m da fileira, cada foto cobre ~1,8 m de comprimento por 1,35 m de altura.</p><p>O <code>data_recorder</code> grava cada foto com a <b>pose estimada</b> e a <b>verdadeira</b> da câmera, para saber de que planta ela é e quanto a localização errou ali.</p><p>Com uma missão, a câmera liga no início e desliga no fim, e as fotos ficam numa pasta com o mesmo nome dos CSVs da trajetória.</p>',
     camera: 'lado', camadas: ['camdados', 'rotulos'], destaque: ['camdados'], no: 'recorder', metodo: 'ekf+vslam', mundo: 'plantacao',
   },
   {
@@ -324,7 +324,7 @@ window.ROTEIRO = [
   },
   {
     titulo: 'O que vem a seguir',
-    texto: '<p>Os próximos passos estão na aba <b>Próximos passos</b>: rodar a câmera de aquisição no Webots, ligar a gravação às missões, medir a cobertura das plantas, ruído nos sensores e, por fim, o <b>primeiro mapa no campo real</b>.</p>',
+    texto: '<p>Os próximos passos estão na aba <b>Próximos passos</b>: medir a cobertura das plantas, ruído nos sensores e, por fim, o <b>primeiro mapa no campo real</b>.</p>',
     camera: 'geral', camadas: ['rotulos', 'camdados'], destaque: ['camdados'], mundo: 'olival', aba: 'futuro', parado: true,
   },
 ];
@@ -342,15 +342,14 @@ window.FUTURO = [
       ['Mundos da plantação e do olival, gerados por script', 'plantation_field.wbt, olive_grove.wbt'],
       ['Teleoperação com prioridade sobre o Nav2 e mapas com nome', 'teleop:=joy | keyboard, vslam_db:=<nome>'],
       ['Checagem de patinagem das rodas pela odometria visual', 'wheel_slip_monitor'],
+      ['Câmera RGB de aquisição gravando fotos georreferenciadas, ligada às missões (mesmo prefixo dos CSVs)', 'data_camera:=true waypoints:=<caso>'],
     ],
   },
   {
     titulo: 'Aquisição de dados (em andamento)',
     estado: 'agora',
     itens: [
-      ['Rodar a câmera de aquisição e o data_recorder no Webots pela primeira vez', 'código pronto, conferido só fora do simulador'],
       ['Medir o custo no Windows (fator de tempo real) com as duas câmeras e o RTAB-Map', 'se pesar: foto a cada 2 s, 1024 × 768 ou JPEG'],
-      ['Ligar a gravação às missões: a missão liga a câmera no início e desliga no fim, com o mesmo prefixo dos CSVs', 'etapa 5 do plano da câmera'],
       ['Inventário das plantas e avaliação: cobertura (plantas vistas inteiras em ≥ 1 e ≥ 3 fotos) e erro de georreferência em metros e em pixels', 'etapa 6'],
       ['Rodadas de comparação da aquisição: casos 2 e 3, EKF × VSLAM', 'etapa 7'],
     ],
