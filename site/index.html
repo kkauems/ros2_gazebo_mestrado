@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agrobot em 3D</title>
+  <link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+  <header class="topo">
+    <div class="marca">
+      <strong>Agrobot</strong>
+      <span>robô agrícola autônomo · Webots + ROS 2 Jazzy</span>
+    </div>
+    <nav class="vistas" aria-label="Vista">
+      <button class="vista-btn" data-vista="3d">Robô 3D</button>
+      <button class="vista-btn" data-vista="grafo">Grafo de nós</button>
+    </nav>
+    <div class="acoes">
+      <button id="btn-painel" title="Mostrar ou esconder o painel (tecla p)">Painel</button>
+      <button id="btn-tela" title="Tela cheia">Tela cheia</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="vista">
+      <div id="cena3d"></div>
+
+      <div id="grafo" hidden>
+        <svg viewBox="0 0 1210 680" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Grafo dos nós ROS 2"></svg>
+        <p class="legenda-grafo">Passe o mouse num nó para ver os tópicos; clique para os detalhes. Tracejado: só para medir ou comparar.</p>
+      </div>
+
+      <div id="controles3d">
+        <div class="ctl-topo">
+          <label class="campo">Mundo
+            <select id="sel-mundo">
+              <option value="plantacao">Plantação (plantation_field)</option>
+              <option value="olival">Olival (olive_grove)</option>
+            </select>
+          </label>
+          <label class="campo" id="campo-metodo">Localização
+            <select id="sel-metodo">
+              <option value="ekf+vslam">EKF + VSLAM (oficial)</option>
+              <option value="ekf">Só EKF (rodas + IMU)</option>
+              <option value="ekf+slam">EKF + SLAM LiDAR (comparação)</option>
+            </select>
+          </label>
+          <p id="nota-olival" class="nota" hidden>Rota do caso 4 (ida e volta, ~160 m), ainda sem rodadas medidas: o robô segue a rota ideal.</p>
+          <div class="cams" role="group" aria-label="Câmera">
+            <button data-camera="geral">Robô</button>
+            <button data-camera="sensores">Sensores</button>
+            <button data-camera="lado">Lateral</button>
+            <button data-camera="segue">Seguir</button>
+            <button data-camera="cima">De cima</button>
+            <button data-camera="alto">Mundo</button>
+          </div>
+        </div>
+        <div class="ctl-camadas">
+          <button id="btn-camadas">Camadas ▾</button>
+          <div id="camadas"></div>
+        </div>
+        <div class="ctl-base">
+          <button id="btn-play" aria-label="Pausar">❚❚</button>
+          <select id="sel-vel" aria-label="Velocidade">
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="4" selected>4×</option>
+            <option value="8">8×</option>
+          </select>
+          <input id="tempo" type="range" min="0" max="1000" value="0" aria-label="Tempo da missão">
+          <span id="t-texto">0:00</span>
+          <span id="wp-texto"></span>
+          <span id="erro-texto"></span>
+        </div>
+      </div>
+    </section>
+
+    <aside id="painel">
+      <nav class="abas" aria-label="Painel">
+        <button class="aba" data-aba="apresentacao">Apresentação</button>
+        <button class="aba" data-aba="nos">Nós ROS 2</button>
+        <button class="aba" data-aba="futuro">Próximos passos</button>
+        <button class="aba" data-aba="resultados">Resultados</button>
+      </nav>
+
+      <div class="conteudo-aba" id="aba-apresentacao">
+        <div class="passo-cab">
+          <span id="passo-num"></span>
+          <div id="passo-pontos"></div>
+        </div>
+        <h2 id="passo-titulo"></h2>
+        <div id="passo-texto"></div>
+        <div class="passo-nav">
+          <button id="passo-ant">← Anterior</button>
+          <button id="passo-abrir" class="sec">Detalhes</button>
+          <button id="passo-prox" class="pri">Próximo →</button>
+        </div>
+        <p class="dica">Setas ← → avançam, espaço pausa, <kbd>g</kbd> alterna 3D e grafo, <kbd>p</kbd> esconde o painel. No 3D: arraste para girar, botão direito para mover, roda para zoom; clique numa parte do robô.</p>
+      </div>
+
+      <div class="conteudo-aba" id="aba-nos" hidden>
+        <div id="nos-lista"></div>
+        <div id="nos-detalhe" hidden></div>
+      </div>
+
+      <div class="conteudo-aba" id="aba-futuro" hidden></div>
+      <div class="conteudo-aba" id="aba-resultados" hidden></div>
+    </aside>
+  </main>
+
+  <script src="vendor/three.min.js"></script>
+  <script src="vendor/OrbitControls.js"></script>
+  <script src="vendor/STLLoader.js"></script>
+  <script src="js/malha_chassi.js"></script>
+  <script src="js/trajetorias.js"></script>
+  <script src="js/dados.js"></script>
+  <script src="js/cena.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
