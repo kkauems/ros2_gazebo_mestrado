@@ -39,6 +39,8 @@ setup(
             'waypoint_mission = agrobot_webots.waypoint_mission:main',
             'wheel_slip_monitor = agrobot_webots.wheel_slip_monitor:main',
             'data_recorder = agrobot_webots.data_recorder:main',
+            'cmd_vel_mux = agrobot_webots.cmd_vel_mux:main',
+            'teleop_keyboard = agrobot_webots.teleop_keyboard:main',
         ],
     },
 )
