@@ -1,0 +1,35 @@
+# Joystick (teleop:=joy). O game_controller_node do pacote joy (SDL) dá o
+# mesmo mapeamento para controles de Xbox, PlayStation e genéricos:
+#   eixos:  0 analógico esq. x (esquerda +), 1 analógico esq. y (frente +),
+#           2 analógico dir. x, 3 analógico dir. y, 4 e 5 gatilhos
+#   botões: 0 A/X, 1 B/círculo, 2 X/quadrado, 3 Y/triângulo, 4 back/share,
+#           5 guide/PS, 6 start/options, 7 e 8 analógicos, 9 LB/L1, 10 RB/R1
+# Conferir com: ros2 topic echo /joy (se um sentido sair trocado, troque o
+# sinal da escala).
+#
+# Segure LB/L1 para andar (botão de habilitar, "homem-morto"): soltou, o robô
+# para e, meio segundo depois, o Nav2 volta a comandar. RB/R1 no lugar de
+# LB/L1 é o modo rápido. Analógico esquerdo: frente/ré e giro.
+joy_node:
+  ros__parameters:
+    device_id: 0
+    deadzone: 0.1
+    autorepeat_rate: 20.0
+
+teleop_twist_joy_node:
+  ros__parameters:
+    require_enable_button: true
+    enable_button: 9
+    enable_turbo_button: 10
+    axis_linear:
+      x: 1
+    scale_linear:
+      x: 0.3
+    scale_linear_turbo:
+      x: 0.5
+    axis_angular:
+      yaw: 0
+    scale_angular:
+      yaw: 0.6
+    scale_angular_turbo:
+      yaw: 1.0

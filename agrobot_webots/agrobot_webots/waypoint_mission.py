@@ -15,6 +15,7 @@ arquivo vale com e sem SLAM: o launch escolhe o frame (odom ou map).
 
 Formato do arquivo:
     world: plantation_field.wbt      # opcional: recusa rodar em outro mundo
+    map: olival_mapa1                # opcional: recusa rodar com outro mapa
     waypoints:
       - {name: fim_entrelinha, x: 10.5, y: 0.0}
       - {name: cabeceira, x: 11.8, y: 1.8, yaw: 3.1416}
@@ -110,7 +111,7 @@ def load_waypoints(path):
             'yaw_in': (None if entry.get('yaw') is None
                        else float(entry['yaw'])),
         })
-    return data.get('world'), waypoints
+    return data.get('world'), data.get('map'), waypoints
 
 
 def fill_yaw(waypoints, origin):
@@ -141,6 +142,9 @@ class WaypointMission(Node):
         self.declare_parameter('robot_frame', 'base_link')
         self.declare_parameter('run_label', '')
         self.declare_parameter('world', '')
+        # Nome do mapa do RTAB-Map em uso (vazio sem VSLAM). Os waypoints
+        # marcados num mapa só valem nele: o frame map de outro mapa é outro.
+        self.declare_parameter('map', '')
         self.declare_parameter(
             'output_dir',
             os.path.join(os.path.expanduser('~'), '.ros', 'agrobot_missions'))
@@ -152,17 +156,28 @@ class WaypointMission(Node):
         self.run_label = self.get_parameter('run_label').value or self.frame
         self.output_dir = self.get_parameter('output_dir').value
         self.world = self.get_parameter('world').value
+        self.map = self.get_parameter('map').value
         if path:
             self.case = os.path.splitext(os.path.basename(path))[0]
-            file_world, self.waypoints = load_waypoints(path)
+            file_world, file_map, self.waypoints = load_waypoints(path)
         else:
             self.case = 'rviz'
-            file_world, self.waypoints = None, []
+            file_world, file_map, self.waypoints = None, None, []
         blocked = bool(file_world and self.world and file_world != self.world)
         if blocked:
             self.get_logger().error(
                 f'{self.case} é para o mundo {file_world}, mas o mundo é '
                 f'{self.world}. Missão cancelada.')
+        if file_map and self.map and file_map != self.map:
+            blocked = True
+            self.get_logger().error(
+                f'{self.case} foi marcado no mapa {file_map}, mas o mapa em '
+                f'uso é {self.map} (vslam_db:={file_map}). Missão cancelada.')
+        elif file_map and not self.map:
+            self.get_logger().warn(
+                f'{self.case} foi marcado no mapa {file_map}, mas o VSLAM '
+                'está desligado: as coordenadas valem a partir da partida, '
+                'sem a correção do mapa.')
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -285,6 +300,8 @@ class WaypointMission(Node):
                  f'# Coordenadas no frame {self.frame}, a partir da partida.']
         if self.world:
             lines.append(f'world: {self.world}')
+        if self.map:
+            lines.append(f'map: {self.map}')
         lines.append('waypoints:')
         for wp in self.waypoints:
             yaw = '' if wp['yaw_in'] is None else f', yaw: {wp["yaw_in"]:.4f}'

@@ -2,12 +2,14 @@ import os
 import re
 import shutil
 import tempfile
+import time
 
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
     IncludeLaunchDescription,
+    LogInfo,
     OpaqueFunction,
     RegisterEventHandler,
     SetLaunchConfiguration,
@@ -112,6 +114,20 @@ def flag(context, name):
     return LaunchConfiguration(name).perform(context).lower() == 'true'
 
 
+TELEOP_MODES = ('joy', 'keyboard')
+
+
+def teleop_mode(context):
+    """'joy', 'keyboard' ou '' (sem teleoperação)."""
+    mode = LaunchConfiguration('teleop').perform(context).strip().lower()
+    if mode in ('', 'false', 'none'):
+        return ''
+    if mode not in TELEOP_MODES:
+        raise RuntimeError(
+            f'teleop:={mode} não existe; use teleop:=joy ou teleop:=keyboard.')
+    return mode
+
+
 def slip_check_on(context):
     """Checagem de patinagem: pedida e com o EKF e a câmera ligados."""
     return (flag(context, 'slip_check') and flag(context, 'ekf')
@@ -131,19 +147,57 @@ def rgbd_sync_node(config):
     )
 
 
+def vslam_db_path(context):
+    """
+    Caminho do banco do RTAB-Map (o mapa).
+
+    vslam_db vazio: dados/vslam/<mundo>.db. Um nome sem pasta
+    (vslam_db:=olival_mapa1) fica em dados/vslam/, com .db no fim se faltar.
+    Com pasta, é o caminho do arquivo.
+    """
+    value = LaunchConfiguration('vslam_db').perform(context).strip()
+    if not value:
+        # world_name: o WebotsLauncher troca 'world' por uma cópia temporária.
+        world = LaunchConfiguration('world_name').perform(context)
+        value = os.path.splitext(os.path.basename(world))[0]
+    if os.sep in value or '/' in value:
+        return os.path.abspath(os.path.expanduser(value))
+    if not value.endswith('.db'):
+        value += '.db'
+    return data_dir('vslam', value)
+
+
+def map_name(context):
+    """Nome do mapa em uso (o do banco, sem .db), ou '' sem VSLAM."""
+    if not flag(context, 'vslam'):
+        return ''
+    return os.path.splitext(os.path.basename(vslam_db_path(context)))[0]
+
+
+def backup_old_map(path):
+    """
+    O mapeamento começa com o banco vazio. Se já existe um mapa com esse
+    nome, ele é renomeado para <nome>_<data>.db (a data do arquivo), em vez
+    de apagado.
+    """
+    if not os.path.isfile(path):
+        return None
+    stamp = time.strftime(
+        '%Y%m%d-%H%M%S', time.localtime(os.path.getmtime(path)))
+    root, ext = os.path.splitext(path)
+    backup = f'{root}_{stamp}{ext}'
+    os.replace(path, backup)
+    return backup
+
+
 def vslam_database(context):
     """
     Banco do RTAB-Map e se ele é de mapeamento.
 
-    O padrão é dados/vslam/<mundo>.db no projeto. O mapeamento apaga o banco ao
-    começar; a localização roda numa cópia, para o mapa salvo não mudar.
+    O mapeamento começa num banco vazio (o mapa anterior com o mesmo nome vira
+    um backup); a localização roda numa cópia, para o mapa salvo não mudar.
     """
-    path = LaunchConfiguration('vslam_db').perform(context)
-    if not path:
-        world = LaunchConfiguration('world').perform(context)
-        name = os.path.splitext(os.path.basename(world))[0]
-        path = data_dir('vslam', name + '.db')
-    path = os.path.abspath(os.path.expanduser(path))
+    path = vslam_db_path(context)
     if not flag(context, 'vslam_localization'):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         return path, True
@@ -349,6 +403,13 @@ def generate_launch_description():
         if not flag(context, 'camera'):
             raise RuntimeError('vslam:=true precisa da câmera (camera:=true).')
         database, mapping = vslam_database(context)
+        actions = []
+        if mapping:
+            backup = backup_old_map(database)
+            if backup:
+                actions.append(LogInfo(msg=(
+                    f'Já havia um mapa em {database}; ele foi guardado como '
+                    f'{backup}.')))
         config = os.path.join(webots_share, 'config', 'rtabmap.yaml')
         rtabmap_parameters = {
             'database_path': database,
@@ -361,19 +422,33 @@ def generate_launch_description():
             # no primeiro nó do mapa. Sem isso, a localização começaria onde
             # o mapeamento terminou.
             rtabmap_parameters['RGBD/StartAtOrigin'] = 'true'
-        nodes = [
-            rgbd_sync_node(config),
-            Node(
-                package='rtabmap_slam',
-                executable='rtabmap',
-                name='rtabmap',
-                namespace='rtabmap',
-                output='screen',
-                parameters=[config, rtabmap_parameters,
-                            {'use_sim_time': True}],
-                remappings=[('scan', '/scan')],
-            ),
-        ]
+        rtabmap = Node(
+            package='rtabmap_slam',
+            executable='rtabmap',
+            name='rtabmap',
+            namespace='rtabmap',
+            output='screen',
+            parameters=[config, rtabmap_parameters,
+                        {'use_sim_time': True}],
+            remappings=[('scan', '/scan')],
+            # O rtabmap grava o mapa no banco ao fechar, e num mapa grande
+            # isso passa dos 5 s que o launch espera antes de matá-lo.
+            sigterm_timeout='120',
+        )
+        nodes = actions + [rgbd_sync_node(config), rtabmap]
+        if mapping:
+            def map_saved(event, context):
+                if not os.path.isfile(database):
+                    return [LogInfo(msg=(
+                        f'O rtabmap fechou, mas {database} não existe: o '
+                        'mapa não foi salvo.'))]
+                size = os.path.getsize(database) / 1e6
+                return [LogInfo(msg=(
+                    f'Mapa salvo em {database} ({size:.1f} MB). Para usá-lo: '
+                    'vslam_localization:=true vslam_db:='
+                    f'{os.path.splitext(os.path.basename(database))[0]}'))]
+            nodes.append(RegisterEventHandler(OnProcessExit(
+                target_action=rtabmap, on_exit=map_saved)))
         if flag(context, 'rtabmap_viz'):
             nodes.append(Node(
                 package='rtabmap_viz',
@@ -395,14 +470,61 @@ def generate_launch_description():
         return 'map' if mapped else 'odom'
 
     def start_navigation(context):
+        # Com teleop, o Nav2 manda para o cmd_vel_mux, e não direto ao driver.
+        cmd_vel_out = 'cmd_vel_nav_out' if teleop_mode(context) else 'cmd_vel'
         return [IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(webots_share, 'launch', 'navigation.launch.py')),
-            launch_arguments={'global_frame': global_frame(context)}.items(),
+            launch_arguments={
+                'global_frame': global_frame(context),
+                'cmd_vel_out': cmd_vel_out,
+            }.items(),
             condition=IfCondition(LaunchConfiguration('nav')),
         )]
 
     navigation = OpaqueFunction(function=start_navigation)
+
+    # Teleoperação (teleop:=joy ou teleop:=keyboard): o operador manda em
+    # /cmd_vel_teleop e o cmd_vel_mux junta com o Nav2, com prioridade para o
+    # operador. É o modo do mapeamento manual com o RTAB-Map e de tomar o
+    # controle no meio de uma missão.
+    def start_teleop(context):
+        mode = teleop_mode(context)
+        if not mode:
+            return []
+        nodes = [Node(
+            package='agrobot_webots',
+            executable='cmd_vel_mux',
+            output='screen',
+            parameters=[{'use_sim_time': True}],
+        )]
+        if mode == 'joy':
+            config = os.path.join(webots_share, 'config', 'teleop_joy.yaml')
+            nodes += [
+                Node(
+                    package='joy',
+                    executable='game_controller_node',
+                    name='joy_node',
+                    output='screen',
+                    parameters=[config],
+                ),
+                Node(
+                    package='teleop_twist_joy',
+                    executable='teleop_node',
+                    name='teleop_twist_joy_node',
+                    output='screen',
+                    parameters=[config],
+                    remappings=[('cmd_vel', '/cmd_vel_teleop')],
+                ),
+            ]
+        else:
+            # O teclado precisa de um terminal; o launch não tem um.
+            nodes.append(LogInfo(msg=(
+                'teleop:=keyboard: rode num outro terminal '
+                '"ros2 run agrobot_webots teleop_keyboard".')))
+        return nodes
+
+    teleop = OpaqueFunction(function=start_teleop)
 
     def run_label(context):
         # Rótulo do modo nos nomes dos arquivos (CSVs das missões e pasta
@@ -443,6 +565,7 @@ def generate_launch_description():
                 'frame': global_frame(context),
                 'run_label': run_label(context),
                 'world': LaunchConfiguration('world_name').perform(context),
+                'map': map_name(context),
                 'output_dir': data_dir('missions'),
                 'use_sim_time': True,
             }],
@@ -530,9 +653,13 @@ def generate_launch_description():
         # Checagem de patinagem das rodas pela odometria visual (com
         # ekf:=true e camera:=true; sem efeito sem eles).
         DeclareLaunchArgument('slip_check', default_value='true'),
+        # Teleoperação: joy (joystick) ou keyboard (teclado, num terminal
+        # próprio). Vazio: sem teleoperação, o Nav2 manda direto no /cmd_vel.
+        DeclareLaunchArgument('teleop', default_value=''),
         # Antes do Webots: se faltar o ekf, a câmera ou o mapa salvo, o launch
         # para com o erro sem abrir o Webots.
         vslam,
+        teleop,
         webots,
         agrobot_driver,
         robot_state_publisher,
