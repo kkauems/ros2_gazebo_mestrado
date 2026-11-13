@@ -165,80 +165,166 @@
   }
 
   // ----------------------------------------------------------------- grafo
-  const W = 166, H = 44;
-  function caminhoLigacao(a, b) {
-    const ax = a.x, ay = a.y, bx = b.x, by = b.y;
-    if (a.id === 'mux' && b.id === 'driver') {
-      return `M ${ax + W} ${ay + H / 2} H ${ax + W + 12} V 648 H ${bx - 16} V ${by + 30} H ${bx}`;
+  // Caixas de 166 x 44 (o h do nó muda a altura). As ligações seguem a rota
+  // dada em dados.js. Os rótulos só aparecem nas ligações do nó escolhido, e
+  // cada um vai para onde não cubra caixas, linhas acesas nem outro rótulo.
+  const W = 166, H = 44, TOPO = 18, LARG = 1210, ALT = 680;
+  const COLUNAS = [[20, 'Webots'], [220, 'Ponte'], [420, 'Pré-processamento'], [620, 'Localização e dados'], [820, 'Nav2 e missão'], [1020, 'Comando']];
+  let LIG = [], LIG_PONTOS = [];
+  const altura = (n) => n.h || H;
+
+  function pontosLigacao(l) {
+    const a = NO[l.de], b = NO[l.para], r = l.rota;
+    if (!r) return null;
+    if (r[0] === 'h') return [[a.x + W, r[1]], [b.x, r[1]]];
+    if (r[0] === 'v') {
+      const x = r[1] !== undefined ? r[1] : a.x + W / 2;
+      return b.y > a.y ? [[x, a.y + altura(a)], [x, b.y]] : [[x, a.y], [x, b.y + altura(b)]];
     }
-    if (ax === bx) {
-      if (Math.abs(by - ay) <= 100) {
-        return by > ay ? `M ${ax + W / 2} ${ay + H} V ${by}` : `M ${ax + W / 2} ${ay} V ${by + H}`;
+    if (r[0] === 'l') return [[a.x + W, r[1]], [r[2], r[1]], [r[2], r[3]], [b.x, r[3]]];
+    if (r[0] === 'u') return [[a.x + W, r[1]], [r[2], r[1]], [r[2], r[3]], [b.x + W, r[3]]];
+    if (r[0] === 'p') return r[1];
+    return null;
+  }
+
+  // Sem rota: curva da direita da origem até a esquerda do destino.
+  function curvaLigacao(l) {
+    const a = NO[l.de], b = NO[l.para];
+    const p0 = [a.x + W, a.y + altura(a) / 2], p3 = [b.x, b.y + altura(b) / 2];
+    const m = (p3[0] - p0[0]) / 2;
+    return [p0, [p0[0] + m, p0[1]], [p3[0] - m, p3[1]], p3];
+  }
+
+  function amostrarCurva(c) {
+    const pts = [];
+    for (let k = 0; k <= 12; k++) {
+      const t = k / 12, u = 1 - t;
+      pts.push([0, 1].map(e => u * u * u * c[0][e] + 3 * u * u * t * c[1][e] + 3 * u * t * t * c[2][e] + t * t * t * c[3][e]));
+    }
+    return pts;
+  }
+
+  const comprimento = (p) => p.slice(1).reduce((s, q, k) => s + Math.hypot(q[0] - p[k][0], q[1] - p[k][1]), 0);
+
+  function sobreposicao(r, s) {
+    const w = Math.min(r[0] + r[2], s[0] + s[2]) - Math.max(r[0], s[0]);
+    const h = Math.min(r[1] + r[3], s[1] + s[3]) - Math.max(r[1], s[1]);
+    return w > 0 && h > 0 ? w * h : 0;
+  }
+
+  function colocarRotulos(ativas) {
+    const g = $('#grafo .rotulos-lig');
+    if (!g) return;
+    if (!ativas.length) { g.innerHTML = ''; return; }
+    const caixas = window.NOS.map(n => [n.x - 3, n.y - 3, W + 6, altura(n) + 6]);
+    const linhas = [];
+    for (const l of ativas) {
+      const p = LIG_PONTOS[l.i];
+      for (let k = 0; k + 1 < p.length; k++) {
+        const [x1, y1] = p[k], [x2, y2] = p[k + 1];
+        linhas.push([Math.min(x1, x2) - 1.5, Math.min(y1, y2) - 1.5, Math.abs(x2 - x1) + 3, Math.abs(y2 - y1) + 3]);
       }
-      const lado = ax - 14 - (by - ay) / 40;
-      return `M ${ax} ${ay + H / 2 + 6} H ${lado} V ${by + H / 2} H ${bx}`;
     }
-    if (bx < ax) {
-      const sx = ax + W / 2, sy = ay + H, ex = bx + W, ey = by + H / 2;
-      return `M ${sx} ${sy} C ${sx} ${ey}, ${ex + 60} ${ey}, ${ex} ${ey}`;
+    const postos = [];
+    let html = '';
+    // As ligações curtas têm menos lugar: vão primeiro.
+    const ordem = ativas.slice().sort((a, b) => comprimento(LIG_PONTOS[a.i]) - comprimento(LIG_PONTOS[b.i]));
+    for (const l of ordem) {
+      const p = LIG_PONTOS[l.i];
+      const w = l.topico.length * 6.7 + 10, h = 16;
+      const segs = [];
+      for (let k = 0; k + 1 < p.length; k++) segs.push([p[k], p[k + 1]]);
+      segs.sort((s, t) => comprimento(t) - comprimento(s));
+      let melhor = null, custo = Infinity;
+      busca: for (const [[x1, y1], [x2, y2]] of segs) {
+        const horizontal = Math.abs(y2 - y1) <= Math.abs(x2 - x1);
+        for (const f of [0.5, 0.35, 0.65, 0.2, 0.8, 0.08, 0.92]) {
+          const cx = x1 + (x2 - x1) * f, cy = y1 + (y2 - y1) * f;
+          // Colado à linha; se não couber (ligação curta entre duas caixas),
+          // cada vez mais afastado, com uma pequena penalidade.
+          const candidatos = [];
+          for (let k = 0; k <= 4; k++) {
+            if (horizontal) {
+              candidatos.push([cx - w / 2, cy - h - 2 - 12 * k, w, h, k], [cx - w / 2, cy + 2 + 12 * k, w, h, k]);
+            } else {
+              candidatos.push([cx + 4 + 14 * k, cy - h / 2, w, h, k], [cx - w - 4 - 14 * k, cy - h / 2, w, h, k]);
+            }
+          }
+          for (const r of candidatos) {
+            let c = 30 * r[4];
+            if (r[0] < 0 || r[1] < -TOPO || r[0] + r[2] > LARG || r[1] + r[3] > ALT - TOPO) c += 1e6;
+            for (const b of caixas) c += 4 * sobreposicao(r, b);
+            for (const b of postos) c += 4 * sobreposicao(r, b);
+            for (const b of linhas) c += sobreposicao(r, b);
+            if (c < custo) { custo = c; melhor = r; }
+            if (c === 0) break busca;
+          }
+        }
+      }
+      postos.push(melhor);
+      const [x, y, rw, rh] = melhor.map(v => Math.round(v * 10) / 10);
+      html += `<g class="rot"><rect x="${x}" y="${y}" width="${rw}" height="${rh}" rx="4"/><text x="${x + rw / 2}" y="${y + rh / 2 + 0.5}">${esc(l.topico)}</text></g>`;
     }
-    const sx = ax + W, sy = ay + H / 2, ex = bx, ey = by + H / 2, m = (ex - sx) / 2;
-    return `M ${sx} ${sy} C ${sx + m} ${sy}, ${ex - m} ${ey}, ${ex} ${ey}`;
+    g.innerHTML = html;
   }
 
   function montarGrafo() {
-    const ns = 'http://www.w3.org/2000/svg';
     const svg = $('#grafo svg');
+    LIG = window.LIGACOES.map((l, i) => Object.assign({ i }, l));
     let html = `<defs><marker id="seta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>`;
     html += '<g class="colunas">';
-    for (const [x, t] of [[20, 'Webots'], [210, 'Ponte'], [400, 'Pré-processamento'], [590, 'Localização'], [780, 'Nav2 e missão'], [970, 'Comando']]) {
-      html += `<text x="${x + W / 2}" y="18" text-anchor="middle">${t}</text>`;
+    for (const [x, t] of COLUNAS) html += `<text x="${x + W / 2}" y="11" text-anchor="middle">${t}</text>`;
+    html += `</g><g transform="translate(0,${TOPO})"><g class="ligacoes">`;
+    LIG_PONTOS = LIG.map(l => pontosLigacao(l) || amostrarCurva(curvaLigacao(l)));
+    for (const l of LIG) {
+      let d;
+      if (l.rota) {
+        d = 'M ' + LIG_PONTOS[l.i].map(q => q.join(' ')).join(' L ');
+      } else {
+        const c = curvaLigacao(l);
+        d = `M ${c[0].join(' ')} C ${c[1].join(' ')}, ${c[2].join(' ')}, ${c[3].join(' ')}`;
+      }
+      html += `<path class="lig${l.tracejada ? ' tracejada' : ''}" data-de="${l.de}" data-para="${l.para}" d="${d}" marker-end="url(#seta)"/>`;
     }
-    html += '</g><g class="ligacoes">';
-    window.LIGACOES.forEach(([de, para, topico, tracejada], i) => {
-      const d = caminhoLigacao(NO[de], NO[para]);
-      html += `<path id="lig-${i}" class="lig${tracejada ? ' tracejada' : ''}" data-de="${de}" data-para="${para}" d="${d}" marker-end="url(#seta)"/>`;
-    });
-    html += '</g><g class="rotulos-lig">';
-    window.LIGACOES.forEach(([de, para, topico], i) => {
-      html += `<text class="rot-lig" data-de="${de}" data-para="${para}" dy="-4"><textPath href="#lig-${i}" startOffset="50%" text-anchor="middle">${esc(topico)}</textPath></text>`;
-    });
     html += '</g><g class="nos">';
     for (const n of window.NOS) {
       const G = window.GRUPOS[n.grupo];
+      const h = altura(n);
+      const sub = n.quando.split(' (')[0];
       html += `<g class="no${n.grupo === 'legado' ? ' legado' : ''}" data-no="${n.id}" transform="translate(${n.x},${n.y})" tabindex="0" role="button" aria-label="${esc(n.nome)}">
-        <rect width="${W}" height="${H}" rx="8" style="--c:${G.cor}"/>
-        <rect width="5" height="${H}" rx="2" fill="${G.cor}"/>
-        <text x="${W / 2 + 2}" y="19" text-anchor="middle" class="nome">${n.nome}</text>
-        <text x="${W / 2 + 2}" y="34" text-anchor="middle" class="sub">${esc(n.quando.split(' (')[0].slice(0, 30))}</text>
+        <rect width="${W}" height="${h}" rx="8" style="--c:${G.cor}"/>
+        <rect width="5" height="${h}" rx="2" fill="${G.cor}"/>
+        <text x="${W / 2 + 2}" y="${h / 2 - 3}" text-anchor="middle" class="nome">${esc(n.nome)}</text>
+        <text x="${W / 2 + 2}" y="${h / 2 + 12}" text-anchor="middle" class="sub">${esc(sub.length > 27 ? sub.slice(0, 26) + '…' : sub)}</text>
       </g>`;
     }
-    html += '</g>';
+    html += '</g><g class="rotulos-lig"></g></g>';
     svg.innerHTML = html;
     $$('#grafo .no').forEach(g => {
       const abrir = () => { abrirAba('nos'); mostrarNo(g.dataset.no); };
       g.addEventListener('click', abrir);
       g.addEventListener('keydown', e => { if (e.key === 'Enter') abrir(); });
-      g.addEventListener('mouseenter', () => marcarNoGrafo(g.dataset.no, null, true));
+      g.addEventListener('mouseenter', () => marcarNoGrafo(g.dataset.no));
       g.addEventListener('mouseleave', () => marcarNoGrafo(estado.no));
     });
-    svg.setAttribute('xmlns', ns);
   }
 
-  function marcarNoGrafo(id, varios, hover) {
+  function marcarNoGrafo(id, varios) {
     const alvo = new Set(varios || (id ? [id] : []));
-    const ativo = alvo.size > 0;
-    $('#grafo').classList.toggle('com-selecao', ativo);
+    $('#grafo').classList.toggle('com-selecao', alvo.size > 0);
+    const vizinhos = new Set(alvo);
+    const ativas = [];
+    $$('#grafo .lig').forEach((p, i) => {
+      const l = LIG[i];
+      const on = alvo.has(l.de) || alvo.has(l.para);
+      p.classList.toggle('on', on);
+      if (on) { vizinhos.add(l.de); vizinhos.add(l.para); ativas.push(l); }
+    });
     $$('#grafo .no').forEach(g => {
       g.classList.toggle('sel', alvo.has(g.dataset.no));
+      g.classList.toggle('viz', vizinhos.has(g.dataset.no));
     });
-    const vizinhos = new Set(alvo);
-    $$('#grafo .lig, #grafo .rot-lig').forEach(p => {
-      const on = alvo.has(p.dataset.de) || alvo.has(p.dataset.para);
-      p.classList.toggle('on', on);
-      if (on) { vizinhos.add(p.dataset.de); vizinhos.add(p.dataset.para); }
-    });
-    $$('#grafo .no').forEach(g => g.classList.toggle('viz', vizinhos.has(g.dataset.no)));
+    colocarRotulos(ativas);
   }
 
   // ----------------------------------------------------- próximos passos

@@ -188,10 +188,10 @@ table.res { width: 100%; border-collapse: collapse; font-size: 13px; }
 #grafo .colunas text { fill: var(--suave); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
 #grafo .lig { fill: none; stroke: #5b6578; stroke-width: 1.4; opacity: .7; transition: opacity .15s; }
 #grafo .lig.tracejada { stroke-dasharray: 5 4; }
-#grafo .rot-lig { fill: var(--acento); font-size: 11px; font-family: ui-monospace, Consolas, monospace; opacity: 0; paint-order: stroke; stroke: var(--fundo); stroke-width: 4px; }
+#grafo .rot rect { fill: #0f1218; stroke: var(--acento); stroke-opacity: .55; }
+#grafo .rot text { fill: var(--acento); font-size: 11px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; text-anchor: middle; dominant-baseline: central; }
 #grafo.com-selecao .lig { opacity: .12; }
 #grafo.com-selecao .lig.on { opacity: 1; stroke: var(--acento); stroke-width: 2; }
-#grafo .rot-lig.on { opacity: 1; }
 #grafo .no { cursor: pointer; transition: opacity .15s; }
 #grafo .no rect:first-child { fill: var(--painel2); stroke: var(--c); stroke-width: 1.3; }
 #grafo .no.legado rect:first-child { stroke-dasharray: 4 3; }

@@ -24,8 +24,9 @@ window.GRUPOS = {
   legado: { nome: 'Só comparação', cor: '#6b6f7a' },
 };
 
-// Nós. x, y: posição no grafo (viewBox 1160 x 660). partes: o que acende no
-// robô. camadas: o que liga no 3D quando o nó é escolhido.
+// Nós. x, y (e h, a altura, se não for 44): posição no grafo, em colunas de
+// 200 em 200 (caixas de 166 de largura). partes: o que acende no robô.
+// camadas: o que liga no 3D quando o nó é escolhido.
 window.NOS = [
   {
     id: 'webots', nome: 'Webots R2025a', grupo: 'sim', x: 20, y: 300,
@@ -38,7 +39,7 @@ window.NOS = [
     partes: ['chassi', 'rodas', 'lidar', 'rgbd', 'camdados', 'imu'], camadas: [],
   },
   {
-    id: 'driver', nome: 'agrobot_driver', grupo: 'sim', x: 210, y: 300,
+    id: 'driver', nome: 'agrobot_driver', grupo: 'sim', x: 220, y: 284, h: 76,
     pacote: 'agrobot_webots (plugin do webots_ros2_driver)', quando: 'sempre',
     faz: 'A ponte entre o Webots e o ROS 2. A cada passo de 32 ms converte <code>/cmd_vel</code> em velocidade das 4 rodas e publica todos os sensores com o tempo da simulação.',
     entradas: ['/cmd_vel'],
@@ -48,17 +49,17 @@ window.NOS = [
     partes: ['rodas', 'lidar', 'rgbd', 'camdados', 'imu'], camadas: ['lidar'],
   },
   {
-    id: 'rsp', nome: 'robot_state_publisher', grupo: 'sim', x: 210, y: 480,
+    id: 'rsp', nome: 'robot_state_publisher', grupo: 'sim', x: 420, y: 20,
     pacote: 'robot_state_publisher', quando: 'sempre',
     faz: 'Lê o URDF e publica os frames fixos: onde cada sensor está em relação ao <code>base_link</code>.',
     entradas: ['URDF (agrobot.urdf)', '/joint_states'],
     saidas: ['TF base_link → sensores e rodas', '/robot_description'],
-    porque: 'O Nav2 e o RTAB-Map projetam os dados dos sensores pelo TF; por isso o PROTO e o URDF têm que bater nas poses dos sensores.',
+    porque: 'Todo mundo usa esses frames: o EKF (a IMU está no imu_link), o RTAB-Map (câmera e LiDAR), os costmaps do Nav2 (LiDAR) e o data_recorder (câmera). Por isso o PROTO e o URDF têm que bater nas poses dos sensores.',
     arquivo: 'agrobot_description/urdf/agrobot.urdf',
     partes: ['chassi'], camadas: ['tf'],
   },
   {
-    id: 'sync', nome: 'rgbd_sync', grupo: 'loc', x: 400, y: 150,
+    id: 'sync', nome: 'rgbd_sync', grupo: 'loc', x: 420, y: 110,
     pacote: 'rtabmap_sync', quando: 'vslam:=true (ou checagem de patinagem)',
     faz: 'Junta a imagem colorida, a profundidade e o camera_info do mesmo instante numa mensagem só.',
     entradas: ['/vslam_camera/color/image_raw', '/vslam_camera/aligned_depth_to_color/image_raw', 'camera_info'],
@@ -68,7 +69,7 @@ window.NOS = [
     partes: ['rgbd'], camadas: ['rgbd'],
   },
   {
-    id: 'vo', nome: 'rgbd_odometry', grupo: 'loc', x: 400, y: 60,
+    id: 'vo', nome: 'rgbd_odometry', grupo: 'loc', x: 420, y: 200,
     pacote: 'rtabmap_odom', quando: 'ekf:=true camera:=true (slip_check, ligado por padrão)',
     faz: 'Odometria visual: estima quanto a câmera andou entre dois quadros. Não entra direto no EKF; serve para conferir as rodas.',
     entradas: ['/rtabmap/rgbd_image'],
@@ -78,7 +79,7 @@ window.NOS = [
     partes: ['rgbd'], camadas: ['rgbd'],
   },
   {
-    id: 'slip', nome: 'wheel_slip_monitor', grupo: 'loc', x: 400, y: 330,
+    id: 'slip', nome: 'wheel_slip_monitor', grupo: 'loc', x: 420, y: 390,
     pacote: 'agrobot_webots', quando: 'ekf:=true camera:=true (slip_check)',
     faz: 'Compara a velocidade das rodas com a da câmera. Normalmente repassa as rodas sem mudar; se discordam (patinando ou arrastado), troca a velocidade das rodas pela da câmera até voltarem a concordar.',
     entradas: ['/wheel/odom', '/vo/odom'],
@@ -88,7 +89,7 @@ window.NOS = [
     partes: ['rodas', 'rgbd'], camadas: [],
   },
   {
-    id: 'ekf', nome: 'ekf_filter_node', grupo: 'loc', x: 590, y: 330,
+    id: 'ekf', nome: 'ekf_filter_node', grupo: 'loc', x: 620, y: 390,
     pacote: 'robot_localization', quando: 'ekf:=true',
     faz: 'Filtro de Kalman estendido a 30 Hz, em 2D. Junta a velocidade das rodas com o yaw e a velocidade de giro da IMU e publica uma pose suave e contínua.',
     entradas: ['/wheel/odom (ou /wheel/odom_checked)', '/imu/data'],
@@ -98,7 +99,7 @@ window.NOS = [
     partes: ['rodas', 'imu'], camadas: ['trilhas'], metodo: 'ekf',
   },
   {
-    id: 'rtabmap', nome: 'rtabmap (VSLAM)', grupo: 'loc', x: 590, y: 150,
+    id: 'rtabmap', nome: 'rtabmap (VSLAM)', grupo: 'loc', x: 620, y: 110,
     pacote: 'rtabmap_slam', quando: 'vslam:=true (exige ekf:=true e camera:=true)',
     faz: 'SLAM visual, a 1 Hz, em 3DoF. Cria um nó do mapa por segundo com a imagem RGB-D e o scan, e, quando reconhece um lugar perto de onde o EKF acha que está, corrige a deriva. Grava o mapa num banco .db; com vslam_localization:=true localiza num mapa salvo.',
     entradas: ['/rtabmap/rgbd_image', '/scan', 'TF odom → base_link (do EKF)'],
@@ -108,7 +109,7 @@ window.NOS = [
     partes: ['rgbd', 'lidar'], camadas: ['rgbd', 'lidar', 'trilhas'], metodo: 'ekf+vslam',
   },
   {
-    id: 'mission', nome: 'waypoint_mission', grupo: 'missao', x: 780, y: 40,
+    id: 'mission', nome: 'waypoint_mission', grupo: 'missao', x: 820, y: 20,
     pacote: 'agrobot_webots', quando: 'waypoints:=<caso> ou waypoints:=rviz',
     faz: 'Lê a lista de waypoints (YAML ou cliques no RViz) e manda tudo para o FollowWaypoints do Nav2, com parada de 3 s em cada ponto. Grava a pose estimada e a verdadeira em CSV para medir o erro.',
     entradas: ['config/waypoints/*.yaml ou /clicked_point', '/ground_truth/odom (só para medir)'],
@@ -118,7 +119,7 @@ window.NOS = [
     partes: [], camadas: ['waypoints', 'trilhas'],
   },
   {
-    id: 'wpf', nome: 'waypoint_follower', grupo: 'nav', x: 780, y: 130,
+    id: 'wpf', nome: 'waypoint_follower', grupo: 'nav', x: 820, y: 110,
     pacote: 'nav2_waypoint_follower', quando: 'nav:=true',
     faz: 'Vai a um waypoint por vez (NavigateToPose); para 3 s em cada um e, se um falhar, pula para o próximo.',
     entradas: ['ação FollowWaypoints'], saidas: ['ação NavigateToPose'],
@@ -127,7 +128,7 @@ window.NOS = [
     partes: [], camadas: ['waypoints'],
   },
   {
-    id: 'bt', nome: 'bt_navigator', grupo: 'nav', x: 780, y: 220,
+    id: 'bt', nome: 'bt_navigator', grupo: 'nav', x: 820, y: 200,
     pacote: 'nav2_bt_navigator', quando: 'nav:=true',
     faz: 'Árvore de comportamento do Nav2: pede um caminho ao planner, manda o controller segui-lo e chama as recuperações quando algo dá errado.',
     entradas: ['ação NavigateToPose'], saidas: ['ComputePathToPose', 'FollowPath', 'recuperações'],
@@ -136,7 +137,7 @@ window.NOS = [
     partes: [], camadas: ['caminho'],
   },
   {
-    id: 'planner', nome: 'planner_server', grupo: 'nav', x: 780, y: 310,
+    id: 'planner', nome: 'planner_server', grupo: 'nav', x: 820, y: 300,
     pacote: 'nav2_planner (NavFn)', quando: 'nav:=true',
     faz: 'Planeja o caminho global no costmap global (janela de 24 × 24 m centrada no robô, em map com VSLAM).',
     entradas: ['/scan', 'TF map → base_link'], saidas: ['/plan'],
@@ -145,7 +146,7 @@ window.NOS = [
     partes: ['lidar'], camadas: ['caminho', 'lidar'],
   },
   {
-    id: 'controller', nome: 'controller_server', grupo: 'nav', x: 780, y: 400,
+    id: 'controller', nome: 'controller_server', grupo: 'nav', x: 820, y: 390,
     pacote: 'nav2_controller (Regulated Pure Pursuit)', quando: 'nav:=true',
     faz: 'Segue o caminho a 20 Hz no costmap local (4 × 4 m, sempre em odom), com giro no lugar. Até 0,5 m/s e 1,0 rad/s.',
     entradas: ['/plan', '/odom', '/scan'], saidas: ['/cmd_vel_nav'],
@@ -154,7 +155,7 @@ window.NOS = [
     partes: ['lidar', 'rodas'], camadas: ['costmap', 'lidar', 'caminho'],
   },
   {
-    id: 'behavior', nome: 'behavior_server', grupo: 'nav', x: 780, y: 490,
+    id: 'behavior', nome: 'behavior_server', grupo: 'nav', x: 1020, y: 200,
     pacote: 'nav2_behaviors (e o smoother_server, do nav2_smoother)', quando: 'nav:=true',
     faz: 'Recuperações (girar, dar ré, esperar) e suavização do caminho, chamadas pela árvore do bt_navigator.',
     entradas: ['pedidos do bt_navigator'], saidas: ['/cmd_vel_nav'],
@@ -163,7 +164,7 @@ window.NOS = [
     partes: [], camadas: [],
   },
   {
-    id: 'velsm', nome: 'velocity_smoother', grupo: 'nav', x: 970, y: 400,
+    id: 'velsm', nome: 'velocity_smoother', grupo: 'nav', x: 1020, y: 390,
     pacote: 'nav2_velocity_smoother', quando: 'nav:=true',
     faz: 'Limita aceleração e velocidade do comando do Nav2 antes de chegar ao robô.',
     entradas: ['/cmd_vel_nav'], saidas: ['/cmd_vel (ou /cmd_vel_nav_out com teleop)'],
@@ -172,7 +173,7 @@ window.NOS = [
     partes: ['rodas'], camadas: [],
   },
   {
-    id: 'mux', nome: 'cmd_vel_mux', grupo: 'op', x: 970, y: 490,
+    id: 'mux', nome: 'cmd_vel_mux', grupo: 'op', x: 1020, y: 480,
     pacote: 'agrobot_webots', quando: 'teleop:=joy ou teleop:=keyboard',
     faz: 'Junta o comando do operador e o do Nav2 num /cmd_vel só. O operador tem prioridade; 0,5 s depois que ele solta, o Nav2 volta sem cancelar a missão.',
     entradas: ['/cmd_vel_teleop', '/cmd_vel_nav_out'], saidas: ['/cmd_vel', '/cmd_vel_mux/source'],
@@ -181,7 +182,7 @@ window.NOS = [
     partes: ['rodas'], camadas: [],
   },
   {
-    id: 'teleop', nome: 'joystick / teclado', grupo: 'op', x: 970, y: 580,
+    id: 'teleop', nome: 'joystick / teclado', grupo: 'op', x: 1020, y: 570,
     pacote: 'joy + teleop_twist_joy, ou teleop_keyboard', quando: 'teleop:=joy | keyboard',
     faz: 'Joystick: segure LB/L1 para andar (homem-morto). Teclado (num terminal próprio): cada tecla muda a velocidade e o robô a mantém, como piloto automático.',
     entradas: ['joystick ou teclado'], saidas: ['/cmd_vel_teleop'],
@@ -190,7 +191,7 @@ window.NOS = [
     partes: [], camadas: [],
   },
   {
-    id: 'recorder', nome: 'data_recorder', grupo: 'missao', x: 400, y: 560,
+    id: 'recorder', nome: 'data_recorder', grupo: 'missao', x: 620, y: 480,
     pacote: 'agrobot_webots', quando: 'data_camera:=true (data_record:=true)',
     faz: 'Grava as fotos da câmera de aquisição em PNG e, para cada uma, a pose estimada da câmera (TF map → data_camera_optical_frame no instante da foto), a pose verdadeira e o erro entre as duas. Só grava se a câmera andou 0,3 m desde a última.',
     entradas: ['/data_camera/image_raw', '/data_camera/camera_info', 'TF', '/ground_truth/odom'],
@@ -200,7 +201,7 @@ window.NOS = [
     partes: ['camdados'], camadas: ['camdados'],
   },
   {
-    id: 'rviz', nome: 'RViz / rtabmap_viz', grupo: 'vis', x: 590, y: 580,
+    id: 'rviz', nome: 'RViz / rtabmap_viz', grupo: 'vis', x: 20, y: 560,
     pacote: 'rviz2, rtabmap_viz', quando: 'rviz:=true (rtabmap_viz:=true)',
     faz: 'Mostra o mapa, os costmaps, o caminho, os waypoints e as câmeras. É onde se clica um objetivo (Nav2 Goal) ou os waypoints (Publish Point).',
     entradas: ['quase tudo'], saidas: ['/goal_pose', '/clicked_point'],
@@ -209,7 +210,7 @@ window.NOS = [
     partes: [], camadas: ['tf'],
   },
   {
-    id: 'slam', nome: 'slam_toolbox', grupo: 'legado', x: 590, y: 480,
+    id: 'slam', nome: 'slam_toolbox', grupo: 'legado', x: 620, y: 570,
     pacote: 'slam_toolbox (+ ekf_map_node)', quando: 'slam:=true (só para comparação)',
     faz: 'SLAM só com o LiDAR (scan matching). Com vslam:=true junto, roda sem publicar TF.',
     entradas: ['/scan'], saidas: ['/map, map → odom (sem VSLAM)'],
@@ -219,36 +220,43 @@ window.NOS = [
   },
 ];
 
-// Ligações do grafo: [de, para, tópico, tracejada?]
+// Ligações do grafo. rota (opcional; sem ela, curva automática):
+//   ['h', y]                reta horizontal na altura y
+//   ['v', x]                reta vertical (x opcional: centro da caixa)
+//   ['l', sai, x, entra]    sai pela direita em y=sai, desce/sobe em x, entra pela esquerda em y=entra
+//   ['u', sai, x, entra]    sai pela direita e volta pela direita do destino
+//   ['p', [[x, y], ...]]    pontos explícitos
+// As rotas foram escolhidas para nenhuma linha passar por trás de uma caixa.
 window.LIGACOES = [
-  ['webots', 'driver', 'sensores e motores'],
-  ['driver', 'sync', '/vslam_camera/*'],
-  ['sync', 'vo', 'rgbd_image'],
-  ['sync', 'rtabmap', '/rtabmap/rgbd_image'],
-  ['vo', 'slip', '/vo/odom'],
-  ['driver', 'slip', '/wheel/odom'],
-  ['slip', 'ekf', '/wheel/odom_checked'],
-  ['driver', 'ekf', '/imu/data'],
-  ['driver', 'rtabmap', '/scan'],
-  ['ekf', 'rtabmap', 'TF odom→base_link'],
-  ['rsp', 'rtabmap', 'TF dos sensores'],
-  ['rtabmap', 'planner', 'TF map→odom, /rtabmap/map'],
-  ['ekf', 'controller', '/odom'],
-  ['driver', 'planner', '/scan'],
-  ['driver', 'controller', '/scan'],
-  ['mission', 'wpf', 'FollowWaypoints'],
-  ['wpf', 'bt', 'NavigateToPose'],
-  ['bt', 'planner', 'ComputePathToPose'],
-  ['bt', 'controller', 'FollowPath'],
-  ['bt', 'behavior', 'recuperações'],
-  ['controller', 'velsm', '/cmd_vel_nav'],
-  ['velsm', 'mux', '/cmd_vel_nav_out'],
-  ['teleop', 'mux', '/cmd_vel_teleop'],
-  ['mux', 'driver', '/cmd_vel'],
-  ['driver', 'recorder', '/data_camera/image_raw'],
-  ['ekf', 'recorder', 'TF da câmera'],
-  ['driver', 'mission', '/ground_truth/odom', true],
-  ['driver', 'slam', '/scan', true],
+  { de: 'webots', para: 'driver', topico: 'sensores e motores', rota: ['h', 322] },
+  { de: 'driver', para: 'rsp', topico: '/joint_states', rota: ['l', 290, 391, 42] },
+  { de: 'driver', para: 'sync', topico: '/vslam_camera/*', rota: ['l', 297, 397, 132] },
+  { de: 'driver', para: 'rtabmap', topico: '/scan', rota: ['l', 304, 603, 144] },
+  { de: 'driver', para: 'mission', topico: '/ground_truth/odom', tracejada: true, rota: ['l', 311, 797, 42] },
+  { de: 'driver', para: 'planner', topico: '/scan', rota: ['h', 318] },
+  { de: 'driver', para: 'controller', topico: '/scan', rota: ['l', 325, 812, 402] },
+  { de: 'driver', para: 'ekf', topico: '/imu/data', rota: ['l', 332, 610, 402] },
+  { de: 'driver', para: 'slip', topico: '/wheel/odom', rota: ['l', 339, 415, 412] },
+  { de: 'driver', para: 'recorder', topico: '/data_camera/image_raw', rota: ['l', 346, 409, 502] },
+  { de: 'driver', para: 'slam', topico: '/scan', tracejada: true, rota: ['l', 353, 403, 592] },
+  { de: 'rsp', para: 'rtabmap', topico: 'TF dos sensores', rota: ['l', 42, 596, 120] },
+  { de: 'sync', para: 'vo', topico: 'rgbd_image', rota: ['v'] },
+  { de: 'sync', para: 'rtabmap', topico: '/rtabmap/rgbd_image', rota: ['h', 132] },
+  { de: 'vo', para: 'slip', topico: '/vo/odom', rota: ['v'] },
+  { de: 'slip', para: 'ekf', topico: '/wheel/odom_checked', rota: ['h', 418] },
+  { de: 'ekf', para: 'rtabmap', topico: 'TF odom→base_link', rota: ['v'] },
+  { de: 'ekf', para: 'controller', topico: '/odom', rota: ['h', 418] },
+  { de: 'ekf', para: 'recorder', topico: 'TF da câmera', rota: ['v'] },
+  { de: 'rtabmap', para: 'planner', topico: 'TF map→odom, /rtabmap/map', rota: ['l', 132, 805, 306] },
+  { de: 'mission', para: 'wpf', topico: 'FollowWaypoints', rota: ['v'] },
+  { de: 'wpf', para: 'bt', topico: 'NavigateToPose', rota: ['v'] },
+  { de: 'bt', para: 'planner', topico: 'ComputePathToPose', rota: ['v'] },
+  { de: 'bt', para: 'controller', topico: 'FollowPath', rota: ['u', 236, 1000, 400] },
+  { de: 'bt', para: 'behavior', topico: 'recuperações', rota: ['h', 222] },
+  { de: 'controller', para: 'velsm', topico: '/cmd_vel_nav', rota: ['h', 420] },
+  { de: 'velsm', para: 'mux', topico: '/cmd_vel_nav_out', rota: ['v'] },
+  { de: 'teleop', para: 'mux', topico: '/cmd_vel_teleop', rota: ['v'] },
+  { de: 'mux', para: 'driver', topico: '/cmd_vel', rota: ['p', [[1186, 502], [1198, 502], [1198, 648], [206, 648], [206, 350], [220, 350]]] },
 ];
 
 // Roteiro da apresentação. camera: posição pronta da câmera 3D. camadas:
