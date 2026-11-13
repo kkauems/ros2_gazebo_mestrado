@@ -59,7 +59,7 @@ Fechar o Webots encerra o launch inteiro.
 | `data_min_distance` | `0.3` | Distância mínima (m) entre duas fotos gravadas |
 | `waypoints` | vazio | Missão de waypoints: nome de uma lista em `config/waypoints/`, caminho de um `.yaml`, ou `rviz` para clicar os pontos |
 | `teleop` | vazio | Teleoperação: `joy` (joystick) ou `keyboard` (teclado, num terminal próprio). O operador tem prioridade sobre o Nav2 (seção 5) |
-| `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 8) |
+| `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 9) |
 
 ### Usos mais comuns
 
@@ -382,7 +382,27 @@ Compare pelo ATE e pelo erro máximo, não pelo erro final: o robô chega perto 
 *acha* que o alvo está, mesmo com a estimativa errada. Rode cada caso várias vezes; com a
 CPU no limite os resultados variam entre rodadas.
 
-## 8. Legado e comparação
+## 8. Site explicativo em 3D (`site/`)
+
+Página para apresentações e para entender o projeto: o robô em 3D (medidas do
+`agrobot.proto` e a malha do chassi), os sensores com o que cada um vê, os nós ROS 2
+num grafo (o que entra, o que sai, por quê, onde age no robô), um roteiro de
+apresentação, os resultados do passo 3 e os próximos passos.
+
+- **Abrir:** dois cliques em `site/index.html`. No Windows, pelo Explorer em `\\wsl$\`
+  (distro → pasta do projeto → `site`), ou copie a pasta `site/` para o Windows. Não precisa
+  de servidor nem de internet: o three.js vai junto em `site/vendor/`.
+- **No uso:** setas ← → passam o roteiro, espaço pausa, `g` alterna 3D e grafo, `p` esconde
+  o painel. Clicar numa parte do robô mostra os nós que a usam.
+- **A missão na plantação é a real:** as rodadas do caso 2 (uma por método) vêm dos CSVs
+  do passo 3; a trilha verde é a pose verdadeira, a colorida é a estimada. No olival o robô
+  só segue a rota do caso 4 (ainda não há rodadas medidas).
+- **Mudar textos** (nós, roteiro, próximos passos, resultados): `site/js/dados.js`.
+- **Se o chassi ou as rodadas mudarem:** `python3 site/gerar_dados.py <pasta dos CSVs>`
+  regenera `js/malha_chassi.js` e `js/trajetorias.js` (o navegador não deixa uma página
+  aberta do disco ler outros arquivos, por isso os dados vão embutidos em `.js`).
+
+## 9. Legado e comparação
 
 - **SLAM por LiDAR (`slam:=true`, slam_toolbox):** não é mais usado nem corrigido; fica só
   para comparação nos resultados. Na plantação ele perde o yaw nas cabeceiras e o robô vai
@@ -394,7 +414,7 @@ CPU no limite os resultados variam entre rodadas.
 - **Gazebo (`agrobot_gazebo`, `agrobot_control`):** versão antiga, não é mais usada nem
   mantida.
 
-## 9. Limites conhecidos
+## 10. Limites conhecidos
 
 - Quase tudo foi validado na nuvem Linux, headless e sem GPU; os testes no Windows/WSL e no
   RViz na tela ainda são poucos. A câmera de aquisição ainda não rodou no Webots.
