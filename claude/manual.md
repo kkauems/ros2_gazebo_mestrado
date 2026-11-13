@@ -163,18 +163,20 @@ foi mantida para não mudar os resultados.
 |---|---|---|
 | `obstacle_arena.wbt` | Arena 5 × 5 m com paredes, 4 caixotes e 3 caixas. Robô em (-1,0; -0,3) do mundo | Testes rápidos; controle negativo do VSLAM (paredes e chão lisos) |
 | `plantation_field.wbt` | 6 fileiras de plantas (milho) de 9 m, entrelinhas de 1,8 m, terreno ondulado com camalhões, buracos, torrões, pedras e galhos; atrito 0,7. Robô em (-6; 0), no começo da entrelinha do meio | Mundo principal de teste em terreno não estruturado |
-| `olive_grove.wbt` | Olival tradicional do planalto do Douro Internacional (referência: Vilarinho dos Galegos): 67 oliveiras em grade de 7 × 7 m, encosta de 2 a 3% subindo para +y, solo avermelhado com lascas de pedra, vinha, estrada de terra e tanque de rega; atrito 0,8. Robô em (-36; -3,5), na cabeceira oeste | Lugar aberto: o LiDAR só vê troncos esparsos; declive lateral nas entrelinhas; aquisição de dados nas fileiras |
+| `olive_grove.wbt` | Olival tradicional do planalto do Douro Internacional (referência: Vilarinho dos Galegos): 65 oliveiras em grade de 7 × 7 m, encosta de 4 a 5% subindo para +y, chão irregular (ruído e montículos rasos), solo avermelhado com lascas de pedra e galhos, montes de poda, moroiços e blocos nas entrelinhas e cabeceiras, vinha, estrada de terra e tanque de rega; atrito 0,8. Robô em (-36; -3,5), na cabeceira oeste | Lugar aberto: o LiDAR vê troncos esparsos e os obstáculos; desvio nas entrelinhas; declive lateral; aquisição de dados nas fileiras |
 
 A plantação é gerada por `scripts/generate_plantation_field.py` (semente fixa, `--seed`,
 `--roughness`). **Não edite o `.wbt` à mão**; mude o script e gere de novo. No `odom`, as
 fileiras vão de x = 1,5 a 10,5 e as entrelinhas ficam em y = 0, ±1,8, ±3,6.
 
-O olival é gerado por `scripts/generate_olive_grove.py` (`--seed`, `--slope`; a oliveira é o
-PROTO `OliveTree`, em que só o tronco colide). No `odom`, as entrelinhas ficam em y = -14,
+O olival é gerado por `scripts/generate_olive_grove.py` (`--seed`, `--slope`, `--noise`; a
+oliveira é o PROTO `OliveTree`, em que só o tronco colide). No `odom`, as entrelinhas ficam em y = -14,
 -7, 0, 7, 14 e 21, as árvores vão de x = 4,5 a 67,5 e os vãos para atravessar as fileiras
 (subir ou descer a encosta) ficam em x = 8, 15, 22, 29... Pedras pequenas só na linha das
 árvores e lascas de 2 a 4 cm no resto: maiores que isso, inclinam o robô e o plano do LiDAR
-(~13 cm do chão) bate no chão à frente.
+(~13 cm do chão) bate no chão à frente. Pelo mesmo motivo o relevo irregular é largo e raso
+(calombos de poucos metros com mais de 2 a 3 cm já davam obstáculo falso); `--noise` o
+escala. Os obstáculos ficam a 2,5 m ou mais dos waypoints do `caso4` e do `caso5`.
 
 ## 5. Localização e navegação
 
@@ -488,7 +490,8 @@ apresentação, os resultados do passo 3 e os próximos passos.
 - O Nav2 às vezes não acha caminho na travessia da cabeceira leste da plantação
   ("Failed to create plan with tolerance of 0.3") e perde waypoints ali.
 - Ao girar no lugar na arena, a quina do robô pode empurrar a `cardboard box(2)`.
-- No olival, o robô escorrega encosta abaixo no declive lateral (nas entrelinhas e nas
-  manobras), e as rodas e o IMU não veem isso: na nuvem, o erro da pose chegou a 0,6 m no
-  `caso4` e 1,4 m no `caso5`. O RTAB-Map não corrigiu, porque na volta o robô vê as árvores
-  de outro ângulo e não fecha laço. `--slope 0` gera o olival plano.
+- No olival, o robô escorrega encosta abaixo no declive lateral (nas manobras, nos desvios
+  dos obstáculos e ao passar por cima de galhos), e as rodas e o IMU não veem isso: na nuvem,
+  com a encosta de 4 a 5%, o erro da pose chegou a 1,6 m no `caso4` e 1,4 m no `caso5`. O
+  RTAB-Map não corrigiu, porque na volta o robô vê as árvores de outro ângulo e não fecha
+  laço. `--slope 0.03` gera a encosta mais suave (2 a 3%) e `--slope 0` o olival plano.
