@@ -19,6 +19,9 @@ projeto; rodando o nó sozinho, o padrão é ~/.ros/agrobot_fotos):
         000001.png, 000002.png, ...   RGB, sem perdas
         fotos.csv                     uma linha por foto
         camera_info.yaml              intrínsecos (iguais em todas as fotos)
+        origem.yaml                   pose verdadeira da partida no mundo,
+                                      para levar as plantas do .wbt ao
+                                      frame das colunas real_*
 
 Colunas de pose do fotos.csv (est_* estimada, real_* verdadeira):
     x, y, z          posição do centro óptico (m)
@@ -398,6 +401,16 @@ class DataRecorder(Node):
         os.makedirs(self.folder, exist_ok=True)
         with open(os.path.join(self.folder, 'camera_info.yaml'), 'w') as out:
             out.write(camera_info_yaml(self.camera_info))
+        if self.truth_origin is not None:
+            # real_* = Rz(-yaw) (pose no mundo - posição): é o que o
+            # avaliar_aquisicao.py precisa para pôr as plantas nesse frame.
+            position, yaw = self.truth_origin
+            with open(os.path.join(self.folder, 'origem.yaml'), 'w') as out:
+                out.write(
+                    '# Pose verdadeira da partida (base_link) no mundo do '
+                    'Webots.\n'
+                    f'x: {position[0]:.6f}\ny: {position[1]:.6f}\n'
+                    f'z: {position[2]:.6f}\nyaw: {yaw:.6f}\n')
         self.csv_file = open(
             os.path.join(self.folder, 'fotos.csv'), 'w', newline='')
         self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=CSV_FIELDS)

@@ -331,7 +331,9 @@ missões, como `ekf+vslam`), com:
   (`erro_xy_m`, `erro_z_m`, `erro_yaw_rad`). Cada pose tem x, y, z do centro óptico,
   roll/pitch/yaw do `data_camera_link` (yaw ≈ yaw do robô + 90°) e o quaternion do frame
   óptico, para projetar pontos na imagem;
-- `camera_info.yaml`: intrínsecos, no formato do `camera_calibration_parsers`.
+- `camera_info.yaml`: intrínsecos, no formato do `camera_calibration_parsers`;
+- `origem.yaml`: pose verdadeira da partida no mundo do Webots (x, y, z, yaw), para levar as
+  plantas do `.wbt` ao frame das colunas `real_*` na avaliação.
 
 Regras do gravador:
 - Só grava uma foto se a câmera andou pelo menos `data_min_distance` (0,3 m) desde a última,
@@ -343,7 +345,49 @@ Regras do gravador:
 - Ainda não está ligado às missões de waypoints: grava enquanto a câmera estiver ligada e o
   robô andando. Para gravar só um trecho, use o serviço `/data_camera/enable`.
 
-A câmera e o gravador ainda não foram rodados no Webots (só conferidos fora do simulador).
+A câmera já renderizou no Webots (no teste da avaliação, abaixo, por um controlador sem ROS), mas
+o driver e o gravador ainda não rodaram juntos no simulador.
+
+**Avaliação das fotos (`scripts/avaliar_aquisicao.py`, fora da simulação).** Responde quantas
+plantas foram fotografadas e quão bem cada foto está georreferenciada:
+
+```bash
+python3 agrobot_webots/scripts/avaliar_aquisicao.py dados/fotos/<pasta> [<pasta> ...] --folha 12
+python3 agrobot_webots/scripts/exportar_plantas.py plantation_field -o plantas.csv  # só o inventário
+```
+
+- **Inventário:** as plantas são lidas do próprio `.wbt` (cada `CropPlant` e `OliveTree`: base,
+  altura, raios), não regeneradas pelo gerador, para ser sempre o mundo que rodou. O mundo sai
+  do nome da pasta (`plantation_field`/`plantacao`, `olive_grove`/`olival`) ou de `--mundo`.
+- **Cobertura**, pela pose verdadeira (onde a foto foi feita de fato): uma planta está
+  **inteira** numa foto se o pé (`--corte-base`, 0,25 m acima da base), o topo e, na oliveira,
+  as duas bordas da copa caem dentro da imagem, a menos de `--dist-max` na horizontal (padrão
+  1,8 m no milho, que deixa só a fileira vizinha, porque as de trás ficam tapadas; 7 m no
+  olival). No milho as folhas não contam: "inteira" é o colmo até o pendão. O corte da base
+  existe porque, nas imagens do Webots, a câmera não vê os ~20 cm de baixo do colmo da
+  fileira vizinha; e os milhos mais altos (topo acima de ~1,55 m do pé) saem com o pendão
+  cortado. Saem as frações das plantas do mundo inteiras em ≥ 1 e ≥ 3 fotos e as vistas (meio
+  da planta na imagem) em ≥ 1. Com uma câmera que vê um lado por passada, a cobertura do mundo
+  inteiro é baixa por construção; a tabela por fileira mostra quais a rota cobriu.
+- **No olival**, do meio da entrelinha (árvore a 3,5 m), a câmera vê o tronco e a base da copa,
+  mas o alto da copa sai da imagem: a árvore só aparece inteira de longe, em diagonal, antes
+  ou depois de passar por ela. Se a dissertação quiser a copa inteira, a câmera precisa
+  inclinar para cima ou ter FOV vertical maior.
+- **Erro de georreferência**, nas fotos com pose estimada: o da câmera (m e graus); o da
+  planta em metros (onde ela iria parar no mapa usando a pose estimada da foto, o que soma o
+  erro de posição e o de yaw vezes a distância); e o mesmo em pixels (meio da planta projetado
+  com a pose estimada contra a verdadeira). É o número que diz se dá para achar a planta na
+  foto pela pose do VSLAM.
+- **Saída:** uma linha por pasta na tela (Markdown) e, em `<pasta>/avaliacao/`, `resumo.md`,
+  `plantas.csv` (fotos em que cada planta aparece), `projecoes.csv` (cada planta inteira em
+  cada foto, com os pixels e os erros) e, com `--folha N`, `folha_contato.png` (N fotos com o
+  eixo de cada planta projetado: verde pela pose verdadeira, magenta pela estimada; pede
+  `python3-matplotlib`).
+- Sem `origem.yaml` (fotos gravadas antes dele), a partida vem da pose do robô no `.wbt` e
+  avisa: o x/y fica certo, o z pode errar alguns centímetros.
+- **Conferido no Webots** (nuvem, 2026-11-13): com fotos da `data_camera` nos dois mundos, o
+  eixo projetado de cada planta pela pose verdadeira cai sobre o colmo/tronco na imagem (erro
+  de até ~10 px, provavelmente o robô andando ~1 cm no passo da foto).
 
 ## 7. Missões de waypoints e casos de estudo
 
@@ -421,7 +465,7 @@ apresentação, os resultados do passo 3 e os próximos passos.
 ## 10. Limites conhecidos
 
 - Quase tudo foi validado na nuvem Linux, headless e sem GPU; os testes no Windows/WSL e no
-  RViz na tela ainda são poucos. A câmera de aquisição ainda não rodou no Webots.
+  RViz na tela ainda são poucos. A câmera de aquisição só rodou no Webots sem o ROS (seção 6).
 - A profundidade da RGB-D e o IMU não têm ruído na simulação.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
   aviso "Mapa salvo" e o `map:` nas missões só foram conferidos fora do simulador.
