@@ -392,6 +392,10 @@ apresentação, os resultados do passo 3 e os próximos passos.
 - **Abrir:** dois cliques em `site/index.html`. No Windows, pelo Explorer em `\\wsl$\`
   (distro → pasta do projeto → `site`), ou copie a pasta `site/` para o Windows. Não precisa
   de servidor nem de internet: o three.js vai junto em `site/vendor/`.
+- **Online:** https://kkauems.github.io/ros2_gazebo_mestrado/ (GitHub Pages). O workflow
+  `.github/workflows/pages.yml` publica a pasta `site/` sozinho a cada push na `main` que
+  mexa nela; para atualizar o site basta mudar `site/` e fazer merge. Precisa estar ligado
+  uma vez em Settings → Pages → Source: **GitHub Actions**.
 - **No uso:** setas ← → passam o roteiro, espaço pausa, `g` alterna 3D e grafo, `p` esconde
   o painel. Clicar numa parte do robô mostra os nós que a usam.
 - **A missão na plantação é a real:** as rodadas do caso 2 (uma por método) vêm dos CSVs
