@@ -224,6 +224,8 @@ está certa; e as variâncias do `rgbd_odometry` às vezes saem quase nulas.
 Na plantação, contra um mourão da cerca (0,4 m/s por 22 s, ~8 s preso): detectou em ~1,3 s
 e o erro final da pose ficou em 0,47 m, contra 2,8 m sem a checagem. O que o EKF anda antes
 da detecção (~0,45 m) fica no erro.
+Nas missões normais (caso2 duas vezes, caso4 do olival uma vez, com EKF+VSLAM) não houve
+nenhum alarme, com 2 a 7 perdas da câmera por corrida.
 
 ### VSLAM (`config/rtabmap.yaml`, `vslam:=true`)
 
