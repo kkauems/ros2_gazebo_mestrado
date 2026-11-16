@@ -61,6 +61,8 @@ Fechar o Webots encerra o launch inteiro.
 | `teleop` | vazio | Teleoperação: `joy` (joystick) ou `keyboard` (teclado, num terminal próprio). O operador tem prioridade sobre o Nav2 (seção 5) |
 | `slip_check` | `true` | Checagem de patinagem das rodas pela odometria visual (seção 5). Só age com `ekf:=true` e `camera:=true` |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 9) |
+| `sensor_noise` | `true` | Ruído realista na IMU, nos encoders, no LiDAR e na câmera RGB-D (seção 3). `false`: sensores ideais do Webots, com `-ideal` no rótulo dos CSVs |
+| `noise_seed` | `0` | Semente do ruído. `0` sorteia uma nova (sai no log do driver); outro valor repete o ruído de uma rodada |
 
 ### Usos mais comuns
 
@@ -146,9 +148,37 @@ EKF), `/wheel/odom`, `/imu/data`, `/scan`, `/joint_states`, as câmeras e o
 - **Para sem comando:** se o `/cmd_vel` parar de chegar por 1 s de simulação, o robô para.
   O Nav2 e a teleoperação publicam continuamente enquanto andam; sem isso, um nó que caísse
   deixaria o robô seguindo o último comando.
-- As propriedades do plugin (`publishOdom`, `vslamCameraPeriod`, `dataCameraPeriod`) vêm do
-  URDF, não de parâmetros ROS. Por isso o launch grava uma cópia do URDF com os valores de
-  `ekf`, `camera` e `data_camera`.
+- As propriedades do plugin (`publishOdom`, `vslamCameraPeriod`, `dataCameraPeriod`,
+  `sensorNoise`, `noiseSeed`) vêm do URDF, não de parâmetros ROS. Por isso o launch grava uma
+  cópia do URDF com os valores de `ekf`, `camera`, `data_camera`, `sensor_noise` e
+  `noise_seed`.
+
+### Ruído dos sensores (`agrobot_webots/sensor_noise.py`, `sensor_noise:=true`)
+
+Os sensores do Webots são perfeitos, o que favorecia o EKF (ele segue o yaw do IMU). O driver
+aplica o erro de sensores reais de baixo custo antes de publicar; os valores vêm de
+datasheets e estão justificados no próprio arquivo.
+
+| Sensor | Modelo de erro (1σ) | Referência |
+|---|---|---|
+| Giroscópio | ruído branco 0,01 °/s/√Hz; bias fixo 0,01 °/s (resíduo da calibração parada); bias que vaga 0,005 °/s (Gauss-Markov, 2 min); escala 1% | BMI160, MPU-6050, ICM-20948 |
+| Orientação da IMU | yaw = integral do erro do giroscópio (sem magnetômetro: deriva e não volta); roll/pitch com a inclinação fixa do offset do acelerômetro + 0,1° | IMU de 6 eixos com fusão a bordo |
+| Acelerômetro | ruído 200 µg/√Hz; offset 20 mg | BMI160, MPU-6050 |
+| Encoders | 4096 contagens por volta; raio efetivo 1% errado, mais 0,3% de diferença entre os lados | encoder de 1024 pulsos; pneu sob carga |
+| LiDAR | 2 cm por raio | SICK TiM5xx, Hokuyo UST-10LX |
+| Profundidade RGB-D | σ = z² · 0,1 px / (447 px · 0,095 m): 2,4 mm a 1 m, 3,8 cm a 4 m | Intel RealSense D455 |
+| Cor RGB-D | 2 níveis de 255 | sensor CMOS de dia |
+
+- **Deriva do yaw:** parado, mediana de ~2° em 5 min e ~4° em 9 min (até ~9° no pior
+  décimo). Nos giros, o erro de escala soma ~1,8° a cada 180°. Numa entrelinha de 9 m, 4° de
+  yaw viram ~0,6 m de erro lateral: quem corrige é o VSLAM.
+- **Sem magnetômetro de propósito:** no campo ele sofre com motores, cercas e implementos.
+- **As variâncias publicadas** (`IMU_*_VARIANCE` e as das rodas no driver) já cobriam esses
+  erros e não mudaram; a configuração do EKF também não.
+- **A pose verdadeira** (`/ground_truth/odom`) e a câmera de aquisição continuam sem ruído.
+- **Resultados anteriores** (passo 3 da comparação, outubro de 2026) são com sensores ideais;
+  para compará-los com rodadas novas, rode as novas com `sensor_noise:=false` ou refaça as
+  antigas.
 
 ### Malha e visual
 
@@ -196,8 +226,8 @@ Nav2: planeja em map, controla em odom ─► /cmd_vel ─► driver
   a elipse cresce com o deslocamento e na direção dele, e não com o tempo parado.
 - O frame `odom` deriva por definição; nenhuma entrada do EKF mede posição. Quem corrige é o
   VSLAM.
-- Na simulação o EKF está favorecido: o `InertialUnit` não tem ruído nem deriva. Para uma
-  comparação justa com o robô real, ligar ruído nos sensores do PROTO.
+- Com `sensor_noise:=true` (padrão) o yaw do IMU deriva como o de uma IMU MEMS real (seção 3);
+  com `sensor_noise:=false` ele é perfeito e o EKF fica favorecido.
 
 ### Checagem de patinagem (`wheel_slip_monitor`, `slip_check:=true`)
 
@@ -515,7 +545,10 @@ apresentação, os resultados do passo 3 e os próximos passos.
 
 - Quase tudo foi validado na nuvem Linux, headless e sem GPU; os testes no Windows/WSL e no
   RViz na tela ainda são poucos. A câmera de aquisição só rodou no Webots na nuvem; falta medir o custo no Windows.
-- A profundidade da RGB-D e o IMU não têm ruído na simulação.
+- O ruído dos sensores ainda não tem resultado de missão na plantação e no olival (só os
+  testes unitários de `test_sensor_noise.py`). Ele é branco e gaussiano, menos o bias do
+  giroscópio: faltam buracos e bordas falsas na profundidade, retornos perdidos no LiDAR e
+  deriva por temperatura.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
   aviso "Mapa salvo" e o `map:` nas missões só foram conferidos fora do simulador.
 - O Nav2 às vezes não acha caminho na travessia da cabeceira leste da plantação

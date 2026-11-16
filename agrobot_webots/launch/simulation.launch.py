@@ -35,17 +35,27 @@ CAMERA_ON = r'<vslamCameraPeriod>\s*\d+\s*</vslamCameraPeriod>'
 CAMERA_OFF = '<vslamCameraPeriod>0</vslamCameraPeriod>'
 DATA_CAMERA_ON = r'<dataCameraPeriod>\s*\d+\s*</dataCameraPeriod>'
 DATA_CAMERA_OFF = '<dataCameraPeriod>0</dataCameraPeriod>'
+NOISE_ON = re.escape('<sensorNoise>true</sensorNoise>')
+NOISE_OFF = '<sensorNoise>false</sensorNoise>'
+NOISE_SEED = r'<noiseSeed>\s*\d+\s*</noiseSeed>'
 
 
-def driver_urdf(robot_description, ekf, camera, data_camera=False):
+def driver_urdf(robot_description, ekf, camera, data_camera=False,
+                noise=True, noise_seed=0):
     """
     Caminho do URDF para o driver, com as trocas pedidas no launch.
 
     Com ekf, o driver não publica /odom; sem camera, não liga a câmera do
     VSLAM, e sem data_camera, não liga a de aquisição de dados (o Webots
-    também deixa de renderizá-las).
+    também deixa de renderizá-las). Sem noise, os sensores ficam ideais;
+    noise_seed > 0 repete o ruído de uma rodada.
     """
     replacements = []
+    if not noise:
+        replacements.append((NOISE_ON, NOISE_OFF))
+    if noise_seed > 0:
+        replacements.append(
+            (NOISE_SEED, f'<noiseSeed>{noise_seed}</noiseSeed>'))
     if ekf:
         replacements.append((ODOM_FROM_DRIVER, ODOM_FROM_EKF))
     if not camera:
@@ -112,6 +122,15 @@ def data_dir(*parts):
 
 def flag(context, name):
     return LaunchConfiguration(name).perform(context).lower() == 'true'
+
+
+def noise_seed(context):
+    value = LaunchConfiguration('noise_seed').perform(context).strip()
+    if not value.isdigit():
+        raise RuntimeError(
+            f'noise_seed:={value} tem que ser um inteiro >= 0 '
+            '(0 = semente nova).')
+    return int(value)
 
 
 TELEOP_MODES = ('joy', 'keyboard')
@@ -242,7 +261,9 @@ def generate_launch_description():
             parameters=[
                 {'robot_description':
                     driver_urdf(robot_description, ekf, camera,
-                                flag(context, 'data_camera'))},
+                                flag(context, 'data_camera'),
+                                flag(context, 'sensor_noise'),
+                                noise_seed(context))},
                 {'use_sim_time': True},
             ],
             output='screen',
@@ -538,7 +559,12 @@ def generate_launch_description():
             # misturar com as rodadas de mapeamento. Hífen, e não '_', porque
             # o summarize_missions.py separa caso, modo e data por '_'.
             modes[modes.index('vslam')] = 'vslam-loc'
-        return '+'.join(modes) or 'odom'
+        label = '+'.join(modes) or 'odom'
+        # Rodadas com sensores ideais (como as anteriores ao ruído) não se
+        # misturam com as novas nos resumos.
+        if not flag(context, 'sensor_noise'):
+            label += '-ideal'
+        return label
 
     def start_mission(context):
         # waypoints:=caso2_plantacao_ida_volta (config/waypoints/) ou um
@@ -661,6 +687,12 @@ def generate_launch_description():
         # Checagem de patinagem das rodas pela odometria visual (com
         # ekf:=true e camera:=true; sem efeito sem eles).
         DeclareLaunchArgument('slip_check', default_value='true'),
+        # Ruído realista na IMU, nos encoders, no LiDAR e na câmera RGB-D
+        # (sensor_noise.py). false: sensores ideais do Webots (rótulo
+        # '-ideal' nos CSVs). noise_seed: 0 sorteia (a semente sai no log);
+        # outro valor repete o ruído de uma rodada.
+        DeclareLaunchArgument('sensor_noise', default_value='true'),
+        DeclareLaunchArgument('noise_seed', default_value='0'),
         # Teleoperação: joy (joystick) ou keyboard (teclado, num terminal
         # próprio). Vazio: sem teleoperação, o Nav2 manda direto no /cmd_vel.
         DeclareLaunchArgument('teleop', default_value=''),

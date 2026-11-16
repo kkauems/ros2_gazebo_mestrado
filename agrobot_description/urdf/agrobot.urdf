@@ -42,6 +42,12 @@
            o simulation.launch.py só a deixa ligada com data_camera:=true
            (sem isso troca para 0, desligada) -->
       <dataCameraPeriod>1024</dataCameraPeriod>
+      <!-- Ruído realista na IMU, nos encoders, no LiDAR e na câmera RGB-D
+           (agrobot_webots/sensor_noise.py); o simulation.launch.py troca
+           com sensor_noise:=false. noiseSeed 0 = semente nova a cada
+           rodada (sai no log); o launch troca com noise_seed:=N -->
+      <sensorNoise>true</sensorNoise>
+      <noiseSeed>0</noiseSeed>
     </plugin>
   </webots>
 

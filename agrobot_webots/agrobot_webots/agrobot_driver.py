@@ -13,8 +13,11 @@ from sensor_msgs.msg import CameraInfo, Image, Imu, JointState, LaserScan
 from std_srvs.srv import SetBool
 from tf2_ros import TransformBroadcaster
 
-# Variâncias da /imu/data. O IMU do Webots não tem ruído; estes valores só
-# dizem ao EKF quanto confiar em cada medida.
+from agrobot_webots.sensor_noise import random_seed, SensorNoise
+
+# Variâncias da /imu/data: dizem ao EKF quanto confiar em cada medida. Com
+# sensorNoise (sensor_noise.py) a orientação deriva alguns graus por missão e
+# o giroscópio tem ~0,05 °/s de ruído por amostra; estes valores cobrem isso.
 IMU_ORIENTATION_VARIANCE = 0.0004   # (0.02 rad)^2, ~1 grau
 IMU_GYRO_VARIANCE = 0.0001          # (0.01 rad/s)^2
 IMU_ACCEL_VARIANCE = 0.01           # (0.1 m/s^2)^2
@@ -94,6 +97,13 @@ class AgrobotDriver:
         # odom -> base_link; o simulation.launch.py troca com ekf:=true.
         self.publish_odom = properties.get(
             'publishOdom', 'true').strip().lower() == 'true'
+        # Ruído realista nos sensores (sensor_noise.py). O simulation.launch.py
+        # troca com sensor_noise:=false e noise_seed:=N (0 = semente nova).
+        self.noise = None
+        if properties.get('sensorNoise', 'false').strip().lower() == 'true':
+            seed = int(properties.get('noiseSeed', '0'))
+            self.noise = SensorNoise(seed if seed > 0 else random_seed())
+        self.imu_reading = None
         self.linear_velocity = 0.0
         self.angular_velocity = 0.0
         self.last_cmd_time = None
@@ -219,6 +229,13 @@ class AgrobotDriver:
             self.node.get_logger().warn(
                 f'{DATA_CAMERA_DEVICE} não existe no robô; a câmera de '
                 'aquisição fica desligada.')
+        if self.noise is not None:
+            self.node.get_logger().info(
+                'Sensores com ruído (IMU, encoders, LiDAR e câmera RGB-D), '
+                f'semente {self.noise.seed}; repita com '
+                f'noise_seed:={self.noise.seed}.')
+        else:
+            self.node.get_logger().info('Sensores sem ruído (ideais).')
         self.node.get_logger().info('Controlador Webots do agrobot iniciado.')
 
     def init_vslam_camera(self, properties):
@@ -385,6 +402,7 @@ class AgrobotDriver:
         stamp.sec = int(now)
         stamp.nanosec = int((now - int(now)) * 1e9)
         self.clock_publisher.publish(Clock(clock=stamp))
+        self.read_imu()
         self.update_odometry(separation, now, stamp)
         self.publish_ground_truth(stamp)
         self.publish_imu(stamp)
@@ -418,9 +436,12 @@ class AgrobotDriver:
         width = self.vslam_width
         height = self.vslam_height
         # array('B') copia os bytes de uma vez; por lista custaria vários ms.
+        depth = ctypes.string_at(depth_pointer, 4 * width * height)
+        if self.noise is not None:
+            color = self.noise.color(color)
+            depth = self.noise.depth(depth)
         color = array.array('B', color)
-        depth = array.array(
-            'B', ctypes.string_at(depth_pointer, 4 * width * height))
+        depth = array.array('B', depth)
 
         color_message = Image()
         color_message.header.stamp = stamp
@@ -556,19 +577,37 @@ class AgrobotDriver:
         message.scan_time = self.lidar_period / 1000.0
         message.range_min = self.lidar.getMinRange()
         message.range_max = self.lidar.getMaxRange()
+        if self.noise is not None:
+            ranges = self.noise.lidar(ranges)
         message.ranges = [float(r) for r in reversed(ranges)]
         self.scan_publisher.publish(message)
 
-    def publish_imu(self, stamp):
+    def read_imu(self):
+        """Lê a IMU uma vez por passo e aplica o ruído (self.imu_reading)."""
+        self.imu_reading = None
         if self.imu is None:
             return
         q = self.imu.getQuaternion()
+        yaw = self.imu.getRollPitchYaw()[2]
         w = self.gyro.getValues() if self.gyro is not None else None
         a = (self.accelerometer.getValues()
              if self.accelerometer is not None else None)
         # Como os encoders, os sensores podem dar NaN antes da 1a amostra.
-        if any(math.isnan(v) for v in [*q, *(w or []), *(a or [])]):
+        if any(math.isnan(v) for v in [*q, yaw, *(w or []), *(a or [])]):
             return
+        if self.noise is not None:
+            imu = self.noise.imu
+            imu.update(self.time_step / 1000.0, w, a)
+            q = imu.orientation(q)
+            w = imu.gyro
+            a = imu.accel
+            yaw += imu.yaw_error
+        self.imu_reading = (q, yaw, w, a)
+
+    def publish_imu(self, stamp):
+        if self.imu_reading is None:
+            return
+        q, _, w, a = self.imu_reading
         message = Imu()
         message.header.stamp = stamp
         message.header.frame_id = 'imu_link'
@@ -600,11 +639,9 @@ class AgrobotDriver:
         self.imu_publisher.publish(message)
 
     def read_imu_yaw(self):
-        if self.imu is None:
+        if self.imu_reading is None:
             return None
-        yaw = self.imu.getRollPitchYaw()[2]
-        if math.isnan(yaw):
-            return None
+        yaw = self.imu_reading[1]
         if self.imu_yaw_offset is None:
             self.imu_yaw_offset = yaw
         yaw -= self.imu_yaw_offset
@@ -617,6 +654,9 @@ class AgrobotDriver:
         # Os sensores retornam NaN no primeiro passo.
         if math.isnan(left) or math.isnan(right):
             return
+        if self.noise is not None:
+            left = self.noise.wheels.measure('left', left)
+            right = self.noise.wheels.measure('right', right)
         if self.last_left is None:
             self.last_left = left
             self.last_right = right
