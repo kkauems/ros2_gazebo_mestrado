@@ -450,6 +450,14 @@ um waypoint que falha. Sem `yaw` no YAML, o robô chega olhando para o próximo 
 | `caso1_arena_circuito` | arena | ~10 m em volta do caixote do centro | Ambiente fechado; controle negativo do VSLAM |
 | `caso2_plantacao_ida_volta` | plantação | ~26 m: entrelinha y = 0 e volta pela y = 1,8 | Fileiras repetitivas, duas cabeceiras |
 | `caso3_plantacao_serpentina` | plantação | ~51 m por quatro entrelinhas | Deriva acumulada, aliasing entre entrelinhas |
+
+**Cabeceira leste da plantação (caso 3):** a pedra grande em (11,8; -1,5) fica na saída da
+entrelinha y = -1,8 e deixa só ~1,1 m até o fim da fileira y = -0,9 (o robô tem 1,12 m), então
+não dá para subir direto para a y = 0. Por isso o caso 3 sai dessa entrelinha em diagonal pelo
+vão sul da pedra até `contorno_pedra_sul` (11,5; -2,75), onde há folga para girar, chega
+olhando para o vão leste (`yaw: 0.7`) e contorna a pedra pelo leste. Parar no bolsão em
+(10,8; -1,8), como era antes, deixava o robô olhando para a pedra sem conseguir girar, e o Nav2
+perdia esse waypoint e o seguinte. Ao montar rotas na plantação, evite parar nesse bolsão.
 | `caso4_olival_ida_volta` | olival | ~160 m: entrelinha y = 0 até a cabeceira leste e volta pela y = 7 | Lugar aberto, poucos retornos do LiDAR, declive lateral nas manobras de cabeceira |
 | `caso5_olival_encosta` | olival | ~115 m: sobe a encosta atravessando as fileiras em x = 8 e desce em x = 29 | Subida e descida, grade de troncos vista de frente |
 
@@ -518,8 +526,6 @@ apresentação, os resultados do passo 3 e os próximos passos.
 - A profundidade da RGB-D e o IMU não têm ruído na simulação.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
   aviso "Mapa salvo" e o `map:` nas missões só foram conferidos fora do simulador.
-- O Nav2 às vezes não acha caminho na travessia da cabeceira leste da plantação
-  ("Failed to create plan with tolerance of 0.3") e perde waypoints ali.
 - Ao girar no lugar na arena, a quina do robô pode empurrar a `cardboard box(2)`.
 - No olival, o robô escorrega encosta abaixo no declive lateral (nas manobras, nos desvios
   dos obstáculos e ao passar por cima de galhos), e as rodas e o IMU não veem isso: na nuvem,
