@@ -53,9 +53,10 @@ import math
 import os
 import time
 
+from agrobot_webots import waypoint_check
 from geometry_msgs.msg import PointStamped, PoseStamped
 from nav2_msgs.action import FollowWaypoints
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import OccupancyGrid, Odometry
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -71,12 +72,14 @@ PENDING = 'pendente'
 CURRENT = 'atual'
 REACHED = 'atingido'
 MISSED = 'perdido'
+INVALID = 'invalido'   # o robô não cabe ou não gira ali (waypoint_check)
 
 COLORS = {
     PENDING: (1.0, 0.65, 0.0),
     CURRENT: (0.1, 0.5, 1.0),
     REACHED: (0.1, 0.8, 0.2),
     MISSED: (0.9, 0.1, 0.1),
+    INVALID: (0.7, 0.1, 0.9),
 }
 
 WAYPOINT_FIELDS = [
@@ -162,6 +165,20 @@ class WaypointMission(Node):
         # Liga a câmera de aquisição e a gravação das fotos só durante as
         # missões (data_camera:=true no launch).
         self.declare_parameter('data_camera', False)
+        # Checagem dos waypoints pelas medidas do robô (waypoint_check.py):
+        # recusa um ponto onde a pegada bate num obstáculo ou onde o robô não
+        # consegue girar da direção em que chega até a de saída. A grade é o
+        # /rtabmap/map com VSLAM ou o costmap global sem ele.
+        self.declare_parameter('check_waypoints', True)
+        self.declare_parameter('check_map_topic', '/global_costmap/costmap')
+        # Valor a partir do qual a célula é obstáculo: 65 numa grade de
+        # SLAM; 100 (letal) no costmap, para não contar a inflação.
+        self.declare_parameter('check_occupied', 100)
+        self.declare_parameter('robot_length', 1.2)
+        self.declare_parameter('robot_width', 1.12)
+        self.declare_parameter('check_margin', 0.05)
+        # Quanto esperar a grade antes de começar uma missão de arquivo (s).
+        self.declare_parameter('check_wait', 20.0)
 
         path = self.get_parameter('waypoints_file').value
         self.frame = self.get_parameter('frame').value
@@ -194,6 +211,27 @@ class WaypointMission(Node):
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        self.check = bool(self.get_parameter('check_waypoints').value)
+        self.grid = None
+        self.grid_frame = None
+        self.footprint = waypoint_check.Footprint(
+            float(self.get_parameter('robot_length').value),
+            float(self.get_parameter('robot_width').value),
+            float(self.get_parameter('check_margin').value))
+        self.check_occupied = int(self.get_parameter('check_occupied').value)
+        self.check_wait = float(self.get_parameter('check_wait').value)
+        self.wait_since = None
+        if self.check:
+            topic = self.get_parameter('check_map_topic').value
+            # Volátil: aceita publicador volátil ou latched.
+            self.create_subscription(
+                OccupancyGrid, topic, self.grid_callback,
+                QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE))
+            self.get_logger().info(
+                f'Waypoints conferidos na grade {topic} (robô '
+                f'{self.footprint.length:.2f} x {self.footprint.width:.2f} m '
+                f'+ {self.footprint.margin:.2f} m de folga).')
         self.client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
         latched = QoSProfile(
             depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -268,6 +306,121 @@ class WaypointMission(Node):
         return (t.transform.translation.x, t.transform.translation.y,
                 yaw_from_quaternion(t.transform.rotation))
 
+    # Checagem pelas medidas do robô --------------------------------------
+
+    def grid_callback(self, message):
+        info = message.info
+        self.grid = waypoint_check.Grid(
+            message.data, info.width, info.height, info.resolution,
+            info.origin.position.x, info.origin.position.y,
+            yaw_from_quaternion(info.origin.orientation),
+            self.check_occupied)
+        self.grid_frame = message.header.frame_id or self.frame
+
+    def check_point(self, start, x, y, yaw_out):
+        """
+        Confere o ponto (x, y) do frame da missão: (status, texto, sugestão).
+
+        start: de onde o robô vem (o waypoint anterior ou a pose dele).
+
+        Sem grade (ou sem TF até ela) o ponto passa como desconhecido.
+        """
+        if self.grid is None:
+            return waypoint_check.UNKNOWN, 'ainda sem mapa', None
+        offset = (0.0, 0.0, 0.0)
+        if self.grid_frame != self.frame:
+            try:
+                t = self.tf_buffer.lookup_transform(
+                    self.grid_frame, self.frame, Time())
+            except TransformException:
+                return waypoint_check.UNKNOWN, 'sem TF até o mapa', None
+            offset = (t.transform.translation.x, t.transform.translation.y,
+                      yaw_from_quaternion(t.transform.rotation))
+        c, s = math.cos(offset[2]), math.sin(offset[2])
+        gx = offset[0] + c * x - s * y
+        gy = offset[1] + s * x + c * y
+        gs = (offset[0] + c * start[0] - s * start[1],
+              offset[1] + s * start[0] + c * start[1])
+        gout = yaw_out + offset[2]
+        status, angle, gin = waypoint_check.check_leg(
+            self.grid, self.footprint, gs, gx, gy, gout)
+        yaw_in = gin - offset[2]
+        if status == waypoint_check.OK:
+            return status, '', None
+        if status == waypoint_check.UNKNOWN:
+            return status, 'área ainda não mapeada', None
+        if status == waypoint_check.UNREACHABLE:
+            return (status, 'não há caminho por onde o robô passe até ele',
+                    None)
+        if status == waypoint_check.BLOCKED:
+            text = (f'o robô não cabe ali chegando a '
+                    f'{math.degrees(yaw_in):.0f}°')
+        else:
+            text = (f'o robô não consegue girar de '
+                    f'{math.degrees(yaw_in):.0f}° para '
+                    f'{math.degrees(yaw_out):.0f}° (bate a '
+                    f'{math.degrees(wrap_angle(angle - offset[2])):.0f}°)')
+        found = waypoint_check.suggest(
+            self.grid, self.footprint, gx, gy, gin, gout)
+        suggestion = None
+        if found is not None:
+            # De volta ao frame da missão.
+            dx, dy = found[0] - offset[0], found[1] - offset[1]
+            suggestion = (c * dx + s * dy, -s * dx + c * dy)
+        return status, text, suggestion
+
+    def leg_start(self, index, origin):
+        """De onde o robô vem para o waypoint index."""
+        if index > 0:
+            prev = self.waypoints[index - 1]
+            return prev['x'], prev['y']
+        return origin
+
+    def describe(self, index, text, suggestion):
+        wp = self.waypoints[index]
+        line = (f'Waypoint {index + 1} "{wp["name"]}" ({wp["x"]:.2f}, '
+                f'{wp["y"]:.2f}): {text}.')
+        if suggestion is not None:
+            line += (f' Ponto livre mais perto: ({suggestion[0]:.2f}, '
+                     f'{suggestion[1]:.2f}).')
+        elif 'caminho' not in text:
+            line += ' Nenhum ponto livre a até 1 m.'
+        return line
+
+    def validate_mission(self):
+        """
+        Confere todos os waypoints (já com yaw).
+
+        Devolve True se a missão pode começar; marca os inválidos e explica
+        no log.
+        """
+        est = self.estimated_pose()
+        origin = est[:2] if est else (0.0, 0.0)
+        bad, unknown = [], []
+        for i, wp in enumerate(self.waypoints):
+            status, text, suggestion = self.check_point(
+                self.leg_start(i, origin), wp['x'], wp['y'], wp['yaw'])
+            if status == waypoint_check.UNKNOWN:
+                unknown.append(f'{i + 1} "{wp["name"]}"')
+            elif status != waypoint_check.OK:
+                bad.append(self.describe(i, text, suggestion))
+                self.status[i] = INVALID
+        if unknown:
+            self.get_logger().warn(
+                'Fora da área já mapeada, sem checagem: waypoints '
+                + ', '.join(unknown) + '.')
+        if bad:
+            for line in bad:
+                self.get_logger().error(line)
+            self.get_logger().error(
+                f'Missão {self.case} não iniciada: {len(bad)} waypoint(s) '
+                'onde o robô não cabe, não gira ou não chega (em roxo no '
+                'RViz). Mude os pontos (ou o yaw) e rode de novo; '
+                'check_waypoints:=false desliga a checagem.')
+            self.publish_markers()
+            return False
+        return True
+
     # Câmera de aquisição -------------------------------------------------
 
     def sync_camera(self):
@@ -336,11 +489,48 @@ class WaypointMission(Node):
             x, y = (t.transform.translation.x + c * x - s * y,
                     t.transform.translation.y + s * x + c * y)
         n = len(self.waypoints) + 1
-        self.waypoints.append(
-            {'name': f'wp{n}', 'x': x, 'y': y, 'yaw_in': None})
+        candidate = {'name': f'wp{n}', 'x': x, 'y': y, 'yaw_in': None}
+        if self.check and not self.click_allowed(candidate):
+            return
+        self.waypoints.append(candidate)
         self.reset_progress()
         self.get_logger().info(
             f'Waypoint {n} acrescentado: ({x:.2f}, {y:.2f}) em {self.frame}')
+
+    def click_allowed(self, candidate):
+        """
+        Confere um clique antes de acrescentá-lo.
+
+        O robô tem de caber no ponto novo, chegando do anterior, e conseguir
+        girar no anterior para vir até ele.
+        """
+        est = self.estimated_pose()
+        origin = est[:2] if est else (0.0, 0.0)
+        points = self.waypoints + [candidate]
+        fill_yaw(points, origin)
+        saved, self.waypoints = self.waypoints, points
+        try:
+            checks = [len(points) - 1]
+            if len(points) > 1 and points[-2]['yaw_in'] is None:
+                checks.insert(0, len(points) - 2)
+            for i in checks:
+                wp = points[i]
+                status, text, suggestion = self.check_point(
+                    self.leg_start(i, origin), wp['x'], wp['y'], wp['yaw'])
+                if status in (waypoint_check.BLOCKED, waypoint_check.NO_TURN,
+                              waypoint_check.UNREACHABLE):
+                    line = self.describe(i, text, suggestion)
+                    if i < len(points) - 1:
+                        line += ' (para seguir até o ponto clicado)'
+                    self.get_logger().warn(f'Clique recusado. {line}')
+                    return False
+                if status == waypoint_check.UNKNOWN and i == len(points) - 1:
+                    self.get_logger().warn(
+                        f'Ponto ({candidate["x"]:.2f}, {candidate["y"]:.2f})'
+                        f' sem checagem: {text}.')
+        finally:
+            self.waypoints = saved
+        return True
 
     def start_service(self, request, response):
         response.success = self.start_mission()
@@ -426,6 +616,20 @@ class WaypointMission(Node):
             return
         if not self.client.server_is_ready():
             return
+        if self.check:
+            # Espera a grade um pouco (o RTAB-Map e o costmap demoram a
+            # publicar a primeira) e confere os waypoints antes de mandar.
+            now = self.now_s()
+            if self.wait_since is None:
+                self.wait_since = now
+            if self.grid is None and now - self.wait_since < self.check_wait:
+                return
+            self.wait_since = None
+            if not self.validate_mission():
+                self.start_timer.cancel()
+                self.destroy_timer(self.start_timer)
+                self.start_timer = None
+                return
         goal = FollowWaypoints.Goal()
         for wp in self.waypoints:
             pose = PoseStamped()

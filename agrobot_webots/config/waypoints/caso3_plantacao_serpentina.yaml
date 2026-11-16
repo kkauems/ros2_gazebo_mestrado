@@ -22,16 +22,20 @@
 # diagonal pelo vão sul até contorno_pedra_sul, onde há folga para girar
 # (~1 m da pedra e do fim da fileira), olhando para o vão leste (yaw 0,7),
 # e de lá o Nav2 contorna a pedra pelo leste até a entrelinha y = 0.
+#
+# Na cabeceira oeste o ponto da y = 1,8 fica em x = 0,8: em x = 0,6 a quina
+# do robô passava a ~4 cm da pedra em (-0,3; 2,4) ao girar para o sul, e a
+# checagem dos waypoints (waypoint_check.py, folga de 5 cm) recusava o ponto.
 world: plantation_field.wbt
 waypoints:
   - {name: meio_y0, x: 6.0, y: 0.0}
   - {name: cabeceira_leste_y0, x: 11.3, y: 0.0}
   - {name: cabeceira_leste_y1.8, x: 11.3, y: 1.8}
   - {name: meio_y1.8, x: 6.0, y: 1.8}
-  - {name: cabeceira_oeste_y1.8, x: 0.6, y: 1.8}
+  - {name: cabeceira_oeste_y1.8, x: 0.8, y: 1.8}
   - {name: cabeceira_oeste_y-1.8, x: 0.6, y: -1.8}
   - {name: meio_y-1.8, x: 6.0, y: -1.8}
-  - {name: contorno_pedra_sul, x: 11.5, y: -2.75, yaw: 0.7}
+  - {name: contorno_pedra_sul, x: 11.6, y: -2.85, yaw: 0.7}
   - {name: cabeceira_leste_y0_volta, x: 11.3, y: 0.0}
   - {name: meio_y0_volta, x: 6.0, y: 0.0}
   - {name: partida, x: 0.0, y: 0.0}
