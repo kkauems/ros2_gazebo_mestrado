@@ -3,6 +3,7 @@ import ctypes
 import math
 import time
 
+from agrobot_webots.sensor_noise import random_seed, SensorNoise
 import rclpy
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import TransformStamped, Twist
@@ -12,8 +13,6 @@ from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import CameraInfo, Image, Imu, JointState, LaserScan
 from std_srvs.srv import SetBool
 from tf2_ros import TransformBroadcaster
-
-from agrobot_webots.sensor_noise import random_seed, SensorNoise
 
 # Variâncias da /imu/data: dizem ao EKF quanto confiar em cada medida. Com
 # sensorNoise (sensor_noise.py) a orientação deriva alguns graus por missão e

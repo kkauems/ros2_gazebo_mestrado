@@ -201,6 +201,7 @@ class SensorNoise:
         self.rng = np.random.default_rng(seed)
         self.imu = ImuNoise(self.rng)
         self.wheels = WheelEncoderNoise(self.rng)
+        self.color_table = None
 
     def lidar(self, ranges):
         """Ruído em cada raio; +inf (sem retorno) fica +inf."""
@@ -221,10 +222,24 @@ class SensorNoise:
         return depth.tobytes()
 
     def color(self, bgra_bytes):
-        """Imagem BGRA em bytes -> bytes com ruído em B, G e R."""
-        image = np.frombuffer(bgra_bytes, dtype=np.uint8).reshape(-1, 4)
-        noisy = image.astype(np.float32)
-        noisy[:, :3] += COLOR_NOISE_STD * self.rng.standard_normal(
-            (image.shape[0], 3), dtype=np.float32)
-        np.clip(noisy, 0.0, 255.0, out=noisy)
-        return np.rint(noisy).astype(np.uint8).tobytes()
+        """
+        Imagem BGRA em bytes -> bytes com ruído em B, G e R.
+
+        Sortear 300 mil normais por quadro custava ~9 ms no driver; o ruído
+        sai de uma tabela sorteada uma vez (duas imagens), lida a partir de
+        um pixel sorteado a cada quadro. Assim o padrão muda de quadro para
+        quadro e o custo cai para ~1 ms.
+        """
+        image = np.frombuffer(bgra_bytes, dtype=np.uint8)
+        pixels = image.size // 4
+        table = self.color_table
+        if table is None or table.shape[0] < 2 * pixels:
+            table = np.rint(COLOR_NOISE_STD * self.rng.standard_normal(
+                (2 * pixels, 4))).astype(np.int16)
+            table[:, 3] = 0             # alfa sem ruído
+            self.color_table = table
+        start = int(self.rng.integers(0, table.shape[0] - pixels + 1))
+        noisy = image.astype(np.int16)
+        noisy += table[start:start + pixels].reshape(-1)
+        np.clip(noisy, 0, 255, out=noisy)
+        return noisy.astype(np.uint8).tobytes()

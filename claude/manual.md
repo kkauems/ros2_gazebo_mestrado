@@ -172,6 +172,11 @@ datasheets e estão justificados no próprio arquivo.
 - **Deriva do yaw:** parado, mediana de ~2° em 5 min e ~4° em 9 min (até ~9° no pior
   décimo). Nos giros, o erro de escala soma ~1,8° a cada 180°. Numa entrelinha de 9 m, 4° de
   yaw viram ~0,6 m de erro lateral: quem corrige é o VSLAM.
+- **Efeito medido** (caso2 na plantação, EKF+VSLAM, 3 rodadas de cada): com ruído, 15/15
+  waypoints, ATE 0,16 ± 0,01 m, erro máximo médio 0,34 m e yaw até 3,4°; sem ruído, 15/15,
+  ATE 0,11 ± 0,03 m, 0,21 m e 2,3°. Nenhum alarme falso de patinagem nas duas.
+- **Custo:** a câmera do VSLAM passa de ~1,6 para ~3,5 ms por quadro no driver (o ruído da cor
+  sai de uma tabela sorteada uma vez, lida de um ponto sorteado a cada quadro).
 - **Sem magnetômetro de propósito:** no campo ele sofre com motores, cercas e implementos.
 - **As variâncias publicadas** (`IMU_*_VARIANCE` e as das rodas no driver) já cobriam esses
   erros e não mudaram; a configuração do EKF também não.
@@ -545,9 +550,8 @@ apresentação, os resultados do passo 3 e os próximos passos.
 
 - Quase tudo foi validado na nuvem Linux, headless e sem GPU; os testes no Windows/WSL e no
   RViz na tela ainda são poucos. A câmera de aquisição só rodou no Webots na nuvem; falta medir o custo no Windows.
-- O ruído dos sensores ainda não tem resultado de missão na plantação e no olival (só os
-  testes unitários de `test_sensor_noise.py`). Ele é branco e gaussiano, menos o bias do
-  giroscópio: faltam buracos e bordas falsas na profundidade, retornos perdidos no LiDAR e
+- O ruído dos sensores só foi testado em missão no caso2 da plantação; faltam o caso3 e o
+  olival. Ele é branco e gaussiano, menos o bias do giroscópio: faltam buracos e bordas falsas na profundidade, retornos perdidos no LiDAR e
   deriva por temperatura.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
   aviso "Mapa salvo" e o `map:` nas missões só foram conferidos fora do simulador.
