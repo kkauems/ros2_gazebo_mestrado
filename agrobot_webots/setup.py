@@ -24,6 +24,10 @@ setup(
         (os.path.join('share', package_name, 'web'),
             [f for f in glob('web/*') if os.path.isfile(f)]),
         (os.path.join('share', package_name, 'web', 'js'), glob('web/js/*.js')),
+        # Controlador da pessoa dos testes da camada de segurança
+        # (scripts/teste_pessoa.py).
+        (os.path.join('share', package_name, 'controllers', 'pessoa_teste'),
+            glob('controllers/pessoa_teste/*.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

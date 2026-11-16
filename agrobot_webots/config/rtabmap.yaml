@@ -5,8 +5,15 @@
 # Entra: cor + profundidade + camera_info (/vslam_camera/..., juntados pelo
 # rgbd_sync) e a odometria do TF odom -> base_link, que é do EKF. Sai: TF
 # map -> odom (o RTAB-Map é o dono com vslam:=true; identidade até o primeiro
-# quadro processado), /rtabmap/map (grade feita pelo LiDAR, não pela
-# profundidade), /rtabmap/mapPath, /rtabmap/info e /rtabmap/localization_pose.
+# quadro processado), /rtabmap/map (grade feita pela nuvem do LiDAR 3D, não
+# pela profundidade), /rtabmap/mapPath, /rtabmap/info e
+# /rtabmap/localization_pose.
+#
+# A nuvem é a do LiDAR 3D do topo (/lidar3d/points, modelo RoboSense
+# Helios-16P, 16 canais de -15 a +15 graus, ~10 Hz). Ela entra só no ICP que
+# confere e corrige os fechamentos de laço e na grade: a pose continua vindo
+# do EKF (rodas + IMU) corrigido pelos fechamentos da câmera e do LiDAR; o
+# LiDAR 3D não vira odometria. O LiDAR de segurança (/scan) não entra aqui.
 #
 # Os nós rodam no namespace rtabmap, por isso os nomes completos abaixo.
 # Os parâmetros do núcleo ("Grupo/Nome") são declarados pelo nó como texto:
@@ -38,14 +45,15 @@
     tf_delay: 0.05               # 20 Hz, como o slam_toolbox
     wait_for_transform: 0.2
 
-    # Entradas: rgbd_image do rgbd_sync e o /scan (grade e conferência dos
-    # fechamentos de laço).
+    # Entradas: rgbd_image do rgbd_sync e a nuvem do LiDAR 3D (grade e
+    # conferência dos fechamentos de laço).
     subscribe_rgbd: true
     subscribe_depth: false
     subscribe_rgb: false
-    subscribe_scan: true         # o launch remapeia scan -> /scan
-    approx_sync: true            # rgbd_image (~10,4 Hz) + /scan (~10 Hz)
-    # Best effort, para casar com o /scan (qos_profile_sensor_data no driver)
+    subscribe_scan: false
+    subscribe_scan_cloud: true   # o launch remapeia scan_cloud -> /lidar3d/points
+    approx_sync: true            # rgbd_image (~10,4 Hz) + nuvem (~10,4 Hz)
+    # Best effort, para casar com a nuvem (qos_profile_sensor_data no driver)
     # qualquer que seja o padrão do RMW.
     qos_scan: 2
     topic_queue_size: 10
@@ -65,13 +73,40 @@
 
     # ---- Núcleo do RTAB-Map (texto) ----
     Rtabmap/DetectionRate: "1"          # Hz; com odometria externa, 1 Hz basta
-    # 2 = visual e depois ICP com o /scan: o ICP derruba fechamentos em que a
-    # imagem bate e o LiDAR não (a textura do solo da plantação se repete a
-    # cada 2 m). Na plantação, 8 fechamentos falsos viraram 1.
+    # 2 = visual e depois ICP com a nuvem do LiDAR 3D: o ICP derruba
+    # fechamentos em que a imagem bate e o LiDAR não (a textura do solo da
+    # plantação se repete a cada 2 m). Com o scan 2D, na plantação, 8
+    # fechamentos falsos viraram 1.
     Reg/Strategy: "2"
-    # O que o nó põe sozinho com ICP e /scan (e avisa): a detecção por
-    # proximidade também junta os scans dos 10 nós vizinhos.
+    # O que o nó põe sozinho com ICP (e avisa): a detecção por proximidade
+    # também junta as nuvens dos 10 nós vizinhos.
     RGBD/ProximityPathMaxNeighbors: "10"
+
+    # Nuvem do LiDAR 3D: ~25 mil pontos por volta. Cada nó guarda a nuvem
+    # reduzida a uma grade de 10 cm (o banco não incha e o ICP fica leve), com
+    # as normais (10 vizinhos) para o ICP ponto-a-plano.
+    Mem/LaserScanVoxelSize: "0.1"
+    Mem/LaserScanNormalK: "10"
+    # ICP 3D ponto-a-plano: o chão, os troncos e as copas viram planos e
+    # cilindros que travam x, y e yaw melhor que o corte a 13 cm do scan 2D.
+    # Correção máxima de 0,3 m (padrão 0,2): entre uma passada e outra a
+    # deriva do EKF chega a ~0,25 m, e com 0,2 m todos os fechamentos por
+    # proximidade eram recusados. Com 0,5 m o ICP passava a escorregar ao
+    # longo da fileira (o banco do caso 2 reprocessado ficou pior que sem
+    # fechamentos pelo LiDAR).
+    Icp/MaxTranslation: "0.3"
+    Icp/VoxelSize: "0.1"
+    Icp/PointToPlane: "true"
+    Icp/PointToPlaneK: "10"
+    Icp/MaxCorrespondenceDistance: "0.5"
+    Icp/Iterations: "30"
+    Icp/Epsilon: "0.001"
+    # Fração mínima de pontos casados para aceitar: 2,5% (padrão 10%). A
+    # nuvem de 16 canais é esparsa e cada nó vê a fileira de outro ponto:
+    # dois nós da mesma entrelinha casam 6 a 9% dos pontos, e na proximidade
+    # o rtabmap exige o dobro do valor daqui. O que segura fechamentos
+    # errados é a correção máxima acima e o chute do EKF.
+    Icp/CorrespondenceRatio: "0.025"
     Reg/Force3DoF: "true"               # x, y e yaw, como o two_d_mode do EKF
     RGBD/LinearUpdate: "0.1"            # padrão: nó novo só se andou 0,1 m...
     RGBD/AngularUpdate: "0.1"           # ...ou girou 0,1 rad (a 1 Hz, ~0,4 m entre nós)
@@ -118,8 +153,8 @@
     # odometria (o RGBD/OptimizeMaxError espalha o erro pelos elos, acima).
     # Sobra a detecção por proximidade, que já parte da pose do EKF: pela
     # câmera, só nós a até 1 m (ProximityPathFilteringRadius) e 45°
-    # (RGBD/ProximityAngle), com a odometria como chute; pelo LiDAR, o ICP
-    # corrige no máximo Icp/MaxTranslation (0,2 m) do chute. Uma entrelinha
+    # (RGBD/ProximityAngle), com a odometria como chute; pelo LiDAR 3D, o ICP
+    # corrige no máximo Icp/MaxTranslation (0,3 m) do chute. Uma entrelinha
     # vizinha (1,8 m) fica de fora enquanto a deriva do EKF for menor que
     # ~0,8 m (no caso 3, no máximo 0,36 m).
     # O valor da hipótese de laço vai de 0 a 1: 1,01 nunca é alcançado, e o
@@ -133,16 +168,35 @@
     # descrição): o limiar agressivo só entra se for menor que o LoopThr.
     RGBD/AggressiveLoopThr: "1.01"
 
-    # Grade de ocupação pelo LiDAR em /rtabmap/map (para um static_layer do
-    # Nav2 depois). Cada nó guarda a grade local dele no banco; a grade
-    # global só é montada enquanto alguém assina /rtabmap/map (o RViz).
-    Grid/Sensor: "0"                    # 0 = scan do LiDAR (nada de profundidade)
+    # Grade de ocupação pela nuvem do LiDAR 3D em /rtabmap/map (usada pela
+    # checagem dos waypoints e pela página do operador). Cada nó guarda a
+    # grade local dele no banco; a grade global só é montada enquanto alguém
+    # assina /rtabmap/map (o RViz ou a página).
+    Grid/Sensor: "0"                    # 0 = LiDAR (nada de profundidade)
     Grid/CellSize: "0.05"               # mesma resolução do slam_toolbox
-    Grid/RangeMax: "5.0"                # obstacle_max_range do nav2_params.yaml
-                                        # (com subscribe_scan o nó poria 0 = infinito)
-    # Raios sem retorno (+inf) também marcam espaço livre até Grid/RangeMax;
-    # sem isso, a plantação aberta fica cheia de cunhas desconhecidas.
-    Grid/Scan2dUnknownSpaceFilled: "true"
+    Grid/3D: "false"                    # grade 2D (projeção)
+    # O canal mais baixo (-15°) só toca o chão a ~3,9 m do robô, e um
+    # obstáculo baixo só entra na faixa de altura abaixo a ~2,8 m: a grade
+    # de cada nó vai até 8 m (com o scan 2D eram 5 m).
+    Grid/RangeMax: "8.0"
+    # Chão e obstáculo pela altura no base_link (o base_link fica 0,24 m
+    # acima do chão): chão até 0,12 m acima do chão, obstáculo de 0,12 a
+    # 0,34 m. A separação pela normal de cada ponto (padrão do RTAB-Map) não
+    # funciona com 16 canais: os pontos do chão vêm em anéis (um por canal),
+    # a normal sai torta e o chão inteiro virava anéis de obstáculos. Na
+    # encosta do olival o robô inclina junto com o chão, então o corte por
+    # altura no base_link continua valendo.
+    Grid/NormalsSegmentation: "false"
+    Grid/MaxGroundHeight: "-0.12"
+    # 0,34 m: é o que bate no robô (o chassi fica a ~0,17 m do chão). Copas
+    # das oliveiras e as folhas do milho acima disso ficam de fora: o robô
+    # passa por baixo delas, e elas fechariam as entrelinhas na grade. O ICP
+    # usa a nuvem inteira, sem esse corte.
+    Grid/MaxObstacleHeight: "0.10"
+    # Os raios até cada obstáculo e até o chão visto marcam espaço livre:
+    # sem isso, os 3,9 m em volta do robô (abaixo do canal mais baixo)
+    # ficariam desconhecidos.
+    Grid/RayTracing: "true"
 
     # Profundidade guardada em float (PNG) no banco. Com o formato de 16 bits
     # (mm), cada pixel +inf vira um aviso "Depth conversion error" por nó.
@@ -174,7 +228,7 @@
     # Reg/Force3DoF a câmera se perdia a cada sacudida (caso 3). Só vx e vy
     # (no base_link) são usados.
     Reg/Force3DoF: "false"
-    Reg/Strategy: "0"            # só visual (o ICP com o /scan fica no rtabmap)
+    Reg/Strategy: "0"            # só visual (o ICP com o LiDAR fica no rtabmap)
     Odom/Strategy: "0"           # quadro contra mapa local (F2M), o padrão
     # Perdida, recomeça no quadro seguinte: só a velocidade interessa.
     Odom/ResetCountdown: "1"
@@ -190,7 +244,7 @@
     frame_id: base_link
     odom_frame_id: odom
     subscribe_rgbd: true
-    subscribe_scan: true
+    subscribe_scan_cloud: true
     approx_sync: true
     qos_scan: 2
     wait_for_transform: 0.2

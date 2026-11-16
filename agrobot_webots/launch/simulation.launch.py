@@ -38,16 +38,24 @@ DATA_CAMERA_OFF = '<dataCameraPeriod>0</dataCameraPeriod>'
 NOISE_ON = re.escape('<sensorNoise>true</sensorNoise>')
 NOISE_OFF = '<sensorNoise>false</sensorNoise>'
 NOISE_SEED = r'<noiseSeed>\s*\d+\s*</noiseSeed>'
+LIDAR3D_ON = r'<lidar3dPeriod>\s*\d+\s*</lidar3dPeriod>'
+LIDAR3D_OFF = '<lidar3dPeriod>0</lidar3dPeriod>'
+
+# Camada de segurança (safety:=true): tudo o que comanda o robô (Nav2,
+# cmd_vel_mux) publica em /cmd_vel_raw, e só o collision_monitor publica no
+# /cmd_vel do driver.
+CMD_VEL_RAW = 'cmd_vel_raw'
 
 
 def driver_urdf(robot_description, ekf, camera, data_camera=False,
-                noise=True, noise_seed=0):
+                noise=True, noise_seed=0, lidar3d=True):
     """
     Caminho do URDF para o driver, com as trocas pedidas no launch.
 
     Com ekf, o driver não publica /odom; sem camera, não liga a câmera do
     VSLAM, e sem data_camera, não liga a de aquisição de dados (o Webots
-    também deixa de renderizá-las). Sem noise, os sensores ficam ideais;
+    também deixa de renderizá-las); sem lidar3d, nem o LiDAR 3D. Sem
+    noise, os sensores ficam ideais;
     noise_seed > 0 repete o ruído de uma rodada.
     """
     replacements = []
@@ -62,6 +70,8 @@ def driver_urdf(robot_description, ekf, camera, data_camera=False,
         replacements.append((CAMERA_ON, CAMERA_OFF))
     if not data_camera:
         replacements.append((DATA_CAMERA_ON, DATA_CAMERA_OFF))
+    if not lidar3d:
+        replacements.append((LIDAR3D_ON, LIDAR3D_OFF))
     if not replacements:
         return robot_description
     with open(robot_description) as urdf_file:
@@ -150,6 +160,11 @@ def teleop_mode(context):
 def mux_on(context):
     """cmd_vel_mux entre o Nav2 e o driver: com teleop ou a interface web."""
     return bool(teleop_mode(context)) or flag(context, 'operator')
+
+
+def command_topic(context):
+    """Tópico em que o Nav2 ou o cmd_vel_mux mandam o comando final."""
+    return CMD_VEL_RAW if flag(context, 'safety') else 'cmd_vel'
 
 
 def slip_check_on(context):
@@ -268,7 +283,8 @@ def generate_launch_description():
                     driver_urdf(robot_description, ekf, camera,
                                 flag(context, 'data_camera'),
                                 flag(context, 'sensor_noise'),
-                                noise_seed(context))},
+                                noise_seed(context),
+                                flag(context, 'lidar3d'))},
                 {'use_sim_time': True},
             ],
             output='screen',
@@ -428,6 +444,10 @@ def generate_launch_description():
                 'do EKF.')
         if not flag(context, 'camera'):
             raise RuntimeError('vslam:=true precisa da câmera (camera:=true).')
+        if not flag(context, 'lidar3d'):
+            raise RuntimeError(
+                'vslam:=true precisa do LiDAR 3D (lidar3d:=true): o RTAB-Map '
+                'usa a nuvem dele no ICP e na grade.')
         database, mapping = vslam_database(context)
         actions = []
         if mapping:
@@ -456,7 +476,7 @@ def generate_launch_description():
             output='screen',
             parameters=[config, rtabmap_parameters,
                         {'use_sim_time': True}],
-            remappings=[('scan', '/scan')],
+            remappings=[('scan_cloud', '/lidar3d/points')],
             # O rtabmap grava o mapa no banco ao fechar, e num mapa grande
             # isso passa dos 5 s que o launch espera antes de matá-lo.
             sigterm_timeout='120',
@@ -483,7 +503,7 @@ def generate_launch_description():
                 namespace='rtabmap',
                 output='screen',
                 parameters=[config, {'use_sim_time': True}],
-                remappings=[('scan', '/scan')],
+                remappings=[('scan_cloud', '/lidar3d/points')],
             ))
         return nodes
 
@@ -497,8 +517,9 @@ def generate_launch_description():
 
     def start_navigation(context):
         # Com teleop (ou a interface web), o Nav2 manda para o cmd_vel_mux, e
-        # não direto ao driver.
-        cmd_vel_out = ('cmd_vel_nav_out' if mux_on(context) else 'cmd_vel')
+        # não direto ao driver; sem, direto à camada de segurança.
+        cmd_vel_out = ('cmd_vel_nav_out' if mux_on(context)
+                       else command_topic(context))
         return [IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(webots_share, 'launch', 'navigation.launch.py')),
@@ -523,7 +544,10 @@ def generate_launch_description():
             package='agrobot_webots',
             executable='cmd_vel_mux',
             output='screen',
-            parameters=[{'use_sim_time': True}],
+            parameters=[{
+                'use_sim_time': True,
+                'output_topic': '/' + command_topic(context),
+            }],
         )]
         if mode == 'joy':
             config = os.path.join(webots_share, 'config', 'teleop_joy.yaml')
@@ -552,6 +576,42 @@ def generate_launch_description():
         return nodes
 
     teleop = OpaqueFunction(function=start_teleop)
+
+    # Camada de segurança (safety:=true): o collision_monitor do Nav2 com o
+    # LiDAR de segurança (/scan) fica entre todos os comandos e as rodas,
+    # com ou sem Nav2 (config/collision_monitor.yaml). O nó é lifecycle e
+    # tem um lifecycle_manager próprio, para não depender do Nav2.
+    def start_safety(context):
+        if not flag(context, 'safety'):
+            return [LogInfo(msg=(
+                'safety:=false: SEM a camada de segurança; o Nav2 e o '
+                'operador mandam direto nas rodas.'))]
+        return [
+            Node(
+                package='nav2_collision_monitor',
+                executable='collision_monitor',
+                name='collision_monitor',
+                output='screen',
+                parameters=[
+                    os.path.join(
+                        webots_share, 'config', 'collision_monitor.yaml'),
+                    {'use_sim_time': True},
+                ],
+            ),
+            Node(
+                package='nav2_lifecycle_manager',
+                executable='lifecycle_manager',
+                name='lifecycle_manager_safety',
+                output='screen',
+                parameters=[{
+                    'use_sim_time': True,
+                    'autostart': True,
+                    'node_names': ['collision_monitor'],
+                }],
+            ),
+        ]
+
+    safety = OpaqueFunction(function=start_safety)
 
     def run_label(context):
         # Rótulo do modo nos nomes dos arquivos (CSVs das missões e pasta
@@ -766,12 +826,20 @@ def generate_launch_description():
         # Interface web do operador: página em http://localhost:<operator_port>
         # e rosbridge (WebSocket) em <rosbridge_port>.
         DeclareLaunchArgument('operator', default_value='false'),
+        # Camada de segurança: collision_monitor com o LiDAR de segurança
+        # entre todos os comandos (Nav2 e operador) e as rodas. false só
+        # para comparar; o robô anda sem parada de segurança.
+        DeclareLaunchArgument('safety', default_value='true'),
+        # LiDAR 3D do topo (/lidar3d/points), usado pelo RTAB-Map. false
+        # alivia a CPU nas rodadas sem VSLAM.
+        DeclareLaunchArgument('lidar3d', default_value='true'),
         DeclareLaunchArgument('operator_port', default_value='8080'),
         DeclareLaunchArgument('rosbridge_port', default_value='9090'),
         # Antes do Webots: se faltar o ekf, a câmera ou o mapa salvo, o launch
         # para com o erro sem abrir o Webots.
         vslam,
         teleop,
+        safety,
         webots,
         agrobot_driver,
         robot_state_publisher,

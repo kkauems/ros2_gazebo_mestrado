@@ -4,7 +4,10 @@ Resumo de como o projeto funciona hoje: como rodar, o que cada parte faz e por q
 Não é um histórico de alterações; o histórico está no `git log` e nos PRs.
 
 - **Simulador oficial:** Webots (pacote `agrobot_webots`).
-- **Localização oficial:** VSLAM com RTAB-Map e a câmera RGB-D (`ekf:=true vslam:=true`).
+- **Localização oficial:** VSLAM com RTAB-Map, a câmera RGB-D e o LiDAR 3D do topo
+  (`ekf:=true vslam:=true`).
+- **Segurança:** o LiDAR de segurança (2D, 360°, 15 cm do chão) e o `collision_monitor` do Nav2
+  param ou reduzem o robô antes de qualquer comando chegar às rodas (`safety:=true`, padrão).
 - **Ambiente:** ROS 2 Jazzy no WSL2 (Ubuntu 24.04), Webots R2025a instalado no Windows
   (`WEBOTS_HOME=/mnt/c/Program Files/Webots`), `webots_ros2_driver` 2025.0.0, Nav2 1.3.x,
   rtabmap_ros 0.23.
@@ -40,7 +43,8 @@ Tudo sai de um launch:
 ros2 launch agrobot_webots simulation.launch.py [argumentos]
 ```
 
-Ele abre o Webots com o mundo, o driver do robô, o `robot_state_publisher`, o Nav2 e o RViz.
+Ele abre o Webots com o mundo, o driver do robô, o `robot_state_publisher`, a camada de
+segurança (`collision_monitor`), o Nav2 e o RViz.
 Fechar o Webots encerra o launch inteiro.
 
 | Argumento | Padrão | O que faz |
@@ -50,7 +54,9 @@ Fechar o Webots encerra o launch inteiro.
 | `rviz` | `true` | Abre o RViz (`nav.rviz`, ou `nav_vslam.rviz` com `vslam:=true`, `nav_slam.rviz` com `slam:=true`) |
 | `ekf` | `false` | EKF do `robot_localization` (rodas + IMU) publica `/odom` e `odom → base_link`. Obrigatório para o VSLAM |
 | `camera` | `true` | Câmera RGB-D do VSLAM. `false` alivia a CPU nas rodadas sem VSLAM |
-| `vslam` | `false` | RTAB-Map publica `map → odom` e o mapa. Exige `ekf:=true` e `camera:=true` (o launch para com erro se faltar) |
+| `vslam` | `false` | RTAB-Map publica `map → odom` e o mapa. Exige `ekf:=true`, `camera:=true` e `lidar3d:=true` (o launch para com erro se faltar) |
+| `lidar3d` | `true` | LiDAR 3D do topo (`/lidar3d/points`), usado pelo RTAB-Map. `false` alivia a CPU nas rodadas sem VSLAM |
+| `safety` | `true` | Camada de segurança: `collision_monitor` com o LiDAR de segurança entre todos os comandos e as rodas (seção 5). `false` só para comparar: o robô anda sem parada de segurança |
 | `vslam_localization` | `false` | Com `vslam:=true`: localiza num mapa salvo em vez de mapear |
 | `vslam_db` | `dados/vslam/<mundo>.db` | Banco do RTAB-Map (o mapa). Um nome sem pasta (`vslam_db:=olival_mapa1`) vai para `dados/vslam/<nome>.db`. O mapeamento começa num banco vazio; um mapa que já existia com o mesmo nome vira `<nome>_<data>.db` |
 | `rtabmap_viz` | `false` | Abre a janela do `rtabmap_viz` |
@@ -63,7 +69,7 @@ Fechar o Webots encerra o launch inteiro.
 | `teleop` | vazio | Teleoperação: `joy` (joystick) ou `keyboard` (teclado, num terminal próprio). O operador tem prioridade sobre o Nav2 (seção 5) |
 | `slip_check` | `true` | Checagem de patinagem das rodas pela odometria visual (seção 5). Só age com `ekf:=true` e `camera:=true` |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 10) |
-| `sensor_noise` | `true` | Ruído realista na IMU, nos encoders, no LiDAR e na câmera RGB-D (seção 3). `false`: sensores ideais do Webots, com `-ideal` no rótulo dos CSVs |
+| `sensor_noise` | `true` | Ruído realista na IMU, nos encoders, nos dois LiDARs e na câmera RGB-D (seção 3). `false`: sensores ideais do Webots, com `-ideal` no rótulo dos CSVs |
 | `noise_seed` | `0` | Semente do ruído. `0` sorteia uma nova (sai no log do driver); outro valor repete o ruído de uma rodada |
 | `operator` | `false` | Interface web do operador em http://localhost:8080 (seção 8) |
 | `operator_port`, `rosbridge_port` | `8080`, `9090` | Portas da página e do rosbridge (WebSocket) |
@@ -120,7 +126,8 @@ os dados pelo TF).
 
 | Sensor | Onde (em relação ao `base_link`) | Tópico | Para quê |
 |---|---|---|---|
-| LiDAR frontal `front_lidar` | (0,65; 0; -0,10), ~13 cm do chão, 172°, 300 raios, 0,1–8 m | `/scan` | Obstáculos do Nav2 e ICP do RTAB-Map |
+| LiDAR de segurança `front_lidar` (modelo 3irobotix Delta-2A) | (0,65; 0; -0,09), na frente, 15 cm do chão, 360°, 360 raios (1°), 0,13–8 m, 6,25 Hz | `/scan` | Parada de segurança (`collision_monitor`) e obstáculos dos costmaps do Nav2 |
+| LiDAR 3D `lidar3d` (modelo RoboSense RS-Helios-16P) | (0; 0; 0,80), no topo do mastro, ~1,04 m do chão; 16 canais de -15° a +15° (2° entre canais), 360° com 0,2° (1800 colunas), 0,2–150 m, ~10 Hz | `/lidar3d/points` (nuvem, frame `lidar3d_link`) | ICP dos fechamentos de laço e grade do RTAB-Map |
 | IMU (`InertialUnit`, `Gyro`, `Accelerometer`) | (0; 0; 0,35) | `/imu/data` | Yaw do EKF |
 | Encoders das rodas | juntas das rodas | `/wheel/odom` | Velocidade do EKF |
 | Câmera RGB-D do VSLAM (modelo Intel RealSense D455) | (0,45; 0; 0,38), 15° para baixo, 424 × 240, 87°, 0,5–6 m, ~10 Hz | `/vslam_camera/color/image_raw`, `/vslam_camera/aligned_depth_to_color/image_raw`, `camera_info` | Entrada do RTAB-Map |
@@ -128,9 +135,24 @@ os dados pelo TF).
 | Pose verdadeira (Supervisor) | `base_link` | `/ground_truth/odom` | Só para medir erro; nenhum estimador usa |
 
 Por quê:
-- **LiDAR baixo e próprio do Webots** (`front_lidar_link`): o `lidar_link` antigo fica a
-  0,57 m do chão e não vê caixas de 0,2–0,3 m. A 8 cm o plano batia no chão quando o robô
-  inclinava na plantação e o Nav2 via obstáculos falsos; a 13 cm isso quase some.
+- **Dois LiDARs com papéis separados** (pedido do orientador): o de segurança, baixo, vê
+  pernas de pessoas, pedras e caixas perto do chão e só serve para não bater; o 3D, no alto,
+  vê troncos, copas e o relevo a dezenas de metros e só serve para a localização.
+- **LiDAR de segurança a 15 cm** (`front_lidar_link`, na frente): o `lidar_link` antigo fica
+  a 0,57 m do chão e não vê caixas de 0,2–0,3 m nem pernas. A 8 cm o plano batia no chão
+  quando o robô inclinava na plantação e o Nav2 via obstáculos falsos; a 13–15 cm isso quase
+  some. Ele gira 360°, mas, na frente do robô, para trás o plano passa por baixo do chassi
+  (que fica a ~17 cm do chão) e entre as rodas: os raios que batem nas rodas e nos motores
+  (dentro de uma caixa de x -0,65 a 0,62 m e y ±0,58 m no `base_link`) saem como NaN, senão o
+  `collision_monitor` veria o próprio robô.
+- **LiDAR 3D a 0,80 m do `base_link`:** acima de tudo no robô (mastro da câmera de aquisição
+  e base de 1 cm), então nenhum raio bate nele mesmo. O canal mais baixo (-15°) só toca o
+  chão a ~3,9 m: perto do robô quem vê o chão é o LiDAR de segurança.
+- **Especificações dos dois modelos:** Delta-2A de 4 a 10 Hz (6,2 típico), 2 a 5 mil pontos/s,
+  0,13–8 m, exatidão < 1% a 5 m, 175 g; Helios-16P 16 canais, ±15° com 2°, 0,2° a 10 Hz
+  (288 mil pontos/s), até 150 m, ±2 cm, 97,5 × 100 mm, ~0,9 kg. Vêm do manual do Helios e de
+  listas de LiDARs (os sites dos fornecedores não abriram na nuvem); confira com o
+  datasheet antes de citar.
 - **Yaw pelo IMU, distância pelas rodas:** no skid-steer as rodas escorregam nas curvas e o
   yaw das rodas erra a cada giro.
 - **Links novos em vez de mexer nos antigos** (`lidar_link`, `camera_link`): o Gazebo usa o
@@ -140,8 +162,8 @@ Por quê:
 
 Plugin Python do `webots_ros2_driver` (carregado pelo `<plugin>` do URDF). A cada passo
 de 32 ms ele: converte `/cmd_vel` em velocidade das rodas; publica `/clock`, `/odom` (sem
-EKF), `/wheel/odom`, `/imu/data`, `/scan`, `/joint_states`, as câmeras e o
-`/ground_truth/odom`.
+EKF), `/wheel/odom`, `/imu/data`, `/scan`, `/lidar3d/points`, `/joint_states`, as câmeras
+e o `/ground_truth/odom`.
 
 - **Por que o driver publica os sensores, e não o `webots_ros2_driver`:** os publicadores
   dele carimbam com o relógio do próprio nó, que fica parado ou atrasado. O Nav2 descartava
@@ -157,10 +179,19 @@ EKF), `/wheel/odom`, `/imu/data`, `/scan`, `/joint_states`, as câmeras e o
 - **Para sem comando:** se o `/cmd_vel` parar de chegar por 1 s de simulação, o robô para.
   O Nav2 e a teleoperação publicam continuamente enquanto andam; sem isso, um nó que caísse
   deixaria o robô seguindo o último comando.
+- **Nuvem do LiDAR 3D:** a range image do Webots (16 × 1800 distâncias) é lida de uma vez
+  com o numpy e vira pontos x, y, z pelos ângulos de cada raio; só os pontos válidos vão no
+  `PointCloud2` (~14 mil por volta na plantação). Custa ~1,2 ms por volta no driver. O que
+  pesa é o Webots desenhar os 360° do LiDAR 3D: na nuvem, sem GPU, a simulação ficou ~35%
+  mais lenta (de 0,37 para 0,23 do tempo real, sem câmera e sem Nav2).
+- **Ângulos dos raios:** num Lidar de 360° do Webots cada raio fica no meio da sua fatia (o
+  primeiro em +180° − meio passo). Com `AGROBOT_LIDAR_CHECK=1` no ambiente, o driver compara
+  uma vez os pontos calculados com a nuvem do próprio Webots e escreve a diferença no log
+  (até 2 cm no LiDAR 3D, abaixo do ruído).
 - As propriedades do plugin (`publishOdom`, `vslamCameraPeriod`, `dataCameraPeriod`,
-  `sensorNoise`, `noiseSeed`) vêm do URDF, não de parâmetros ROS. Por isso o launch grava uma
-  cópia do URDF com os valores de `ekf`, `camera`, `data_camera`, `sensor_noise` e
-  `noise_seed`.
+  `safetyLidarPeriod`, `lidar3dPeriod`, `sensorNoise`, `noiseSeed`) vêm do URDF, não de
+  parâmetros ROS. Por isso o launch grava uma cópia do URDF com os valores de `ekf`,
+  `camera`, `data_camera`, `lidar3d`, `sensor_noise` e `noise_seed`.
 
 ### Ruído dos sensores (`agrobot_webots/sensor_noise.py`, `sensor_noise:=true`)
 
@@ -174,7 +205,8 @@ datasheets e estão justificados no próprio arquivo.
 | Orientação da IMU | yaw = integral do erro do giroscópio (sem magnetômetro: deriva e não volta); roll/pitch com a inclinação fixa do offset do acelerômetro + 0,1° | IMU de 6 eixos com fusão a bordo |
 | Acelerômetro | ruído 200 µg/√Hz; offset 20 mg | BMI160, MPU-6050 |
 | Encoders | 4096 contagens por volta; raio efetivo 1% errado, mais 0,3% de diferença entre os lados | encoder de 1024 pulsos; pneu sob carga |
-| LiDAR | 2 cm por raio | SICK TiM5xx, Hokuyo UST-10LX |
+| LiDAR de segurança | 1% da distância (mín. 1 cm): 5 cm a 5 m; 1% dos raios sem leitura (NaN) | 3irobotix Delta-2A (triangulação, < 1% a 5 m) |
+| LiDAR 3D | 2 cm por ponto; 0,5% dos pontos perdidos | RoboSense Helios-16P (±2 cm) |
 | Profundidade RGB-D | σ = z² · 0,1 px / (447 px · 0,095 m): 2,4 mm a 1 m, 3,8 cm a 4 m | Intel RealSense D455 |
 | Cor RGB-D | 2 níveis de 255 | sensor CMOS de dia |
 
@@ -227,8 +259,9 @@ escala. Os obstáculos ficam a 2,5 m ou mais dos waypoints do `caso4` e do `caso
 
 ```
 rodas (/wheel/odom) + IMU (/imu/data) ─► EKF ─► /odom, TF odom → base_link
-câmera RGB-D + /scan + odom do EKF ─► RTAB-Map ─► TF map → odom, /rtabmap/map
-Nav2: planeja em map, controla em odom ─► /cmd_vel ─► driver
+câmera RGB-D + LiDAR 3D (/lidar3d/points) + odom do EKF ─► RTAB-Map ─► TF map → odom, /rtabmap/map
+Nav2 (costmaps com o /scan): planeja em map, controla em odom ─► /cmd_vel_raw
+/cmd_vel_raw + LiDAR de segurança (/scan) ─► collision_monitor ─► /cmd_vel ─► driver
 ```
 
 ### EKF (`config/ekf.yaml`, `ekf:=true`)
@@ -275,17 +308,36 @@ nenhum alarme, com 2 a 7 perdas da câmera por corrida.
 
 ### VSLAM (`config/rtabmap.yaml`, `vslam:=true`)
 
-`rgbd_sync` + `rtabmap` no namespace `rtabmap`, a 1 Hz, 3DoF (x, y, yaw). Escolhas e motivos:
+`rgbd_sync` + `rtabmap` no namespace `rtabmap`, a 1 Hz, 3DoF (x, y, yaw), com a câmera RGB-D e
+a nuvem do LiDAR 3D. Escolhas e motivos:
 - **Odometria do EKF, sem odometria visual:** economiza CPU; o RTAB-Map só corrige o
   `map → odom`. (A odometria visual da checagem de patinagem não entra no RTAB-Map.)
 - **Um só dono de `map → odom`:** dois publicando fazem o robô pular entre duas poses.
-- **`Reg/Strategy` 2 (visual + ICP com o `/scan`) e `Optimizer/Robust` (Vertigo):** a
-  textura do solo se repete a cada 2 m e gerava fechamentos falsos; o ICP e a otimização
-  robusta os derrubam.
+- **`Reg/Strategy` 2 (visual + ICP com a nuvem do LiDAR 3D) e `Optimizer/Robust`
+  (Vertigo):** a textura do solo se repete a cada 2 m e gerava fechamentos falsos; o ICP e a
+  otimização robusta os derrubam.
+- **LiDAR 3D no lugar do `/scan`:** o scan a 13 cm só via colmos e troncos num corte fino, e
+  as entrelinhas davam o mesmo scan. A nuvem 3D tem o chão, os troncos, as copas e o relevo,
+  que travam x, y e yaw no ICP ponto-a-plano (`Icp/PointToPlane`, voxel de 10 cm, até 0,5 m
+  entre correspondências, correção de até 0,3 m sobre o chute do EKF). Com 16 canais a
+  nuvem é esparsa: dois nós da mesma entrelinha casam só 6 a 9% dos pontos, por isso o mínimo
+  casado é baixo (`Icp/CorrespondenceRatio` 2,5%) e quem barra fechamento errado é o limite de
+  correção (com 0,5 m o ICP escorregava ao longo da fileira e o mapa piorava). Cada nó guarda a nuvem reduzida
+  a 10 cm (`Mem/LaserScanVoxelSize`). O LiDAR 3D **não** vira odometria nem localização
+  principal: a pose continua sendo o EKF corrigido pelos fechamentos.
+- **Grade pela nuvem 3D:** chão e obstáculo pela altura no `base_link`: chão até ~12 cm
+  acima do chão, obstáculo de ~12 a ~34 cm (o que bate no robô; copas e folhas altas do milho
+  fechariam as entrelinhas na grade, e o robô passa por baixo delas). Os raios marcam o espaço
+  livre (`Grid/RayTracing`), até 8 m de cada nó; sem isso, os ~4 m em volta do robô ficariam
+  desconhecidos (o canal mais baixo só toca o chão a ~3,9 m). A separação pela normal (padrão
+  do RTAB-Map) não serve com 16 canais: o chão vem em anéis, um por canal, a normal sai torta
+  e o chão virava anéis de obstáculos. Na encosta do olival o robô inclina junto com o chão,
+  então o corte por altura continua valendo; um relevo que muda de inclinação dentro dos 8 m
+  pode virar obstáculo falso.
 - **Fechamento global desligado (`Rtabmap/LoopThr` e `RGBD/AggressiveLoopThr` em 1,01):** as
-  entrelinhas são iguais para a câmera e para o LiDAR (1,8 m de deslocamento dá o mesmo
-  scan). Só valem fechamentos por proximidade, perto da pose do EKF (câmera até 1 m e 45°,
-  ICP corrige até 0,2 m). Funciona enquanto a deriva do EKF entre dois fechamentos ficar
+  entrelinhas são iguais para a câmera e para o LiDAR (1,8 m de deslocamento dava o mesmo
+  scan 2D). Só valem fechamentos por proximidade, perto da pose do EKF (câmera até 1 m e 45°,
+  ICP corrige até 0,3 m). Funciona enquanto a deriva do EKF entre dois fechamentos ficar
   abaixo de ~0,8 m. Para religar a detecção global, volte os dois valores para `0.11` e
   `0.05`.
 - **Localização:** roda numa cópia do banco (`Mem/IncrementalMemory` false) com
@@ -293,6 +345,11 @@ nenhum alarme, com 2 a 7 perdas da câmera por corrida.
 - Na plantação, as passadas repetidas são em sentidos opostos e a câmera não reconhece o
   lugar visto de costas; os fechamentos vêm sobretudo do LiDAR. Por isso o erro do VSLAM fica
   perto do EKF sozinho nesses casos.
+- **Com o LiDAR 3D e a camada de segurança** (caso2, nuvem, 2026-11-16), 3 rodadas (a primeira com o ICP anterior) com 5/5
+  waypoints: ATE 0,23, 0,58 e 0,18 m (com o scan 2D, 0,16 ± 0,01 m). A rodada de 0,58 m teve
+  deriva do EKF já na primeira passada, antes de qualquer fechamento possível; o mesmo banco
+  reprocessado com o ICP antigo dá o mesmo erro, então não veio dos fechamentos. A variação
+  entre rodadas ainda precisa de mais repetições para comparar com o scan 2D.
 
 ### Nav2 (`config/nav2_params.yaml`, `launch/navigation.launch.py`)
 
@@ -313,6 +370,80 @@ nenhum alarme, com 2 a 7 perdas da câmera por corrida.
 - `default_server_timeout` 1000 ms: com câmera e RTAB-Map a CPU fica cheia e o planner
   demora a aceitar o pedido.
 
+### Camada de segurança (`collision_monitor`, `safety:=true`)
+
+O LiDAR de segurança (seção 3) tem prioridade sobre o planejamento: pode haver uma pessoa no
+campo. Quem aplica isso é o `collision_monitor` do Nav2 (`config/collision_monitor.yaml`), o
+último nó antes das rodas. Tudo o que comanda o robô (Nav2, comportamentos de recuperação,
+joystick, teclado, página web) publica em `/cmd_vel_raw`, e só ele publica no `/cmd_vel` do
+driver. Ele não planeja: só corta ou reduz a velocidade pedida quando há pontos do `/scan`
+dentro de zonas que andam com o robô. O Nav2 continua usando o mesmo `/scan` nos costmaps
+para desviar; a camada de segurança é o que garante a parada quando o desvio não basta (uma
+pessoa que entra na frente de repente, o operador conduzindo mal).
+
+| Zona | Forma (no `base_link`; robô de x ±0,6, y ±0,56) | Ação |
+|---|---|---|
+| Parada (`stop_zone`) | Depende do comando: para a frente, até 0,6 m à frente do robô e 6 cm de cada lado; para trás, o mesmo atrás; girando no lugar, a pegada com 5 cm de folga | Velocidade zero |
+| Lentidão (`slowdown_zone`) | De 0 a 1,4 m à frente do robô, 10 cm de cada lado | 50% da velocidade pedida |
+| Aproximação (`approach_zone`) | Simula a pegada (5 cm de folga) andando com o comando pedido | Reduz para que nada fique a menos de 1,5 s de colisão (cuida das curvas e dos giros) |
+
+- **Por que 0,6 m à frente:** o LiDAR a 15 cm vê a canela; o corpo e os pés da pessoa vão
+  ~0,25 m além dela, e entre o scan e a roda passam ~0,25 s. Com 0,35 m, o operador a
+  0,4 m/s parava com o para-choque a 0,28 m das pernas, encostando no corpo.
+- **Por que zonas que dependem do movimento:** parado na frente de um obstáculo, o robô
+  ainda consegue girar ou recuar para sair (a zona olha para onde ele quer ir), mas não
+  avançar sobre ele.
+- **6 pontos para agir** (`min_points`): com 1° por raio, uma perna de pessoa a 0,7 m dá ~10
+  pontos e um mourão de 10 cm a 0,5 m dá ~11; um colmo de milho ou a ponta de uma folha caída
+  dá de 1 a 4. Com 3 pontos (o padrão do Nav2), as plantas da cabeceira paravam o robô em
+  toda manobra e o Nav2 desistia do objetivo; desviar das plantas é trabalho do Nav2.
+- **Falha segura:** sem scan novo por 1 s, o robô para (`source_timeout`). Se o
+  `collision_monitor` cair, nada chega às rodas e o driver para o robô em 1 s.
+- **`safety:=false`** volta ao Nav2 e ao operador mandando direto nas rodas. Serve só para
+  comparar (controle dos testes).
+- **Na página do operador** aparece "PARADA DE SEGURANÇA" (ou "segurança: devagar") quando
+  uma zona age; o estado sai em `/collision_monitor_state` e as zonas em
+  `/collision_monitor/stop_zone` e `/collision_monitor/slowdown_zone` (RViz).
+- **Não é um sistema de segurança certificado:** o Delta-2A não é um sensor de segurança e
+  nada aqui segue a ISO 13849 ou a IEC 61496. Na dissertação, "camada de segurança da
+  navegação". Ele também só vê o que corta o plano a 15 cm: uma pessoa deitada, ou algo
+  pendurado acima disso, passa.
+
+**Teste com uma pessoa no caminho (`scripts/teste_pessoa.py`).** Põe um `Pedestrian` do
+Webots (com o controlador `controllers/pessoa_teste`, que o anima e grava a posição) num
+cenário, comanda o robô pelo Nav2 ou como operador e mede pela pose verdadeira a menor folga
+entre a pessoa (círculo de 0,25 m) e a pegada do robô:
+
+```bash
+python3 agrobot_webots/scripts/teste_pessoa.py mundo plantacao_cruzando   # gera o mundo
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field_pessoa.wbt \
+    ekf:=true vslam:=true vslam_db:=teste_pessoa teleop:=keyboard
+python3 agrobot_webots/scripts/teste_pessoa.py rodar plantacao_cruzando   # logo em seguida
+```
+
+O mundo gerado fica só no `install/` (não no git). Rode o `rodar` logo depois do launch: a
+pessoa é um robô `<extern>` e o Webots espera o controlador dela para andar. Cenários:
+`plantacao_parada` e `olival_parada` (pessoa parada na entrelinha, o Nav2 vai a um objetivo
+depois dela), `plantacao_cruzando` e `olival_cruzando` (ela atravessa a entrelinha a 1 m/s
+quando o robô chega a ~2 m, para aparecer a ~0,6 m do para-choque) e `plantacao_operador` (o operador manda 0,4 m/s para cima dela).
+Os resultados vão para `dados/seguranca/` (CSV a 10 Hz e uma linha por rodada em
+`resumo.md`); `--rotulo sem-seguranca` com `safety:=false` no launch dá o controle.
+
+Resultados na nuvem (2026-11-16, EKF + VSLAM, folga entre o círculo de 0,25 m da pessoa e a
+pegada; `dados/seguranca/resumo.md`):
+
+| Cenário | Folga mínima | O que aconteceu |
+|---|---|---|
+| `plantacao_operador`, sem a camada (`safety:=false`) | contato | o robô passa por cima da pessoa |
+| `plantacao_operador` | 0,24 m | lentidão a ~1,4 m, parada; o operador continua mandando e o robô não anda |
+| `plantacao_cruzando` | 0,61 m | lentidão e parada enquanto ela atravessa; o Nav2 chega ao objetivo depois |
+| `plantacao_parada` | 0,98 m | o Nav2 desvia pela entrelinha vizinha; a camada não precisou parar |
+| `olival_cruzando` | 0,42 m | lentidão; o Nav2 chega ao objetivo |
+
+No `plantacao_parada`, o Nav2 desistiu de voltar à entrelinha y = 0 pela cabeceira leste (o
+planejador não acha caminho saindo de perto das plantas da ponta da fileira): é limite do
+Nav2 na cabeceira, não da camada de segurança.
+
 ### Teleoperação e mapeamento manual (`teleop:=joy|keyboard`)
 
 O primeiro mapa do campo real vai ser feito com um operador conduzindo o robô (plano em
@@ -320,13 +451,15 @@ O primeiro mapa do campo real vai ser feito com um operador conduzindo o robô (
 
 ```
 joystick / teclado ─► /cmd_vel_teleop ─┐
-Nav2 (velocity_smoother) ─► /cmd_vel_nav_out ─┴► cmd_vel_mux ─► /cmd_vel ─► driver
+Nav2 (velocity_smoother) ─► /cmd_vel_nav_out ─┴► cmd_vel_mux ─► /cmd_vel_raw ─► collision_monitor ─► /cmd_vel ─► driver
 ```
 
 - **`cmd_vel_mux`:** o operador tem prioridade. Enquanto chegam comandos dele, o Nav2 é
   ignorado; 0,5 s depois que ele para, o Nav2 volta a comandar **sem cancelar a missão**.
   Assim dá para tomar o controle no meio de uma missão e devolvê-lo. Quem comanda sai em
-  `/cmd_vel_mux/source`. Sem `teleop`, o mux não sobe e o Nav2 manda direto no `/cmd_vel`.
+  `/cmd_vel_mux/source`. Sem `teleop`, o mux não sobe e o Nav2 manda direto no
+  `/cmd_vel_raw`. O operador também passa pela camada de segurança: ele não consegue jogar o
+  robô em cima de uma pessoa.
 - **Joystick (`teleop:=joy`):** `game_controller_node` (pacote `joy`, mesmo mapeamento para
   Xbox, PlayStation e genéricos) + `teleop_twist_joy`, configurados em
   `config/teleop_joy.yaml`. Segure **LB/L1** para andar (botão de homem-morto: soltou,
@@ -566,7 +699,7 @@ dele direto. Dá para usar junto com o RViz (`rviz:=true`) e com `waypoints:=<ca
 página mostra a missão desse arquivo).
 
 ```
-navegador ─WebSocket 9090─► rosbridge ─► /cmd_vel_teleop ─► cmd_vel_mux ─► driver
+navegador ─WebSocket 9090─► rosbridge ─► /cmd_vel_teleop ─► cmd_vel_mux ─► collision_monitor ─► driver
           │                           ─► /waypoint_mission/command ─► waypoint_mission ─► Nav2
           │                           ◄─ /operator/* (operator_bridge) e /waypoint_mission/status
           └─HTTP 8080─► operator_web: a página (agrobot_webots/web/) e dados/ só para leitura
@@ -593,6 +726,10 @@ navegador ─WebSocket 9090─► rosbridge ─► /cmd_vel_teleop ─► cmd_ve
   (seção 5). **PARAR** (ou Espaço) manda zeros sem parar, segurando o robô e deixando o Nav2
   de fora até soltar. Se a página fechar ou a rede cair, os comandos param de chegar e em
   0,5 s o mux devolve o controle ao Nav2 (ou para o robô, sem missão).
+- **Camada de segurança:** o joystick passa pelo `collision_monitor` como o Nav2 (seção 5):
+  o operador não consegue avançar sobre uma pessoa ou um obstáculo a 15 cm do chão. Quando
+  uma zona age, aparece o aviso "PARADA DE SEGURANÇA" (vermelho) ou "segurança: devagar" /
+  "aproximação" (amarelo) no topo da página.
 - **Waypoints e missões (aba Missão):** a lista é do `waypoint_mission`, que sobe sozinho
   com `operator:=true` (sem arquivo, como no `waypoints:=rviz`). A página manda a lista
   inteira pelo tópico `/waypoint_mission/command` (JSON: `set`, `load`, `start`, `cancel`,
@@ -662,9 +799,14 @@ apresentação, os resultados do passo 3 e os próximos passos.
 
 - Quase tudo foi validado na nuvem Linux, headless e sem GPU; os testes no Windows/WSL e no
   RViz na tela ainda são poucos. A câmera de aquisição só rodou no Webots na nuvem; falta medir o custo no Windows.
+- O LiDAR 3D é o sensor mais caro da simulação: sem GPU, o Webots anda a ~0,23× o tempo real
+  com ele e sem a câmera (~0,37× sem ele) e a ~0,15× com câmera, RTAB-Map e Nav2. No
+  Windows com GPU deve pesar bem menos; `lidar3d:=false` o desliga quando não há VSLAM.
+- As especificações do Delta-2A e do Helios-16P vieram de fichas técnicas de revendas (os
+  sites dos links não abriram daqui); confira alcance, frequência e ruído com as fichas
+  oficiais antes de citar na dissertação.
 - O ruído dos sensores só foi testado em missão no caso2 da plantação; faltam o caso3 e o
-  olival. Ele é branco e gaussiano, menos o bias do giroscópio: faltam buracos e bordas falsas na profundidade, retornos perdidos no LiDAR e
-  deriva por temperatura.
+  olival. Ele é branco e gaussiano, menos o bias do giroscópio: faltam buracos e bordas falsas na profundidade, reflexos no LiDAR e deriva por temperatura.
 - A interface web só foi conferida na nuvem (Chromium headless); falta abrir no navegador do
   Windows com o WSL.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o

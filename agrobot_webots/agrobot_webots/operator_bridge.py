@@ -26,6 +26,7 @@ import json
 import math
 import time
 
+from nav2_msgs.msg import CollisionMonitorState
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 import numpy as np
 import rclpy
@@ -171,6 +172,11 @@ class OperatorBridge(Node):
             String, '/cmd_vel_mux/source', self.source_callback, latched)
         self.create_subscription(
             Bool, '/wheel/slip', self.slip_callback, latched)
+        # Camada de segurança: qual zona do collision_monitor está agindo.
+        self.safety = ''
+        self.create_subscription(
+            CollisionMonitorState, '/collision_monitor_state',
+            self.safety_callback, 10)
         self.create_subscription(Path, '/plan', self.plan_callback, 10)
         self.create_subscription(
             LaserScan, '/scan', self.scan_callback, qos_profile_sensor_data)
@@ -224,6 +230,13 @@ class OperatorBridge(Node):
     def slip_callback(self, message):
         self.slip = bool(message.data)
 
+    def safety_callback(self, message):
+        actions = {CollisionMonitorState.STOP: 'parada',
+                   CollisionMonitorState.SLOWDOWN: 'lentidao',
+                   CollisionMonitorState.APPROACH: 'aproximacao',
+                   CollisionMonitorState.LIMIT: 'limite'}
+        self.safety = actions.get(message.action_type, '')
+
     def plan_callback(self, message):
         points = [(round(p.pose.position.x, 2), round(p.pose.position.y, 2))
                   for p in message.poses]
@@ -268,6 +281,8 @@ class OperatorBridge(Node):
             'w': None if self.twist is None else round(self.twist.angular.z, 3),
             'source': self.source,
             'slip': self.slip,
+            # Ação do collision_monitor: '', parada, lentidao, aproximacao.
+            'safety': self.safety,
             # O /plan só sai quando o Nav2 replaneja; velho, some da tela.
             'plan': (self.plan if time.monotonic() - self.plan_time < 5.0
                      else []),

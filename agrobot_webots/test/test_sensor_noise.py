@@ -90,13 +90,32 @@ def test_encoder_resolution():
     assert abs(angle / step - round(angle / step)) < 1e-9
 
 
-def test_lidar_keeps_no_return_and_adds_two_cm():
+def test_safety_lidar_noise_grows_with_distance_and_drops_rays():
     noise = SensorNoise(2)
-    ranges = [3.0] * 5000 + [math.inf] * 10
-    out = noise.lidar(ranges)
-    assert np.all(np.isinf(out[-10:]))
-    assert abs(out[:-10].std() - sn.LIDAR_RANGE_STD) < 0.002
-    assert abs(out[:-10].mean() - 3.0) < 0.002
+    ranges = [0.5] * 20000 + [5.0] * 20000 + [math.inf] * 10
+    out = noise.safety_lidar(ranges)
+    assert not np.any(np.isneginf(out))
+    assert np.all(np.isinf(out[-10:]) | np.isnan(out[-10:]))
+    near = out[:20000]
+    far = out[20000:40000]
+    dropped = np.isnan(out[:40000]).mean()
+    assert abs(dropped - sn.SAFETY_LIDAR_DROPOUT) < 0.003
+    near = near[np.isfinite(near)]
+    far = far[np.isfinite(far)]
+    # Piso de 1 cm perto; 1% (5 cm) a 5 m.
+    assert abs(near.std() - 0.01) < 0.001
+    assert abs(far.std() - 0.05) < 0.003
+    assert abs(far.mean() - 5.0) < 0.003
+
+
+def test_lidar3d_adds_two_cm_and_drops_points():
+    noise = SensorNoise(3)
+    ranges = np.array([10.0] * 50000 + [math.inf] * 10, dtype=np.float32)
+    out = noise.lidar3d(ranges)
+    valid = out[:50000][np.isfinite(out[:50000])]
+    assert abs(valid.std() - sn.LIDAR3D_RANGE_STD) < 0.001
+    assert abs(valid.mean() - 10.0) < 0.001
+    assert abs(np.isnan(out).mean() - sn.LIDAR3D_DROPOUT) < 0.002
 
 
 def test_depth_noise_grows_with_square_of_distance():

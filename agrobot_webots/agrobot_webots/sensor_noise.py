@@ -57,9 +57,21 @@ ENCODER_COUNTS_PER_REV = 4096
 WHEEL_RADIUS_STD = 0.01
 WHEEL_RADIUS_SIDE_STD = 0.003
 
-# --- LiDAR 2D (classe SICK TiM5xx / Hokuyo UST-10LX / RPLIDAR S2): erro
-# estatístico de 20 mm em cada raio.
-LIDAR_RANGE_STD = 0.02                          # m
+# --- LiDAR de segurança (3irobotix Delta-2A, triangulação, 2D): exatidão
+# "<1% a 5 m". Como em toda triangulação, o erro cresce com a distância;
+# aqui 1% da distância (o limite do datasheet tomado como 1 sigma, para
+# ficar do lado pessimista), com piso de 1 cm perto do robô.
+SAFETY_LIDAR_STD_PER_M = 0.01                   # fração da distância
+SAFETY_LIDAR_STD_MIN = 0.01                     # m
+# Raios sem leitura (superfície escura, ângulo rasante): 1% dos raios saem
+# inválidos (NaN, como um 0 do driver real). Não limpam o costmap nem contam
+# no collision_monitor, como no sensor real.
+SAFETY_LIDAR_DROPOUT = 0.01
+
+# --- LiDAR 3D (RoboSense RS-Helios-16P, tempo de voo): exatidão de +-2 cm
+# (típica) em cada ponto, tomada como 1 sigma, e 0,5% de pontos perdidos.
+LIDAR3D_RANGE_STD = 0.02                        # m
+LIDAR3D_DROPOUT = 0.005
 
 # --- Câmera RGB-D (Intel RealSense D455, estéreo ativo). O erro da
 # profundidade cresce com o quadrado da distância:
@@ -203,12 +215,32 @@ class SensorNoise:
         self.wheels = WheelEncoderNoise(self.rng)
         self.color_table = None
 
-    def lidar(self, ranges):
-        """Ruído em cada raio; +inf (sem retorno) fica +inf."""
-        values = np.asarray(ranges, dtype=np.float32)
+    def safety_lidar(self, ranges):
+        """
+        Ruído do LiDAR de segurança: proporcional à distância, e perdas.
+
+        +inf (sem retorno) fica +inf; um raio perdido vira NaN.
+        """
+        values = np.array(ranges, dtype=np.float32)
         finite = np.isfinite(values)
-        values[finite] += (LIDAR_RANGE_STD * self.rng.standard_normal(
-            int(finite.sum()), dtype=np.float32))
+        r = values[finite]
+        std = np.maximum(SAFETY_LIDAR_STD_MIN, SAFETY_LIDAR_STD_PER_M * r)
+        values[finite] = r + std * self.rng.standard_normal(
+            r.size, dtype=np.float32)
+        values[self.rng.random(values.size) < SAFETY_LIDAR_DROPOUT] = np.nan
+        return values
+
+    def lidar3d(self, ranges):
+        """
+        Ruído do LiDAR 3D: 2 cm em cada ponto e pontos perdidos (NaN).
+
+        Recebe e devolve um array float32 (as distâncias de todos os canais).
+        """
+        values = np.array(ranges, dtype=np.float32)
+        finite = np.isfinite(values)
+        values[finite] += LIDAR3D_RANGE_STD * self.rng.standard_normal(
+            int(finite.sum()), dtype=np.float32)
+        values[self.rng.random(values.size) < LIDAR3D_DROPOUT] = np.nan
         return values
 
     def depth(self, depth_bytes):

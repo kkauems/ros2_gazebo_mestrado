@@ -1,0 +1,128 @@
+# Camada de segurança: collision_monitor do Nav2 (Jazzy) com o LiDAR de
+# segurança (front_lidar, modelo 3irobotix Delta-2A, 360 graus, 15 cm do chão).
+# Usado pelo simulation.launch.py com safety:=true (padrão).
+#
+# Fica entre quem comanda e as rodas, depois de tudo:
+#
+#   Nav2 (velocity_smoother) ─► /cmd_vel_nav_out ─┐
+#   operador (joystick, teclado, página web) ─► /cmd_vel_teleop ─┴► cmd_vel_mux
+#   cmd_vel_mux (ou o Nav2 direto, sem operador) ─► /cmd_vel_raw
+#   /cmd_vel_raw ─► collision_monitor ─► /cmd_vel ─► driver
+#
+# Ele não planeja nada: só corta ou reduz a velocidade pedida quando há pontos
+# do scan dentro das zonas abaixo, que andam com o robô. Assim a parada vale
+# para o Nav2, para os comportamentos de recuperação e para o operador, e não
+# depende de o planejador ter visto o obstáculo (uma pessoa que entra na
+# frente do robô de repente). O Nav2 continua usando o mesmo /scan nos
+# costmaps para desviar.
+#
+# Medidas no base_link. Pegada do robô 1,2 x 1,12 m (x +-0,6, y +-0,56); o
+# LiDAR fica em x = 0,65. Velocidade máxima 0,5 m/s.
+#
+# Não é um sistema de segurança certificado (o Delta-2A não é um sensor de
+# segurança, e nada aqui segue a ISO 13849 / IEC 61496): é uma camada de
+# segurança da navegação.
+
+collision_monitor:
+  ros__parameters:
+    use_sim_time: true
+    base_frame_id: base_link
+    odom_frame_id: odom
+    cmd_vel_in_topic: /cmd_vel_raw
+    cmd_vel_out_topic: /cmd_vel
+    # Estado (qual zona agiu), para o log e a página do operador.
+    state_topic: /collision_monitor_state
+    transform_tolerance: 0.2
+    # Sem scan novo por mais que isto (s de simulação), o robô para: se o
+    # LiDAR de segurança cair, nada anda.
+    source_timeout: 1.0
+    base_shift_correction: true
+    # Parado por uma zona, publica zero por até 2 s.
+    stop_pub_timeout: 2.0
+    polygons: ["stop_zone", "slowdown_zone", "approach_zone"]
+
+    # Parada: a zona depende do movimento pedido. Andando para a frente, um
+    # retângulo da traseira até 0,6 m à frente do robô, 6 cm mais largo de
+    # cada lado (na entrelinha de 1,8 m, os colmos ficam a ~0,34 m do robô).
+    # O LiDAR a 15 cm vê a canela de uma pessoa, e o corpo e os pés vão ~0,25 m
+    # além dela; entre o scan e a roda passam ~0,25 s e o robô ainda anda
+    # ~6 cm freando. Com 0,35 m, o operador a 0,4 m/s parou com o para-choque
+    # a 0,28 m das pernas, encostando no corpo. Para trás, o mesmo atrás.
+    # Girando no lugar, a pegada com 5 cm de folga (o giro em si fica com a
+    # zona de aproximação, que simula a pegada girando). Como a zona olha para
+    # onde o robô quer ir, ele pode girar ou recuar para sair de perto de um
+    # obstáculo à frente, mas não avançar sobre ele.
+    stop_zone:
+      type: "velocity_polygon"
+      action_type: "stop"
+      # Pontos dentro da zona para agir. Com 1 grau por raio, uma perna de
+      # pessoa (~12 cm) a 0,7 m do LiDAR dá ~10 pontos e as duas ~20; um
+      # mourão de 10 cm a 0,5 m, ~11. Um colmo de milho (2 a 4 cm) ou a ponta
+      # de uma folha caída dá 1 a 4: com 6, as plantas da fileira não param
+      # o robô a cada manobra de cabeceira (quem desvia delas é o Nav2).
+      min_points: 6
+      visualize: true
+      polygon_pub_topic: "/collision_monitor/stop_zone"
+      enabled: true
+      holonomic: false
+      # A primeira da lista que casa com o comando vale.
+      velocity_polygons: ["rotation", "forward", "backward", "other"]
+      rotation:
+        points: "[[0.65, 0.61], [0.65, -0.61], [-0.65, -0.61], [-0.65, 0.61]]"
+        linear_min: -0.05
+        linear_max: 0.05
+        theta_min: -2.0
+        theta_max: 2.0
+      forward:
+        points: "[[1.2, 0.62], [1.2, -0.62], [-0.6, -0.62], [-0.6, 0.62]]"
+        linear_min: 0.0
+        linear_max: 1.0
+        theta_min: -2.0
+        theta_max: 2.0
+      backward:
+        points: "[[0.6, 0.62], [0.6, -0.62], [-1.2, -0.62], [-1.2, 0.62]]"
+        linear_min: -1.0
+        linear_max: 0.0
+        theta_min: -2.0
+        theta_max: 2.0
+      # Qualquer comando fora dos de cima (o Nav2 não manda): a pegada com
+      # folga dos dois lados.
+      other:
+        points: "[[1.2, 0.62], [1.2, -0.62], [-1.2, -0.62], [-1.2, 0.62]]"
+        linear_min: -10.0
+        linear_max: 10.0
+        theta_min: -10.0
+        theta_max: 10.0
+
+    # Lentidão: algo até 1,4 m à frente do robô (na largura dele mais 10 cm
+    # de cada lado) limita a velocidade a 50% da pedida. Dá tempo para a zona
+    # de parada agir com folga e para o Nav2 replanejar em volta.
+    slowdown_zone:
+      type: "polygon"
+      action_type: "slowdown"
+      points: "[[2.0, 0.66], [2.0, -0.66], [0.6, -0.66], [0.6, 0.66]]"
+      slowdown_ratio: 0.5
+      min_points: 6
+      visualize: true
+      polygon_pub_topic: "/collision_monitor/slowdown_zone"
+      enabled: true
+
+    # Aproximação: simula a pegada (com 5 cm de folga) andando com o comando
+    # pedido e reduz a velocidade para que nada fique a menos de 1,5 s de
+    # colisão. É a que cuida das curvas e dos giros no lugar, e de objetos
+    # que se movem em direção ao robô.
+    approach_zone:
+      type: "polygon"
+      action_type: "approach"
+      points: "[[0.65, 0.61], [0.65, -0.61], [-0.65, -0.61], [-0.65, 0.61]]"
+      time_before_collision: 1.5
+      simulation_time_step: 0.1
+      min_points: 6
+      visualize: false
+      enabled: true
+
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"
+      enabled: true

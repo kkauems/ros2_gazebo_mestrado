@@ -86,6 +86,16 @@ function onState(s) {
   source.textContent = `comando: ${labels[s.source] || s.source}`;
   source.className = `chip ${s.source === 'teleop' ? 'warn' : s.source === 'nav' ? 'ok' : ''}`;
   $('chip-slip').classList.toggle('hidden', !s.slip);
+  // Camada de segurança (collision_monitor com o LiDAR de segurança): vale
+  // também para o joystick desta página.
+  const safetyLabels = {
+    parada: 'PARADA DE SEGURANÇA', lentidao: 'segurança: devagar',
+    aproximacao: 'segurança: aproximação', limite: 'segurança: limite',
+  };
+  const safety = $('chip-safety');
+  safety.classList.toggle('hidden', !s.safety);
+  safety.textContent = safetyLabels[s.safety] || '';
+  safety.className = `chip ${s.safety ? '' : 'hidden'} ${s.safety === 'parada' ? 'bad' : 'warn'}`;
   // A câmera de aquisição faz ~1 foto por segundo de simulação; com a
   // simulação lenta, até 10 s entre imagens ainda é "ligada".
   const live = Date.now() - lastDataImage < 10000;
