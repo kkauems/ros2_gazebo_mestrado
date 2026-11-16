@@ -21,6 +21,9 @@ setup(
             glob('config/waypoints/*.yaml')),
         (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
         (os.path.join('share', package_name, 'meshes'), glob('meshes/*.stl')),
+        (os.path.join('share', package_name, 'web'),
+            [f for f in glob('web/*') if os.path.isfile(f)]),
+        (os.path.join('share', package_name, 'web', 'js'), glob('web/js/*.js')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -41,6 +44,8 @@ setup(
             'data_recorder = agrobot_webots.data_recorder:main',
             'cmd_vel_mux = agrobot_webots.cmd_vel_mux:main',
             'teleop_keyboard = agrobot_webots.teleop_keyboard:main',
+            'operator_bridge = agrobot_webots.operator_bridge:main',
+            'operator_web = agrobot_webots.operator_web:main',
         ],
     },
 )

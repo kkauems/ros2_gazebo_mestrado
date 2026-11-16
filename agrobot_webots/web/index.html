@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agrobot · Operador</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Agrobot <span>operador</span></div>
+    <div class="chips">
+      <span id="conn" class="chip bad">desconectado</span>
+      <span id="chip-world" class="chip">mundo —</span>
+      <span id="chip-source" class="chip">comando —</span>
+      <span id="chip-slip" class="chip hidden warn">patinando</span>
+    </div>
+    <button id="btn-stop" class="stop" title="Segura o robô parado (Espaço)">PARAR</button>
+  </header>
+
+  <main class="layout">
+    <section class="mapwrap">
+      <div class="maparea"><canvas id="map"></canvas></div>
+      <div class="maptools">
+        <div class="seg" id="tools">
+          <button data-tool="pan" class="on" title="Arrastar para mover o mapa">Mover</button>
+          <button data-tool="add" title="Clique: novo waypoint. Arraste um waypoint para movê-lo; botão direito apaga">+ Waypoint</button>
+          <button data-tool="goto" title="Clique: o robô vai até o ponto">Ir até</button>
+          <button data-tool="sweep" title="Arraste do começo da primeira passada até o canto oposto">Varredura</button>
+        </div>
+        <div class="seg">
+          <button id="btn-follow" title="Centralizar no robô">Seguir robô</button>
+          <button id="btn-fit" title="Enquadrar a rota">Enquadrar</button>
+        </div>
+      </div>
+      <div class="readout">
+        <span id="pose">pose —</span>
+        <span id="speed">v —</span>
+        <span id="cursor"></span>
+      </div>
+      <div id="toast" class="toast hidden"></div>
+    </section>
+
+    <aside class="side">
+      <nav class="tabs" id="tabs">
+        <button data-tab="mission" class="on">Missão</button>
+        <button data-tab="sweep">Varredura</button>
+        <button data-tab="drive">Controle</button>
+        <button data-tab="cameras">Câmeras</button>
+        <button data-tab="data">Dados</button>
+      </nav>
+
+      <div class="panel" id="tab-mission">
+        <div id="mission-msg" class="msg">Aguardando o robô…</div>
+        <div class="row">
+          <button id="btn-start" class="primary">Iniciar missão</button>
+          <button id="btn-cancel" class="danger">Cancelar</button>
+        </div>
+        <h3>Waypoints <small id="wp-count"></small></h3>
+        <p class="hint">Use <b>+ Waypoint</b> e clique no mapa. Arraste um ponto para movê-lo, botão
+          direito apaga. Cada ponto é conferido pelas medidas do robô (1,2 × 1,12 m): em roxo, o
+          robô não cabe, não gira ou não chega ali.</p>
+        <ol id="wp-list" class="wplist"></ol>
+        <div class="row">
+          <button id="btn-undo">Desfazer último</button>
+          <button id="btn-clear">Limpar</button>
+        </div>
+        <h3>Missões gravadas</h3>
+        <div class="row">
+          <select id="case-select"></select>
+          <button id="btn-load">Carregar</button>
+        </div>
+        <div class="row">
+          <input id="save-name" placeholder="nome (ex.: olival_fileira3)">
+          <button id="btn-save">Gravar lista</button>
+        </div>
+      </div>
+
+      <div class="panel hidden" id="tab-sweep">
+        <p class="hint">Escolha <b>Varredura</b> no mapa e arraste do <b>começo da primeira
+          passada</b> até o canto oposto. As passadas vão na direção escolhida, em serpentina, e
+          ganham pontos a cada 10 m no máximo (o Nav2 só aceita objetivos a até ~12 m).</p>
+        <label>Espaçamento entre passadas (m)
+          <input id="sw-spacing" type="number" min="0.5" step="0.1" value="1.8">
+        </label>
+        <label>Direção das passadas
+          <select id="sw-axis">
+            <option value="x">ao longo de x (fileiras dos dois mundos)</option>
+            <option value="y">ao longo de y</option>
+          </select>
+        </label>
+        <label>Distância máxima entre pontos (m)
+          <input id="sw-leg" type="number" min="2" max="12" step="0.5" value="10">
+        </label>
+        <div id="sw-info" class="msg">Nenhum retângulo desenhado.</div>
+        <div class="row">
+          <button id="btn-sw-use" class="primary" disabled>Usar como missão</button>
+          <button id="btn-sw-clear">Descartar</button>
+        </div>
+        <p class="hint">A câmera de aquisição olha para a esquerda do robô: em serpentina, cada
+          passada fotografa o lado oposto da anterior. Na plantação, as entrelinhas ficam em
+          y = 0, ±1,8 e ±3,6 (fileiras de x = 1,5 a 10,5); no olival, em y = −14, −7, 0, 7, 14 e
+          21 (árvores de x = 4,5 a 67,5).</p>
+      </div>
+
+      <div class="panel hidden" id="tab-drive">
+        <img id="drive-cam" class="cam" alt="">
+        <div class="joywrap">
+          <canvas id="joy" width="220" height="220"></canvas>
+        </div>
+        <div class="row">
+          <label class="inline"><input type="radio" name="speed" value="slow" checked> lento (0,3 m/s)</label>
+          <label class="inline"><input type="radio" name="speed" value="fast"> rápido (0,5 m/s)</label>
+        </div>
+        <p class="hint">Arraste o joystick ou segure <b>W A S D</b> / setas. Soltou, parou. Enquanto
+          você comanda, o Nav2 espera; 0,5 s depois que você solta, ele volta (a missão não é
+          cancelada). <b>Espaço</b> ou <b>PARAR</b> segura o robô parado até você soltar.</p>
+      </div>
+
+      <div class="panel hidden" id="tab-cameras">
+        <h3>Câmera RGB-D (VSLAM)</h3>
+        <div class="camgrid">
+          <figure><img id="cam-color" class="cam" alt=""><figcaption>cor</figcaption></figure>
+          <figure><img id="cam-depth" class="cam" alt=""><figcaption>profundidade (0,5–6 m)</figcaption></figure>
+        </div>
+        <h3>Câmera de aquisição <small id="data-cam-state"></small></h3>
+        <img id="cam-data" class="cam" alt="">
+        <div class="row">
+          <button id="btn-datacam-on">Ligar</button>
+          <button id="btn-datacam-off">Desligar</button>
+        </div>
+        <p class="hint">Só existe com <code>data_camera:=true</code>. Durante uma missão, o
+          waypoint_mission liga a câmera e grava as fotos; fora dela, fica desligada.</p>
+      </div>
+
+      <div class="panel hidden" id="tab-data">
+        <div class="row">
+          <button id="btn-data-up">↑ Voltar</button>
+          <span id="data-path" class="path">dados/</span>
+          <button id="btn-data-refresh">Atualizar</button>
+        </div>
+        <ul id="data-list" class="files"></ul>
+        <div id="data-thumbs" class="thumbs"></div>
+      </div>
+    </aside>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

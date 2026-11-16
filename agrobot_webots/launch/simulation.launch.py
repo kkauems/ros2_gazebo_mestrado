@@ -147,6 +147,11 @@ def teleop_mode(context):
     return mode
 
 
+def mux_on(context):
+    """cmd_vel_mux entre o Nav2 e o driver: com teleop ou a interface web."""
+    return bool(teleop_mode(context)) or flag(context, 'operator')
+
+
 def slip_check_on(context):
     """Checagem de patinagem: pedida e com o EKF e a câmera ligados."""
     return (flag(context, 'slip_check') and flag(context, 'ekf')
@@ -491,8 +496,9 @@ def generate_launch_description():
         return 'map' if mapped else 'odom'
 
     def start_navigation(context):
-        # Com teleop, o Nav2 manda para o cmd_vel_mux, e não direto ao driver.
-        cmd_vel_out = 'cmd_vel_nav_out' if teleop_mode(context) else 'cmd_vel'
+        # Com teleop (ou a interface web), o Nav2 manda para o cmd_vel_mux, e
+        # não direto ao driver.
+        cmd_vel_out = ('cmd_vel_nav_out' if mux_on(context) else 'cmd_vel')
         return [IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(webots_share, 'launch', 'navigation.launch.py')),
@@ -511,7 +517,7 @@ def generate_launch_description():
     # controle no meio de uma missão.
     def start_teleop(context):
         mode = teleop_mode(context)
-        if not mode:
+        if not mux_on(context):
             return []
         nodes = [Node(
             package='agrobot_webots',
@@ -538,7 +544,7 @@ def generate_launch_description():
                     remappings=[('cmd_vel', '/cmd_vel_teleop')],
                 ),
             ]
-        else:
+        elif mode == 'keyboard':
             # O teclado precisa de um terminal; o launch não tem um.
             nodes.append(LogInfo(msg=(
                 'teleop:=keyboard: rode num outro terminal '
@@ -571,9 +577,10 @@ def generate_launch_description():
         # caminho para um .yaml; waypoints:=rviz para clicar os waypoints no
         # RViz (Publish Point). Vazio: sem missão.
         name = LaunchConfiguration('waypoints').perform(context)
-        if not name:
+        if not name and not flag(context, 'operator'):
             return []
-        if name == 'rviz':
+        if name in ('rviz', ''):
+            # Sem arquivo: a lista vem dos cliques no RViz ou da página.
             path = ''
         else:
             path = name if os.path.isfile(name) else os.path.join(
@@ -625,8 +632,10 @@ def generate_launch_description():
                 LaunchConfiguration('data_min_distance').perform(context)),
             # Com missão, grava só durante ela (o waypoint_mission avisa o
             # início e o fim); sem missão, grava a execução inteira.
+            # A interface web sempre sobe o waypoint_mission.
             'wait_for_mission': bool(
-                LaunchConfiguration('waypoints').perform(context)),
+                LaunchConfiguration('waypoints').perform(context)
+                or flag(context, 'operator')),
             'use_sim_time': True,
         }
         parameters['output_dir'] = (
@@ -640,6 +649,53 @@ def generate_launch_description():
         )]
 
     recorder = OpaqueFunction(function=start_recorder)
+
+    # Interface web do operador (operator:=true): rosbridge (WebSocket), o
+    # operator_bridge (mapa, pose, câmeras em mensagens leves) e o servidor
+    # HTTP da página. A página manda o joystick para o cmd_vel_mux e as
+    # missões para o waypoint_mission.
+    def start_operator(context):
+        if not flag(context, 'operator'):
+            return []
+        vslam_on = flag(context, 'vslam')
+        rosbridge_port = int(
+            LaunchConfiguration('rosbridge_port').perform(context))
+        return [
+            Node(
+                package='rosbridge_server',
+                executable='rosbridge_websocket',
+                name='rosbridge_websocket',
+                output='screen',
+                parameters=[{'port': rosbridge_port, 'use_sim_time': True}],
+            ),
+            Node(
+                package='agrobot_webots',
+                executable='operator_bridge',
+                output='screen',
+                parameters=[{
+                    'frame': global_frame(context),
+                    # Com VSLAM, o mapa inteiro do RTAB-Map; sem, o costmap
+                    # global (24 x 24 m em volta do robô).
+                    'map_topic': ('/rtabmap/map' if vslam_on
+                                  else '/global_costmap/costmap'),
+                    'map_occupied': 65 if vslam_on else 100,
+                    'use_sim_time': True,
+                }],
+            ),
+            Node(
+                package='agrobot_webots',
+                executable='operator_web',
+                output='screen',
+                parameters=[{
+                    'port': int(
+                        LaunchConfiguration('operator_port').perform(context)),
+                    'rosbridge_port': rosbridge_port,
+                    'data_dir': data_dir(),
+                }],
+            ),
+        ]
+
+    operator = OpaqueFunction(function=start_operator)
 
     def start_rviz(context):
         # Com slam ou vslam, o RViz usa o frame map; com slam, mostra o /map
@@ -707,6 +763,11 @@ def generate_launch_description():
         # Teleoperação: joy (joystick) ou keyboard (teclado, num terminal
         # próprio). Vazio: sem teleoperação, o Nav2 manda direto no /cmd_vel.
         DeclareLaunchArgument('teleop', default_value=''),
+        # Interface web do operador: página em http://localhost:<operator_port>
+        # e rosbridge (WebSocket) em <rosbridge_port>.
+        DeclareLaunchArgument('operator', default_value='false'),
+        DeclareLaunchArgument('operator_port', default_value='8080'),
+        DeclareLaunchArgument('rosbridge_port', default_value='9090'),
         # Antes do Webots: se faltar o ekf, a câmera ou o mapa salvo, o launch
         # para com o erro sem abrir o Webots.
         vslam,
@@ -720,6 +781,7 @@ def generate_launch_description():
         navigation,
         mission,
         recorder,
+        operator,
         rviz,
         shutdown_on_webots_exit,
     ])
