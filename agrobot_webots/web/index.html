@@ -56,24 +56,34 @@
           <button id="btn-start" class="primary">Iniciar missão</button>
           <button id="btn-cancel" class="danger">Cancelar</button>
         </div>
+        <h3>Missões gravadas</h3>
+        <div class="row">
+          <select id="case-select"></select>
+          <button id="btn-load">Carregar para editar</button>
+        </div>
         <h3>Waypoints <small id="wp-count"></small></h3>
-        <p class="hint">Use <b>+ Waypoint</b> e clique no mapa. Arraste um ponto para movê-lo, botão
-          direito apaga. Cada ponto é conferido pelas medidas do robô (1,2 × 1,12 m): em roxo, o
-          robô não cabe, não gira ou não chega ali.</p>
+        <div id="list-file" class="hint"></div>
+        <p class="hint">No mapa, <b>+ Waypoint</b> acrescenta (clique), arrasta e apaga (botão
+          direito). Na lista, <b>✎</b> edita nome, x, y e orientação, <b>↑ ↓</b> mudam a ordem e
+          <b>+</b> insere um ponto depois. Cada ponto é conferido pelas medidas do robô
+          (1,2 × 1,12 m): em roxo, o robô não cabe, não gira ou não chega ali.</p>
         <ol id="wp-list" class="wplist"></ol>
         <div class="row">
           <button id="btn-undo">Desfazer último</button>
           <button id="btn-clear">Limpar</button>
         </div>
-        <h3>Missões gravadas</h3>
+        <h3>Gravar</h3>
         <div class="row">
-          <select id="case-select"></select>
-          <button id="btn-load">Carregar</button>
+          <button id="btn-save" class="primary" title="Grava por cima do arquivo carregado">Salvar alterações</button>
         </div>
         <div class="row">
-          <input id="save-name" placeholder="nome (ex.: olival_fileira3)">
-          <button id="btn-save">Gravar lista</button>
+          <input id="save-name" placeholder="novo nome (ex.: olival_fileira3)">
+          <button id="btn-save-as">Salvar como</button>
         </div>
+        <label class="inline"><input type="checkbox" id="save-overwrite"> substituir se já existir</label>
+        <p class="hint">As missões ficam em <code>dados/missions/&lt;nome&gt;.yaml</code> e também rodam
+          com <code>waypoints:=dados/missions/&lt;nome&gt;.yaml</code>. Os casos de estudo do projeto
+          (<code>config/waypoints/</code>) não são sobrescritos: edite e use <b>Salvar como</b>.</p>
       </div>
 
       <div class="panel hidden" id="tab-sweep">
