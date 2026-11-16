@@ -43,6 +43,7 @@ def test_parse_points_and_names():
         parse_points([{'x': float('nan'), 'y': 0}])
     assert safe_name('../x y', 'padrao') == 'x-y'
     assert safe_name('', 'padrao') == 'padrao'
+    assert parse_points([{'x': 0, 'y': 0, 'name': 'y1.8'}])[0]['name'] == 'y1.8'
 
 
 def test_data_listing_stays_inside(tmp_path):
