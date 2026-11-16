@@ -42,6 +42,19 @@ fica desligada fora das missões: no início de cada missão o nó a liga
 data_recorder (/data_recorder/session), que grava as fotos numa pasta com
 esse nome; no fim, manda uma string vazia e desliga a câmera.
 
+Interface web do operador (operator_bridge + página em web/): além do
+RViz, a lista pode ser montada e comandada por
+    ~/command  (std_msgs/String, JSON)  entrada: {"op": ...}
+        set     troca a lista: {"op": "set", "name": "operador",
+                "waypoints": [{"x": 1, "y": 2, "yaw": 0.5, "name": "a"}]}
+        load    carrega um arquivo: {"op": "load", "case": "caso2_..."}
+                (config/waypoints/ ou output_dir/, ou um caminho)
+        start, cancel, clear, undo, check, save ({"name": opcional})
+    ~/status   (std_msgs/String, JSON, latched)  saída: a lista com o
+               estado e a checagem de cada waypoint, a missão em andamento,
+               os arquivos de missão deste mundo e a última mensagem.
+    ~/cancel   (std_srvs/Trigger)  cancela a missão em andamento.
+
 Tópicos:
     /waypoints/markers   (visualization_msgs/MarkerArray)  saída, para o RViz
     /ground_truth/odom   (nav_msgs/Odometry)               entrada, opcional
@@ -49,11 +62,16 @@ Tópicos:
 """
 
 import csv
+import glob
+import json
 import math
 import os
 import time
 
+from action_msgs.msg import GoalStatus
 from agrobot_webots import waypoint_check
+from ament_index_python.packages import (
+    get_package_share_directory, PackageNotFoundError)
 from geometry_msgs.msg import PointStamped, PoseStamped
 from nav2_msgs.action import FollowWaypoints
 from nav_msgs.msg import OccupancyGrid, Odometry
@@ -73,6 +91,7 @@ CURRENT = 'atual'
 REACHED = 'atingido'
 MISSED = 'perdido'
 INVALID = 'invalido'   # o robô não cabe ou não gira ali (waypoint_check)
+CANCELED = 'cancelado'  # a missão foi cancelada antes de chegar nele
 
 COLORS = {
     PENDING: (1.0, 0.65, 0.0),
@@ -80,6 +99,7 @@ COLORS = {
     REACHED: (0.1, 0.8, 0.2),
     MISSED: (0.9, 0.1, 0.1),
     INVALID: (0.7, 0.1, 0.9),
+    CANCELED: (0.5, 0.5, 0.5),
 }
 
 WAYPOINT_FIELDS = [
@@ -247,6 +267,7 @@ class WaypointMission(Node):
         self.create_service(Trigger, '~/undo', self.undo_service)
         self.create_service(Trigger, '~/clear', self.clear_service)
         self.create_service(Trigger, '~/save', self.save_service)
+        self.setup_operator()
 
         self.data_camera = bool(self.get_parameter('data_camera').value)
         if self.data_camera:
@@ -555,14 +576,17 @@ class WaypointMission(Node):
         return response
 
     def save_service(self, request, response):
+        response.success, response.message = self.save_list('rviz')
+        return response
+
+    def save_list(self, name):
+        """Grava a lista em output_dir/<name>_<data>.yaml: (ok, caminho)."""
         if not self.waypoints:
-            response.success = False
-            response.message = 'lista vazia'
-            return response
+            return False, 'lista vazia'
         os.makedirs(self.output_dir, exist_ok=True)
         path = os.path.join(
-            self.output_dir, f'rviz_{time.strftime("%Y%m%d-%H%M%S")}.yaml')
-        lines = ['# Gravado pelo waypoint_mission (cliques no RViz).',
+            self.output_dir, f'{name}_{time.strftime("%Y%m%d-%H%M%S")}.yaml')
+        lines = ['# Gravado pelo waypoint_mission.',
                  f'# Coordenadas no frame {self.frame}, a partir da partida.']
         if self.world:
             lines.append(f'world: {self.world}')
@@ -575,10 +599,9 @@ class WaypointMission(Node):
                          f'y: {wp["y"]:.3f}{yaw}}}')
         with open(path, 'w') as out:
             out.write('\n'.join(lines) + '\n')
-        response.success = True
-        response.message = path
         self.get_logger().info(f'Waypoints gravados em {path}')
-        return response
+        self.cases = None   # a lista de arquivos mudou
+        return True, path
 
     # Envio da missão -------------------------------------------------------
 
@@ -678,16 +701,27 @@ class WaypointMission(Node):
             self.set_current(index)
 
     def result_callback(self, future):
-        result = future.result().result
-        self.close_waypoint(self.current)
+        wrapped = future.result()
+        result = wrapped.result
+        canceled = wrapped.status == GoalStatus.STATUS_CANCELED
+        if not canceled:
+            self.close_waypoint(self.current)
         missed = set()
         for item in result.missed_waypoints:
             missed.add(int(getattr(item, 'index', item)))
         for i in range(len(self.waypoints)):
             if self.records[i] is None:
+                # Cancelada: os que faltavam (e o atual) não foram atingidos.
                 self.records[i] = self.make_record(i)
-            self.status[i] = MISSED if i in missed else REACHED
+                if canceled:
+                    self.status[i] = CANCELED
+            if self.status[i] != CANCELED:
+                self.status[i] = MISSED if i in missed else REACHED
             self.records[i]['status'] = self.status[i]
+        reached = self.status.count(REACHED)
+        self.set_message(
+            f'Missão {"cancelada" if canceled else "terminada"}: {reached}/'
+            f'{len(self.waypoints)} waypoints atingidos.')
         self.finished = True
         self.stop_recording()
         self.publish_markers()
@@ -821,6 +855,283 @@ class WaypointMission(Node):
         if len(line.points) > 1:
             markers.markers.append(line)
         self.marker_publisher.publish(markers)
+        self.publish_status()
+
+    # Interface web do operador -------------------------------------------
+
+    def setup_operator(self):
+        """Tópicos ~/command e ~/status e serviço ~/cancel (para a página)."""
+        self.message = ''
+        self.message_level = 'info'
+        self.checks = []          # checagem de cada waypoint, para a página
+        self.checked_key = None   # grade e lista da última checagem
+        self.cases = None         # arquivos de missão deste mundo (cache)
+        self.status_publisher = self.create_publisher(
+            String, '~/status', QoSProfile(
+                depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.create_subscription(
+            String, '~/command', self.command_callback, 10)
+        self.create_service(Trigger, '~/cancel', self.cancel_service)
+        # Refaz a checagem quando a grade muda (o mapa cresce no mapeamento).
+        self.create_timer(3.0, self.recheck)
+
+    def set_message(self, text, level='info'):
+        self.message = text
+        self.message_level = level
+        log = {'info': self.get_logger().info, 'warn': self.get_logger().warn,
+               'error': self.get_logger().error}[level]
+        log(text)
+        self.publish_status()
+
+    def command_callback(self, message):
+        try:
+            command = json.loads(message.data)
+            op = command['op']
+        except (ValueError, KeyError, TypeError) as error:
+            self.set_message(f'Comando inválido: {error}', 'error')
+            return
+        if op == 'cancel':
+            self.cancel_mission()
+            return
+        if op == 'check':
+            self.run_checks()
+            self.publish_status()
+            return
+        if op == 'save':
+            ok, text = self.save_list(safe_name(command.get('name'), 'operador'))
+            self.set_message(f'Lista gravada em {text}' if ok else text,
+                             'info' if ok else 'warn')
+            return
+        if self.running():
+            self.set_message(
+                'Missão em andamento: cancele antes de mudar a lista.', 'warn')
+            return
+        if op == 'start':
+            if self.start_mission():
+                self.set_message(
+                    f'Missão {self.case}: esperando o Nav2 e a checagem...')
+            else:
+                self.set_message('Lista vazia.', 'warn')
+        elif op == 'set':
+            try:
+                points = parse_points(command.get('waypoints') or [])
+            except (ValueError, KeyError, TypeError) as error:
+                self.set_message(f'Lista inválida: {error}', 'error')
+                return
+            self.waypoints = points
+            self.case = safe_name(command.get('name'), 'operador')
+            self.after_edit()
+        elif op == 'load':
+            self.load_case(str(command.get('case', '')))
+        elif op == 'clear':
+            self.waypoints = []
+            self.after_edit()
+        elif op == 'undo':
+            if self.waypoints:
+                self.waypoints.pop()
+            self.after_edit()
+        else:
+            self.set_message(f'Comando desconhecido: {op}', 'error')
+
+    def after_edit(self):
+        self.reset_progress()
+        self.run_checks()
+        self.message = f'{len(self.waypoints)} waypoints em {self.case}.'
+        self.message_level = 'info'
+        self.publish_status()
+
+    def load_case(self, name):
+        path = self.find_case(name)
+        if path is None:
+            self.set_message(f'Arquivo de missão não encontrado: {name}',
+                             'error')
+            return
+        try:
+            file_world, file_map, points = load_waypoints(path)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            self.set_message(f'Erro ao ler {path}: {error}', 'error')
+            return
+        if file_world and self.world and file_world != self.world:
+            self.set_message(
+                f'{name} é para o mundo {file_world}, e o mundo é '
+                f'{self.world}.', 'error')
+            return
+        if file_map and self.map and file_map != self.map:
+            self.set_message(
+                f'{name} foi marcado no mapa {file_map}, e o mapa em uso é '
+                f'{self.map}.', 'error')
+            return
+        self.waypoints = points
+        self.case = os.path.splitext(os.path.basename(path))[0]
+        self.after_edit()
+
+    def case_dirs(self):
+        dirs = [self.output_dir]
+        try:
+            dirs.insert(0, os.path.join(
+                get_package_share_directory('agrobot_webots'),
+                'config', 'waypoints'))
+        except PackageNotFoundError:
+            pass
+        return dirs
+
+    def find_case(self, name):
+        if not name:
+            return None
+        if os.path.isfile(name):
+            return name
+        file_name = name if name.endswith('.yaml') else name + '.yaml'
+        for folder in self.case_dirs():
+            path = os.path.join(folder, os.path.basename(file_name))
+            if os.path.isfile(path):
+                return path
+        return None
+
+    def list_cases(self):
+        """Arquivos de missão que valem neste mundo e neste mapa."""
+        if self.cases is not None:
+            return self.cases
+        cases = []
+        for folder in self.case_dirs():
+            for path in sorted(glob.glob(os.path.join(folder, '*.yaml'))):
+                try:
+                    file_world, file_map, points = load_waypoints(path)
+                except (OSError, ValueError, KeyError, TypeError, AttributeError,
+                        yaml.YAMLError):
+                    continue
+                if file_world and self.world and file_world != self.world:
+                    continue
+                if file_map and self.map and file_map != self.map:
+                    continue
+                cases.append({
+                    'name': os.path.splitext(os.path.basename(path))[0],
+                    'waypoints': len(points),
+                    'saved': folder == self.output_dir,
+                })
+        self.cases = cases
+        return cases
+
+    def cancel_service(self, request, response):
+        response.success = self.cancel_mission()
+        response.message = ('cancelando' if response.success
+                            else 'nenhuma missão em andamento')
+        return response
+
+    def cancel_mission(self):
+        if self.start_timer is not None:
+            # Ainda esperando o Nav2: só para de tentar.
+            self.start_timer.cancel()
+            self.destroy_timer(self.start_timer)
+            self.start_timer = None
+            self.wait_since = None
+            self.reset_progress()
+            self.set_message('Início da missão cancelado.')
+            return True
+        if self.goal_handle is None or self.finished:
+            self.set_message('Nenhuma missão em andamento.', 'warn')
+            return False
+        self.goal_handle.cancel_goal_async()
+        self.set_message('Cancelando a missão...')
+        return True
+
+    def run_checks(self):
+        """Confere cada waypoint (como no início da missão), para mostrar."""
+        self.checks = []
+        self.checked_key = self.check_key()
+        if not self.waypoints:
+            return
+        est = self.estimated_pose()
+        origin = est[:2] if est else (0.0, 0.0)
+        fill_yaw(self.waypoints, origin)
+        for i, wp in enumerate(self.waypoints):
+            if not self.check:
+                self.checks.append({'status': waypoint_check.OK, 'text': ''})
+                continue
+            status, text, suggestion = self.check_point(
+                self.leg_start(i, origin), wp['x'], wp['y'], wp['yaw'])
+            entry = {'status': status, 'text': text}
+            if suggestion is not None:
+                entry['suggestion'] = [round(suggestion[0], 3),
+                                       round(suggestion[1], 3)]
+            self.checks.append(entry)
+
+    def check_key(self):
+        return (id(self.grid), tuple(
+            (wp['x'], wp['y'], wp['yaw_in']) for wp in self.waypoints))
+
+    def recheck(self):
+        """Refaz a checagem se a grade ou a lista (RViz) mudou."""
+        if not self.running() and self.check_key() != self.checked_key:
+            self.run_checks()
+            self.publish_status()
+
+    def publish_status(self):
+        if not hasattr(self, 'status_publisher'):
+            return
+        waypoints = []
+        for i, wp in enumerate(self.waypoints):
+            entry = {
+                'name': wp['name'], 'x': round(wp['x'], 3),
+                'y': round(wp['y'], 3),
+                'yaw': (None if wp['yaw_in'] is None
+                        else round(wp['yaw_in'], 4)),
+                'heading': (round(wp['yaw'], 4) if 'yaw' in wp else None),
+                'status': (self.status[i] if i < len(self.status)
+                           else PENDING),
+            }
+            if i < len(self.checks):
+                entry['check'] = self.checks[i]
+            waypoints.append(entry)
+        message, level = self.message, self.message_level
+        if (self.goal_handle is not None and not self.finished
+                and 0 <= self.current < len(self.waypoints)
+                and not message.startswith('Cancelando')):
+            wp = self.waypoints[self.current]
+            message = (f'Missão {self.case}: indo para o waypoint '
+                       f'{self.current + 1}/{len(self.waypoints)} '
+                       f'"{wp["name"]}".')
+            level = 'info'
+        if (not self.running() and INVALID in self.status
+                and self.start_time is None):
+            message = ('Missão não iniciada: há waypoints onde o robô não '
+                       'cabe, não gira ou não chega (em roxo).')
+            level = 'error'
+        status = {
+            'case': self.case, 'frame': self.frame, 'world': self.world,
+            'map': self.map, 'running': self.running(),
+            'starting': self.start_timer is not None,
+            'finished': self.finished, 'current': self.current,
+            'prefix': self.prefix, 'check': self.check,
+            'grid': self.grid is not None,
+            'data_camera': self.data_camera,
+            'message': message, 'level': level,
+            'waypoints': waypoints, 'cases': self.list_cases(),
+        }
+        self.status_publisher.publish(String(data=json.dumps(status)))
+
+
+def safe_name(name, default):
+    """Nome para arquivos: letras, números, '-' e '_' (sem espaços)."""
+    text = ''.join(c if c.isalnum() or c in '-_' else '-'
+                   for c in str(name or '').strip())
+    return text.strip('-') or default
+
+
+def parse_points(entries):
+    """Lista da página ([{x, y, yaw?, name?}]) no formato interno."""
+    points = []
+    for i, entry in enumerate(entries):
+        x, y = float(entry['x']), float(entry['y'])
+        if not (math.isfinite(x) and math.isfinite(y)):
+            raise ValueError(f'waypoint {i + 1} sem coordenadas')
+        yaw = entry.get('yaw')
+        points.append({
+            'name': safe_name(entry.get('name'), f'wp{i + 1}'),
+            'x': x, 'y': y,
+            'yaw_in': None if yaw is None else float(yaw),
+        })
+    return points
 
 
 def main():

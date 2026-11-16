@@ -15,7 +15,8 @@ Não é um histórico de alterações; o histórico está no `git log` e nos PRs
 sudo apt install ros-jazzy-webots-ros2 ros-jazzy-navigation2 ros-jazzy-rviz2 \
                  ros-jazzy-robot-state-publisher ros-jazzy-robot-localization \
                  ros-jazzy-rtabmap-ros ros-jazzy-slam-toolbox \
-                 ros-jazzy-joy ros-jazzy-teleop-twist-joy
+                 ros-jazzy-joy ros-jazzy-teleop-twist-joy \
+                 ros-jazzy-rosbridge-suite python3-opencv
 cd ~/projects/ros2_gazebo_mestrado
 source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install --packages-select agrobot_description agrobot_webots
@@ -61,7 +62,9 @@ Fechar o Webots encerra o launch inteiro.
 | `waypoint_check` | `true` | Recusa waypoints onde o robô não cabe, não gira ou não chega (seção 7) |
 | `teleop` | vazio | Teleoperação: `joy` (joystick) ou `keyboard` (teclado, num terminal próprio). O operador tem prioridade sobre o Nav2 (seção 5) |
 | `slip_check` | `true` | Checagem de patinagem das rodas pela odometria visual (seção 5). Só age com `ekf:=true` e `camera:=true` |
-| `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 9) |
+| `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 10) |
+| `operator` | `false` | Interface web do operador em http://localhost:8080 (seção 8) |
+| `operator_port`, `rosbridge_port` | `8080`, `9090` | Portas da página e do rosbridge (WebSocket) |
 
 ### Usos mais comuns
 
@@ -84,6 +87,11 @@ ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true
 # Com a câmera de aquisição ligada, gravando as fotos
 ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true vslam:=true \
     data_camera:=true
+
+# Operar pelo navegador (http://localhost:8080 no Windows): mapa, waypoints, varreduras,
+# joystick, câmeras e as fotos gravadas
+ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true vslam:=true \
+    data_camera:=true operator:=true rviz:=false
 ```
 
 - **Onde ficam os dados:** tudo o que a simulação grava fica em `dados/`, na raiz do projeto
@@ -504,7 +512,82 @@ Compare pelo ATE e pelo erro máximo, não pelo erro final: o robô chega perto 
 *acha* que o alvo está, mesmo com a estimativa errada. Rode cada caso várias vezes; com a
 CPU no limite os resultados variam entre rodadas.
 
-## 8. Site explicativo em 3D (`site/`)
+## 8. Interface web do operador (`operator:=true`)
+
+Página para operar o robô de um computador qualquer pelo navegador, sem ROS instalado nele
+(o Kauê usa Windows): ver o mapa e o robô, marcar waypoints, montar varreduras, rodar e
+cancelar missões, conduzir com um joystick na tela, ver as câmeras e baixar o que foi gravado.
+
+```bash
+sudo apt install ros-jazzy-rosbridge-suite python3-opencv   # uma vez
+ros2 launch agrobot_webots simulation.launch.py world:=plantation_field.wbt ekf:=true \
+    vslam:=true data_camera:=true operator:=true rviz:=false
+```
+
+Abra **http://localhost:8080** no navegador do Windows (o WSL2 repassa as portas do
+`localhost`). Em outro computador da rede, use o IP da máquina que roda o ROS (no WSL, isso
+exige liberar a porta no Windows, `netsh interface portproxy`); num robô real com Linux, o IP
+dele direto. Dá para usar junto com o RViz (`rviz:=true`) e com `waypoints:=<caso>` (a
+página mostra a missão desse arquivo).
+
+```
+navegador ─WebSocket 9090─► rosbridge ─► /cmd_vel_teleop ─► cmd_vel_mux ─► driver
+          │                           ─► /waypoint_mission/command ─► waypoint_mission ─► Nav2
+          │                           ◄─ /operator/* (operator_bridge) e /waypoint_mission/status
+          └─HTTP 8080─► operator_web: a página (agrobot_webots/web/) e dados/ só para leitura
+```
+
+- **Por que web com rosbridge:** o operador só precisa de um navegador, e a página fala com os
+  tópicos e serviços que já existem. Foxglove resolveria a visualização, mas não a lógica de
+  missão; um app PyQt/rqt exigiria ROS no PC do operador.
+- **`operator_bridge`:** mandar a grade, o scan e as imagens cruas pelo rosbridge (JSON) pesaria
+  demais, então ele resume tudo: `/operator/state` (pose pelo TF no frame global, velocidade,
+  quem comanda, patinagem, caminho do Nav2 e o scan já no frame global, a 5 Hz),
+  `/operator/map` (a grade em PNG: `/rtabmap/map` com VSLAM, o costmap global sem) e as
+  câmeras em JPEG (`/operator/<câmera>/compressed`). Ele só assina uma câmera enquanto a
+  página mostra a prévia dela (a de aquisição tem 4,9 MB por imagem), e os timers são de
+  relógio de parede, para a página não travar quando a simulação anda mais devagar que o
+  tempo real.
+- **`operator_web`:** servidor HTTP da página e de `dados/` (missões, fotos, mapas) só para
+  leitura, na aba **Dados**. Não tem senha: quem alcança as portas 8080 e 9090 comanda o
+  robô. Em rede aberta (campo real), restrinja as portas ou ponha senha antes de usar.
+- **Joystick (aba Controle):** arraste o círculo ou segure **W A S D** / setas. A página
+  manda `/cmd_vel_teleop` a 10 Hz só enquanto o operador comanda e, ao soltar, alguns zeros
+  para o robô parar na hora. O `cmd_vel_mux` sobe sozinho com `operator:=true` e dá
+  prioridade ao operador; 0,5 s depois que ele solta, o Nav2 volta sem cancelar a missão
+  (seção 5). **PARAR** (ou Espaço) manda zeros sem parar, segurando o robô e deixando o Nav2
+  de fora até soltar. Se a página fechar ou a rede cair, os comandos param de chegar e em
+  0,5 s o mux devolve o controle ao Nav2 (ou para o robô, sem missão).
+- **Waypoints e missões (aba Missão):** a lista é do `waypoint_mission`, que sobe sozinho
+  com `operator:=true` (sem arquivo, como no `waypoints:=rviz`). A página manda a lista
+  inteira pelo tópico `/waypoint_mission/command` (JSON: `set`, `load`, `start`, `cancel`,
+  `clear`, `undo`, `save`) e mostra o `/waypoint_mission/status`. Ferramentas do mapa:
+  **+ Waypoint** (clique acrescenta, arrastar move, botão direito apaga), **Ir até** (um
+  ponto só, já inicia) e **Varredura**. As missões de `config/waypoints/` e as gravadas em
+  `dados/missions/` deste mundo (e deste mapa) aparecem para carregar; **Gravar lista** cria
+  `dados/missions/<nome>_<data>.yaml`, que também roda com `waypoints:=`. **Cancelar** para
+  a missão; os CSVs são gravados com os waypoints restantes como `cancelado`.
+- **Checagem pelas medidas do robô:** cada ponto passa pelo `waypoint_check` (seção 7) assim
+  que entra na lista e de novo quando a grade muda. Em roxo, com o motivo e, quando existe,
+  o botão **usar ponto livre** (o ponto livre mais perto, até 1 m). "Área ainda não
+  mapeada" (cinza) não bloqueia: no mapeamento o RTAB-Map só conhece o que o robô já viu.
+- **Varredura (aba Varredura):** com a ferramenta Varredura, arraste do começo da primeira
+  passada até o canto oposto. As passadas seguem x (as fileiras dos dois mundos) ou y, em
+  serpentina, com o espaçamento escolhido (1,8 m na plantação, 7 m no olival) e um ponto a
+  cada 10 m no máximo, porque o costmap global só aceita objetivos a até ~12 m. A câmera
+  de aquisição olha para a esquerda, então cada passada fotografa o lado oposto da
+  anterior. "Usar como missão" manda a lista ao `waypoint_mission` com o nome `varredura`
+  (os CSVs e a pasta das fotos saem com esse prefixo).
+- **Câmeras:** a cor da RGB-D também aparece na aba Controle. A de aquisição só existe com
+  `data_camera:=true` e, com o `waypoint_mission` rodando, fica desligada fora das missões
+  (os botões Ligar/Desligar chamam `/data_camera/enable`).
+- **Conferido no Webots** (nuvem, headless, 2026-11-16): na plantação, carregar o caso 2,
+  iniciar, tomar o controle no meio (o mux passou para o operador e devolveu ao Nav2) e
+  cancelar (CSVs e pasta de fotos fechados); no olival, **Ir até** 4 m à frente (chegou com
+  0,12 m de erro real) e uma varredura de duas entrelinhas desenhada na página, com as fotos
+  gravadas em `dados/fotos/varredura_*`.
+
+## 9. Site explicativo em 3D (`site/`)
 
 Página para apresentações e para entender o projeto: o robô em 3D (medidas do
 `agrobot.proto` e a malha do chassi), os sensores com o que cada um vê, os nós ROS 2
@@ -528,7 +611,7 @@ apresentação, os resultados do passo 3 e os próximos passos.
   regenera `js/malha_chassi.js` e `js/trajetorias.js` (o navegador não deixa uma página
   aberta do disco ler outros arquivos, por isso os dados vão embutidos em `.js`).
 
-## 9. Legado e comparação
+## 10. Legado e comparação
 
 - **SLAM por LiDAR (`slam:=true`, slam_toolbox):** não é mais usado nem corrigido; fica só
   para comparação nos resultados. Na plantação ele perde o yaw nas cabeceiras e o robô vai
@@ -540,11 +623,13 @@ apresentação, os resultados do passo 3 e os próximos passos.
 - **Gazebo (`agrobot_gazebo`, `agrobot_control`):** versão antiga, não é mais usada nem
   mantida.
 
-## 10. Limites conhecidos
+## 11. Limites conhecidos
 
 - Quase tudo foi validado na nuvem Linux, headless e sem GPU; os testes no Windows/WSL e no
   RViz na tela ainda são poucos. A câmera de aquisição só rodou no Webots na nuvem; falta medir o custo no Windows.
 - A profundidade da RGB-D e o IMU não têm ruído na simulação.
+- A interface web só foi conferida na nuvem (Chromium headless); falta abrir no navegador do
+  Windows com o WSL.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
   aviso "Mapa salvo" e o `map:` nas missões só foram conferidos fora do simulador.
 - Ao girar no lugar na arena, a quina do robô pode empurrar a `cardboard box(2)`.

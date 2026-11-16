@@ -1,0 +1,534 @@
+// Interface web do operador do Agrobot.
+//
+// Fala com o ROS pelo rosbridge:
+//   /operator/state, /operator/map, /operator/*/compressed   (operator_bridge)
+//   /waypoint_mission/status  e  /waypoint_mission/command   (waypoint_mission)
+//   /cmd_vel_teleop                                          (cmd_vel_mux)
+//   /data_camera/enable                                      (driver)
+
+import { Ros } from './rosbridge.js';
+import { MapView, STATUS_COLORS } from './mapview.js';
+import { generateSweep, routeLength } from './sweep.js';
+
+const $ = (id) => document.getElementById(id);
+
+const SPEEDS = { slow: { v: 0.3, w: 0.6 }, fast: { v: 0.5, w: 1.0 } };
+const STATUS_LABEL = {
+  pendente: 'pendente', atual: 'indo', atingido: 'atingido', perdido: 'perdido',
+  invalido: 'inválido', cancelado: 'cancelado',
+};
+
+let ros;
+let mission = null;        // último /waypoint_mission/status
+let state = null;          // último /operator/state
+let lastMessage = '';
+let lastDataImage = 0;     // hora (ms) da última imagem da câmera de aquisição
+const map = new MapView($('map'));
+window.agrobotMap = map;   // para depurar pelo console do navegador
+
+// Conexão ------------------------------------------------------------------
+
+async function start() {
+  let port = 9090;
+  try {
+    const config = await (await fetch('api/config')).json();
+    port = config.rosbridge_port || port;
+  } catch (error) { /* página aberta do disco: porta padrão */ }
+  const host = location.hostname || 'localhost';
+  ros = new Ros(`ws://${host}:${port}`);
+  ros.onConnection((connected) => {
+    const chip = $('conn');
+    chip.textContent = connected ? 'conectado' : 'desconectado';
+    chip.className = `chip ${connected ? 'ok' : 'bad'}`;
+    if (!connected) toast('Sem conexão com o robô (rosbridge). Tentando de novo…', 'error');
+  });
+  ros.subscribe('/operator/state', 'std_msgs/msg/String', (m) => onState(JSON.parse(m.data)),
+    { throttle_rate: 150, queue_length: 1 });
+  ros.subscribe('/operator/map', 'std_msgs/msg/String', (m) => onMap(JSON.parse(m.data)),
+    { queue_length: 1 });
+  ros.subscribe('/waypoint_mission/status', 'std_msgs/msg/String',
+    (m) => onMission(JSON.parse(m.data)), { queue_length: 1 });
+  updateCameraSubscriptions();
+  setInterval(teleopTick, 100);
+}
+
+function command(op, extra = {}) {
+  if (!ros || !ros.connected) {
+    toast('Sem conexão com o robô.', 'error');
+    return;
+  }
+  ros.publish('/waypoint_mission/command', 'std_msgs/msg/String',
+    { data: JSON.stringify({ op, ...extra }) });
+}
+
+let toastTimer = null;
+function toast(text, level = 'info') {
+  const el = $('toast');
+  el.textContent = text;
+  el.className = `toast ${level}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 5000);
+}
+
+// Estado do robô ---------------------------------------------------------
+
+function onState(s) {
+  if (!state && s.pose) map.center = { x: s.pose[0], y: s.pose[1] };
+  state = s;
+  map.state = s;
+  const pose = s.pose;
+  $('pose').textContent = pose
+    ? `${s.frame} x ${pose[0].toFixed(2)}  y ${pose[1].toFixed(2)}  θ ${(pose[2] * 180 / Math.PI).toFixed(0)}°`
+    : `sem TF ${s.frame} → base_link`;
+  $('speed').textContent = s.v === null ? 'v —' : `v ${s.v.toFixed(2)} m/s  ω ${s.w.toFixed(2)} rad/s`;
+  const labels = { teleop: 'operador', nav: 'Nav2', none: 'parado' };
+  const source = $('chip-source');
+  source.textContent = `comando: ${labels[s.source] || s.source}`;
+  source.className = `chip ${s.source === 'teleop' ? 'warn' : s.source === 'nav' ? 'ok' : ''}`;
+  $('chip-slip').classList.toggle('hidden', !s.slip);
+  // A câmera de aquisição faz ~1 foto por segundo de simulação; com a
+  // simulação lenta, até 10 s entre imagens ainda é "ligada".
+  const live = Date.now() - lastDataImage < 10000;
+  $('data-cam-state').textContent = live ? '(ligada)' : '(sem imagem)';
+}
+
+function onMap(m) {
+  const image = new Image();
+  image.onload = () => map.setMap(m, image);
+  image.src = `data:image/png;base64,${m.png}`;
+}
+
+// Missão --------------------------------------------------------------------
+
+function onMission(m) {
+  const first = mission === null;
+  mission = m;
+  $('chip-world').textContent = `${m.world || 'mundo ?'}${m.map ? ` · mapa ${m.map}` : ''} · ${m.frame}`;
+  if (!map.drag || map.drag.kind !== 'waypoint') map.waypoints = m.waypoints;
+  const msg = $('mission-msg');
+  msg.textContent = m.message || (m.running ? `Missão ${m.case} em andamento.` : 'Pronto.');
+  msg.className = `msg ${m.level || ''}`;
+  if ((m.level === 'error' || m.level === 'warn') && m.message !== lastMessage) {
+    toast(m.message, m.level);
+  }
+  lastMessage = m.message;
+  const busy = m.running;
+  $('btn-start').disabled = busy || !m.waypoints.length;
+  $('btn-start').textContent = m.starting ? 'Esperando o Nav2…' : 'Iniciar missão';
+  $('btn-cancel').disabled = !busy;
+  for (const id of ['btn-undo', 'btn-clear', 'btn-load', 'btn-sw-use']) {
+    $(id).disabled = busy || (id === 'btn-sw-use' && !map.preview.length);
+  }
+  renderWaypoints(m);
+  renderCases(m);
+  if (first && m.waypoints.length) map.fitWaypoints();
+}
+
+function renderWaypoints(m) {
+  $('wp-count').textContent = m.waypoints.length
+    ? `(${m.waypoints.length}, ${routeLength(m.waypoints).toFixed(0)} m · ${m.case})` : '';
+  const list = $('wp-list');
+  list.replaceChildren();
+  m.waypoints.forEach((wp, i) => {
+    const li = document.createElement('li');
+    const bad = wp.check && !['ok', 'desconhecido'].includes(wp.check.status);
+    const color = bad && wp.status === 'pendente' ? STATUS_COLORS.invalido
+      : STATUS_COLORS[wp.status] || STATUS_COLORS.pendente;
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = color;
+    const body = document.createElement('div');
+    const yaw = wp.yaw === null ? '' : `  θ ${(wp.yaw * 180 / Math.PI).toFixed(0)}°`;
+    body.innerHTML = `<div>${i + 1}. ${escapeHtml(wp.name)} <small>${STATUS_LABEL[wp.status] || wp.status}</small></div>
+      <div class="coords">x ${wp.x.toFixed(2)}  y ${wp.y.toFixed(2)}${yaw}</div>`;
+    if (bad || (wp.check && wp.check.status === 'desconhecido' && wp.check.text)) {
+      const problem = document.createElement('div');
+      problem.className = bad ? 'problem' : 'problem unknown';
+      problem.textContent = wp.check.text || wp.check.status;
+      body.appendChild(problem);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    if (wp.check && wp.check.suggestion && !m.running) {
+      const fix = document.createElement('button');
+      fix.textContent = 'usar ponto livre';
+      fix.title = `Mover para (${wp.check.suggestion[0].toFixed(2)}, ${wp.check.suggestion[1].toFixed(2)})`;
+      fix.onclick = () => editList((pts) => {
+        pts[i] = { ...pts[i], x: wp.check.suggestion[0], y: wp.check.suggestion[1] };
+      });
+      actions.appendChild(fix);
+    }
+    if (!m.running) {
+      const remove = document.createElement('button');
+      remove.textContent = '×';
+      remove.title = 'Apagar';
+      remove.onclick = () => editList((pts) => pts.splice(i, 1));
+      actions.appendChild(remove);
+    }
+    li.append(dot, body, actions);
+    list.appendChild(li);
+  });
+}
+
+function renderCases(m) {
+  const select = $('case-select');
+  const current = select.value;
+  const key = JSON.stringify(m.cases);
+  if (select.dataset.key === key) return;
+  select.dataset.key = key;
+  select.replaceChildren();
+  if (!m.cases.length) {
+    select.appendChild(new Option('nenhuma para este mundo', ''));
+  }
+  for (const c of m.cases) {
+    const label = `${c.name} (${c.waypoints} pontos${c.saved ? ', gravada' : ''})`;
+    select.appendChild(new Option(label, c.name));
+  }
+  if (current) select.value = current;
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// Lista atual da missão, editada por fn e mandada inteira ao waypoint_mission.
+function editList(fn) {
+  if (!mission) return;
+  if (mission.running) {
+    toast('Missão em andamento: cancele antes de mudar a lista.', 'warn');
+    return;
+  }
+  const points = mission.waypoints.map((w) => ({ name: w.name, x: w.x, y: w.y, yaw: w.yaw }));
+  fn(points);
+  points.forEach((p, i) => { if (/^wp\d+$/.test(p.name)) p.name = `wp${i + 1}`; });
+  const name = mission.case === 'rviz' ? 'operador' : mission.case;
+  command('set', { name, waypoints: points });
+}
+
+map.on('add', (p) => editList((pts) => pts.push({ name: `wp${pts.length + 1}`, x: p.x, y: p.y, yaw: null })));
+map.on('move', (i, p) => editList((pts) => { pts[i] = { ...pts[i], x: p.x, y: p.y }; }));
+map.on('remove', (i) => editList((pts) => pts.splice(i, 1)));
+map.on('goto', (p) => {
+  if (mission && mission.running) {
+    toast('Missão em andamento: cancele antes de mandar o robô a outro ponto.', 'warn');
+    return;
+  }
+  command('set', { name: 'ir_ate', waypoints: [{ name: 'alvo', x: p.x, y: p.y }] });
+  command('start');
+});
+map.on('hover', (p) => {
+  $('cursor').textContent = p ? `cursor ${p.x.toFixed(2)}, ${p.y.toFixed(2)}` : '';
+});
+map.on('follow', (on) => $('btn-follow').classList.toggle('on', on));
+
+$('btn-start').onclick = () => command('start');
+$('btn-cancel').onclick = () => command('cancel');
+$('btn-undo').onclick = () => command('undo');
+$('btn-clear').onclick = () => {
+  if (confirm('Apagar todos os waypoints da lista?')) command('clear');
+};
+$('btn-load').onclick = () => {
+  const name = $('case-select').value;
+  if (name) command('load', { case: name });
+};
+$('btn-save').onclick = () => command('save', { name: $('save-name').value.trim() || 'operador' });
+
+for (const button of $('tools').querySelectorAll('button')) {
+  button.onclick = () => {
+    $('tools').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === button));
+    map.tool = button.dataset.tool;
+    if (map.tool === 'sweep') showTab('sweep');
+  };
+}
+$('btn-follow').onclick = () => {
+  map.follow = !map.follow;
+  $('btn-follow').classList.toggle('on', map.follow);
+};
+$('btn-fit').onclick = () => map.fitWaypoints();
+
+// Varredura -------------------------------------------------------------
+
+let sweepRect = null;
+
+function updateSweep() {
+  map.preview = [];
+  const info = $('sw-info');
+  info.className = 'msg';
+  if (!sweepRect) {
+    info.textContent = 'Nenhum retângulo desenhado.';
+  } else {
+    try {
+      map.preview = generateSweep(sweepRect.a, sweepRect.b, {
+        spacing: parseFloat($('sw-spacing').value),
+        axis: $('sw-axis').value,
+        maxLeg: parseFloat($('sw-leg').value) || 10,
+      });
+      const lanes = new Set(map.preview.map((p) => p.name.split('_')[0])).size;
+      info.textContent = `${lanes} passadas, ${map.preview.length} pontos, `
+        + `${routeLength(map.preview).toFixed(0)} m de rota (fora a ida até o começo).`;
+    } catch (error) {
+      info.textContent = error.message;
+      info.className = 'msg warn';
+    }
+  }
+  $('btn-sw-use').disabled = !map.preview.length || (mission && mission.running);
+}
+
+map.on('rect', (rect, done) => {
+  sweepRect = { a: { ...rect.a }, b: { ...rect.b } };
+  updateSweep();
+  if (done) showTab('sweep');
+});
+for (const id of ['sw-spacing', 'sw-axis', 'sw-leg']) $(id).addEventListener('input', updateSweep);
+$('btn-sw-use').onclick = () => {
+  if (!map.preview.length) return;
+  command('set', { name: 'varredura', waypoints: map.preview });
+  sweepRect = null;
+  map.rect = null;
+  updateSweep();
+  showTab('mission');
+  toast('Varredura carregada na missão: confira os pontos e inicie.');
+};
+$('btn-sw-clear').onclick = () => {
+  sweepRect = null;
+  map.rect = null;
+  updateSweep();
+};
+
+// Teleoperação -------------------------------------------------------------
+
+const joy = { x: 0, y: 0, active: false };
+const keys = new Set();
+let hold = false;
+let zerosToSend = 0;
+
+function teleopTick() {
+  if (!ros || !ros.connected) return;
+  const speed = SPEEDS[document.querySelector('input[name=speed]:checked').value];
+  let v = 0;
+  let w = 0;
+  let active = false;
+  if (hold) {
+    active = true;
+  } else if (joy.active) {
+    v = -joy.y * speed.v;
+    w = -joy.x * speed.w;
+    active = true;
+  } else if (keys.size) {
+    if (keys.has('up')) v += speed.v;
+    if (keys.has('down')) v -= speed.v;
+    if (keys.has('left')) w += speed.w;
+    if (keys.has('right')) w -= speed.w;
+    active = true;
+  }
+  if (active) {
+    zerosToSend = 3;   // ao soltar, alguns zeros param o robô na hora
+  } else if (zerosToSend > 0) {
+    zerosToSend -= 1;
+  } else {
+    return;            // não comanda: o Nav2 volta em 0,5 s
+  }
+  ros.publish('/cmd_vel_teleop', 'geometry_msgs/msg/Twist', {
+    linear: { x: v, y: 0, z: 0 }, angular: { x: 0, y: 0, z: w },
+  });
+}
+
+function setHold(on) {
+  hold = on;
+  const button = $('btn-stop');
+  button.classList.toggle('on', on);
+  button.textContent = on ? 'SOLTAR' : 'PARAR';
+  if (on) toast('Robô seguro parado: o Nav2 não comanda até você soltar.', 'warn');
+}
+$('btn-stop').onclick = () => setHold(!hold);
+
+const KEYMAP = {
+  ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
+  ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+};
+window.addEventListener('keydown', (e) => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (!e.repeat) setHold(!hold);
+    return;
+  }
+  const key = KEYMAP[e.code];
+  if (key) {
+    e.preventDefault();
+    keys.add(key);
+  }
+});
+window.addEventListener('keyup', (e) => keys.delete(KEYMAP[e.code]));
+window.addEventListener('blur', () => { keys.clear(); joy.active = false; });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { keys.clear(); joy.active = false; }
+});
+
+(function setupJoystick() {
+  const canvas = $('joy');
+  const ctx = canvas.getContext('2d');
+  const r = canvas.width / 2;
+  const knob = 34;
+  const draw = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(127,127,127,0.15)';
+    ctx.strokeStyle = 'rgba(127,127,127,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(r, r, r - 2, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(r, 10); ctx.lineTo(r, 2 * r - 10); ctx.moveTo(10, r); ctx.lineTo(2 * r - 10, r); ctx.stroke();
+    ctx.fillStyle = joy.active ? '#f0a020' : '#2a7fff';
+    ctx.beginPath();
+    ctx.arc(r + joy.x * (r - knob), r + joy.y * (r - knob), knob, 0, 2 * Math.PI);
+    ctx.fill();
+  };
+  const move = (e) => {
+    const box = canvas.getBoundingClientRect();
+    let x = (e.clientX - box.left - r) / (r - knob);
+    let y = (e.clientY - box.top - r) / (r - knob);
+    const n = Math.hypot(x, y);
+    if (n > 1) { x /= n; y /= n; }
+    joy.x = Math.abs(x) < 0.08 ? 0 : x;
+    joy.y = Math.abs(y) < 0.08 ? 0 : y;
+    draw();
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    joy.active = true;
+    move(e);
+  });
+  canvas.addEventListener('pointermove', (e) => { if (joy.active) move(e); });
+  const release = () => { joy.active = false; joy.x = 0; joy.y = 0; draw(); };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+  draw();
+}());
+
+// Câmeras ---------------------------------------------------------------------
+
+const cameraSubs = new Map();
+
+function updateCameraSubscriptions() {
+  if (!ros) return;
+  const tab = currentTab;
+  const wanted = {
+    vslam_camera: tab === 'drive' || tab === 'cameras',
+    vslam_depth: tab === 'cameras',
+    data_camera: tab === 'cameras',
+  };
+  const targets = {
+    vslam_camera: () => [$('drive-cam'), $('cam-color')],
+    vslam_depth: () => [$('cam-depth')],
+    data_camera: () => [$('cam-data')],
+  };
+  for (const [key, on] of Object.entries(wanted)) {
+    const sub = cameraSubs.get(key);
+    if (on && !sub) {
+      const unsubscribe = ros.subscribe(`/operator/${key}/compressed`,
+        'sensor_msgs/msg/CompressedImage', (m) => {
+          const src = `data:image/jpeg;base64,${m.data}`;
+          if (key === 'data_camera') lastDataImage = Date.now();
+          targets[key]().forEach((img) => { img.src = src; });
+        }, { queue_length: 1 });
+      cameraSubs.set(key, unsubscribe);
+    } else if (!on && sub) {
+      sub();
+      cameraSubs.delete(key);
+    }
+  }
+}
+
+async function setDataCamera(on) {
+  try {
+    const result = await ros.callService('/data_camera/enable', 'std_srvs/srv/SetBool', { data: on });
+    toast(result.message || (on ? 'Câmera ligada.' : 'Câmera desligada.'));
+  } catch (error) {
+    toast(`Câmera de aquisição: ${error.message}. Ela só existe com data_camera:=true.`, 'warn');
+  }
+}
+$('btn-datacam-on').onclick = () => setDataCamera(true);
+$('btn-datacam-off').onclick = () => setDataCamera(false);
+
+// Dados gravados ------------------------------------------------------------
+
+let dataDir = '';
+
+async function loadData(dir) {
+  dataDir = dir;
+  $('data-path').textContent = `dados/${dir}`;
+  const list = $('data-list');
+  const thumbs = $('data-thumbs');
+  list.replaceChildren();
+  thumbs.replaceChildren();
+  let listing;
+  try {
+    const response = await fetch(`api/dados?dir=${encodeURIComponent(dir)}`);
+    listing = await response.json();
+    if (!response.ok) throw new Error(listing.error);
+  } catch (error) {
+    list.innerHTML = '<li>Pasta vazia ou servidor fora do ar.</li>';
+    return;
+  }
+  const images = [];
+  for (const entry of listing.entries) {
+    const li = document.createElement('li');
+    const path = dir ? `${dir}/${entry.name}` : entry.name;
+    const link = document.createElement('a');
+    link.textContent = entry.dir ? `📁 ${entry.name}` : entry.name;
+    if (entry.dir) {
+      link.href = '#';
+      link.onclick = (e) => { e.preventDefault(); loadData(path); };
+    } else {
+      link.href = `dados/${path.split('/').map(encodeURIComponent).join('/')}`;
+      link.target = '_blank';
+      if (/\.(png|jpe?g)$/i.test(entry.name)) images.push(link.href);
+    }
+    const info = document.createElement('small');
+    const date = new Date(entry.mtime * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    info.textContent = entry.dir ? date : `${formatSize(entry.size)} · ${date}`;
+    li.append(link, info);
+    list.appendChild(li);
+  }
+  if (listing.total > listing.entries.length) {
+    list.insertAdjacentHTML('beforeend', `<li><small>… e mais ${listing.total - listing.entries.length}</small></li>`);
+  }
+  // Miniaturas das fotos (as mais novas; cada PNG tem 2 a 3 MB).
+  images.slice(0, 12).forEach((src) => {
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = src;
+    img.onclick = () => window.open(src, '_blank');
+    thumbs.appendChild(img);
+  });
+}
+
+function formatSize(bytes) {
+  if (bytes > 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+  if (bytes > 1e3) return `${(bytes / 1e3).toFixed(0)} kB`;
+  return `${bytes} B`;
+}
+
+$('btn-data-up').onclick = () => loadData(dataDir.split('/').slice(0, -1).join('/'));
+$('btn-data-refresh').onclick = () => loadData(dataDir);
+
+// Abas ----------------------------------------------------------------------------
+
+let currentTab = 'mission';
+
+function showTab(name) {
+  currentTab = name;
+  for (const button of $('tabs').querySelectorAll('button')) {
+    button.classList.toggle('on', button.dataset.tab === name);
+  }
+  for (const panel of document.querySelectorAll('.panel')) {
+    panel.classList.toggle('hidden', panel.id !== `tab-${name}`);
+  }
+  updateCameraSubscriptions();
+  if (name === 'data') loadData(dataDir);
+}
+
+for (const button of $('tabs').querySelectorAll('button')) {
+  button.onclick = () => showTab(button.dataset.tab);
+}
+
+start();
