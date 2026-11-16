@@ -58,6 +58,7 @@ Fechar o Webots encerra o launch inteiro.
 | `data_dir` | `dados/fotos/` | Pasta das fotos gravadas |
 | `data_min_distance` | `0.3` | Distância mínima (m) entre duas fotos gravadas |
 | `waypoints` | vazio | Missão de waypoints: nome de uma lista em `config/waypoints/`, caminho de um `.yaml`, ou `rviz` para clicar os pontos |
+| `waypoint_check` | `true` | Recusa waypoints onde o robô não cabe, não gira ou não chega (seção 7) |
 | `teleop` | vazio | Teleoperação: `joy` (joystick) ou `keyboard` (teclado, num terminal próprio). O operador tem prioridade sobre o Nav2 (seção 5) |
 | `slip_check` | `true` | Checagem de patinagem das rodas pela odometria visual (seção 5). Só age com `ekf:=true` e `camera:=true` |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 9) |
@@ -485,6 +486,34 @@ um waypoint que falha. Sem `yaw` no YAML, o robô chega olhando para o próximo 
 | `caso1_arena_circuito` | arena | ~10 m em volta do caixote do centro | Ambiente fechado; controle negativo do VSLAM |
 | `caso2_plantacao_ida_volta` | plantação | ~26 m: entrelinha y = 0 e volta pela y = 1,8 | Fileiras repetitivas, duas cabeceiras |
 | `caso3_plantacao_serpentina` | plantação | ~51 m por quatro entrelinhas | Deriva acumulada, aliasing entre entrelinhas |
+
+**Cabeceira leste da plantação (caso 3):** a pedra grande em (11,8; -1,5) fica na saída da
+entrelinha y = -1,8 e deixa só ~1,1 m até o fim da fileira y = -0,9 (o robô tem 1,12 m), então
+não dá para subir direto para a y = 0. Por isso o caso 3 sai dessa entrelinha em diagonal pelo
+vão sul da pedra até `contorno_pedra_sul` (11,6; -2,85), onde há folga para girar, chega
+olhando para o vão leste (`yaw: 0.7`) e contorna a pedra pelo leste. Parar no bolsão em
+(10,8; -1,8), como era antes, deixava o robô olhando para a pedra sem conseguir girar, e o Nav2
+perdia esse waypoint e o seguinte. Hoje a checagem dos waypoints (abaixo) recusa esse ponto.
+
+**Checagem dos waypoints (`waypoint_check:=true`, padrão):** antes de a missão começar, e a
+cada clique no RViz, o `waypoint_mission` confere cada ponto numa grade de ocupação com as
+medidas do robô (1,2 x 1,12 m, mais 5 cm de folga; `waypoint_check.py`):
+
+- **não cabe:** a pegada bate num obstáculo chegando ao ponto;
+- **não gira:** o robô para em cada waypoint e gira no lugar até o yaw de saída (olhando para
+  o próximo); a pegada tem de caber em todos os ângulos desse giro;
+- **não chega:** não há caminho até o ponto por onde o robô passe (centro a pelo menos meia
+  largura dos obstáculos, como o planejador do Nav2).
+
+A direção de chegada sai de um caminho A* estimado na grade, do waypoint anterior até o
+ponto. Com um ponto ruim a missão não começa: o log diz qual, por quê e o ponto livre mais
+perto (até 1 m), e o ponto fica roxo no RViz. Um clique ruim é recusado com a mesma
+explicação. A grade é o `/rtabmap/map` com VSLAM e o costmap global sem ele. Só dá para
+conferir o que já está no mapa: localizando num mapa salvo (`vslam_localization:=true`) vale
+para a rota toda; mapeando do zero, os pontos longe da partida ainda são desconhecidos e
+passam sem checagem (o log avisa quais). A folga de 5 cm é pequena de propósito: com o mapa
+da plantação ela separa o ponto antigo da cabeceira leste (recusado) dos pontos que o robô
+cumpre nas rodadas; o erro de localização (0,1 a 0,3 m) não entra na conta.
 | `caso4_olival_ida_volta` | olival | ~160 m: entrelinha y = 0 até a cabeceira leste e volta pela y = 7 | Lugar aberto, poucos retornos do LiDAR, declive lateral nas manobras de cabeceira |
 | `caso5_olival_encosta` | olival | ~115 m: sobe a encosta atravessando as fileiras em x = 8 e desce em x = 29 | Subida e descida, grade de troncos vista de frente |
 
@@ -555,8 +584,6 @@ apresentação, os resultados do passo 3 e os próximos passos.
   deriva por temperatura.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
   aviso "Mapa salvo" e o `map:` nas missões só foram conferidos fora do simulador.
-- O Nav2 às vezes não acha caminho na travessia da cabeceira leste da plantação
-  ("Failed to create plan with tolerance of 0.3") e perde waypoints ali.
 - Ao girar no lugar na arena, a quina do robô pode empurrar a `cardboard box(2)`.
 - No olival, o robô escorrega encosta abaixo no declive lateral (nas manobras, nos desvios
   dos obstáculos e ao passar por cima de galhos), e as rodas e o IMU não veem isso: na nuvem,

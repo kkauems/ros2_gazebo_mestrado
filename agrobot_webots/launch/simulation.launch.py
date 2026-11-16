@@ -597,6 +597,14 @@ def generate_launch_description():
                 # missão, com o mesmo prefixo dos CSVs.
                 'data_camera': (flag(context, 'data_camera')
                                 and flag(context, 'data_record')),
+                # Recusa waypoints onde o robô não cabe ou não gira. Com
+                # VSLAM, na grade do RTAB-Map (todo o mapa já visto; com
+                # vslam_localization, o mapa salvo inteiro); sem ele, no
+                # costmap global (só 24 x 24 m em volta do robô).
+                'check_waypoints': flag(context, 'waypoint_check'),
+                'check_map_topic': ('/rtabmap/map' if flag(context, 'vslam')
+                                    else '/global_costmap/costmap'),
+                'check_occupied': 65 if flag(context, 'vslam') else 100,
                 'use_sim_time': True,
             }],
         )]
@@ -667,6 +675,9 @@ def generate_launch_description():
         DeclareLaunchArgument('ekf', default_value='false'),
         DeclareLaunchArgument('slam', default_value='false'),
         DeclareLaunchArgument('waypoints', default_value=''),
+        # Confere os waypoints pelas medidas do robô antes da missão e nos
+        # cliques do RViz (waypoint_check.py). false desliga.
+        DeclareLaunchArgument('waypoint_check', default_value='true'),
         # O WebotsLauncher troca 'world' pelo caminho de uma cópia temporária;
         # o nome original fica guardado para o waypoint_mission.
         SetLaunchConfiguration('world_name', LaunchConfiguration('world')),
