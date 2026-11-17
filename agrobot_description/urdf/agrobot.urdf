@@ -9,6 +9,12 @@
         <enabled>false</enabled>
       </ros>
     </device>
+    <!-- /lidar3d/points também sai do AgrobotDriver -->
+    <device reference="lidar3d" type="Lidar">
+      <ros>
+        <enabled>false</enabled>
+      </ros>
+    </device>
     <!-- Câmera RGB-D do VSLAM: cor, profundidade e camera_info também saem do
          AgrobotDriver, todos com o mesmo carimbo -->
     <device reference="vslam_color" type="Camera">
@@ -42,7 +48,14 @@
            o simulation.launch.py só a deixa ligada com data_camera:=true
            (sem isso troca para 0, desligada) -->
       <dataCameraPeriod>1024</dataCameraPeriod>
-      <!-- Ruído realista na IMU, nos encoders, no LiDAR e na câmera RGB-D
+      <!-- Período do LiDAR de segurança (scan 2D, /scan) em ms: 160 ms,
+           6,25 Hz, como o Delta-2A (4 a 10 Hz, 6,2 típico) -->
+      <safetyLidarPeriod>160</safetyLidarPeriod>
+      <!-- Período do LiDAR 3D (/lidar3d/points) em ms: 96 ms, ~10 Hz, como
+           o Helios-16P. O simulation.launch.py troca para 0 (desligado)
+           com lidar3d:=false -->
+      <lidar3dPeriod>96</lidar3dPeriod>
+      <!-- Ruído realista na IMU, nos encoders, nos LiDARs e na câmera RGB-D
            (agrobot_webots/sensor_noise.py); o simulation.launch.py troca
            com sensor_noise:=false. noiseSeed 0 = semente nova a cada
            rodada (sai no log); o launch troca com noise_seed:=N -->
@@ -373,10 +386,11 @@
     <origin xyz="0.45 0 0.38" rpy="0 0 0"/>
   </joint>
 
-  <!-- SENSOR: LIDAR FRONTAL BAIXO (Webots/Nav2). Plano do scan a ~13 cm do
-       chão: vê as caixas (0,20 m) e os caixotes (0,30 m) da arena e passa por
-       cima dos torrões da plantation_field.wbt. Mesma pose do front_lidar no
-       agrobot.proto. -->
+  <!-- SENSOR: LIDAR DE SEGURANÇA (Webots; modelo 3irobotix Delta-2A, 2D,
+       360 graus). Plano do scan a 15 cm do chão: vê pernas de pessoas,
+       caixas e pedras, e passa por cima dos torrões da plantation_field.wbt.
+       Alimenta o collision_monitor e os costmaps do Nav2. Mesma pose do
+       front_lidar no agrobot.proto. -->
   <link name="front_lidar_link">
     <visual>
       <origin xyz="0 0 0"/>
@@ -390,7 +404,27 @@
   <joint name="front_lidar_joint" type="fixed">
     <parent link="base_link"/>
     <child link="front_lidar_link"/>
-    <origin xyz="0.65 0 -0.10" rpy="0 0 0"/>
+    <origin xyz="0.65 0 -0.09" rpy="0 0 0"/>
+  </joint>
+
+  <!-- SENSOR: LIDAR 3D (Webots; modelo RoboSense RS-Helios-16P, 16 canais,
+       +-15 graus). No topo do mastro, 0,80 m acima do base_link (~1,04 m do
+       chão); a nuvem /lidar3d/points vai para o RTAB-Map. Mesma pose do
+       lidar3d no agrobot.proto. -->
+  <link name="lidar3d_link">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.04875" length="0.10"/>
+      </geometry>
+      <material name="aluminium"/>
+    </visual>
+  </link>
+
+  <joint name="lidar3d_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar3d_link"/>
+    <origin xyz="0 0 0.80" rpy="0 0 0"/>
   </joint>
 
   <!-- SENSOR: CÂMERA RGB-D DO VSLAM (Webots). Mesma pose do VslamCamera no

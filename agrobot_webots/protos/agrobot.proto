@@ -43,15 +43,22 @@ PROTO agrobot [
         translation 0 0 0.35
         name "accelerometer"
       }
+      # LiDAR de segurança (modelo 3irobotix Delta-2A): 2D, 360 graus, na
+      # frente do robô com o plano do scan a 15 cm do chão (z -0,09 m; o
+      # base_link fica 0,24 m acima do chão). 0,13-8 m, 360 raios (1 grau) a
+      # cada 160 ms (6,25 Hz; o Delta-2A gira de 4 a 10 Hz, 6,2 típico, e
+      # mede 2 a 5 mil pontos/s). Os raios que batem no próprio robô (rodas,
+      # para trás) são descartados no agrobot_driver. Alimenta o
+      # collision_monitor (parada de segurança) e os costmaps do Nav2.
       Lidar {
-        translation 0.650000 0.000000 -0.100000
+        translation 0.650000 0.000000 -0.090000
         name "front_lidar"
-        fieldOfView 3.0
-        horizontalResolution 300
+        fieldOfView 6.283185
+        horizontalResolution 360
         numberOfLayers 1
         verticalFieldOfView 0.1
         near 0.05
-        minRange 0.1
+        minRange 0.13
         maxRange 8.0
         children [
           Shape {
@@ -63,6 +70,37 @@ PROTO agrobot [
             geometry Cylinder {
               height 0.04
               radius 0.04
+            }
+          }
+        ]
+      }
+      # LiDAR 3D (modelo RoboSense RS-Helios-16P) no topo do robô, para a
+      # localização: 16 canais de -15 a +15 graus (2 graus entre canais),
+      # 360 graus com 0,2 grau (1800 colunas) a cada 96 ms (~10 Hz), 0,2 a
+      # 150 m. Corpo de 9,75 cm de diâmetro e 10 cm de altura. O centro
+      # óptico fica a 0,80 m do base_link (~1,04 m do chão), acima de tudo
+      # no robô: nenhum raio bate nele mesmo. Entra no RTAB-Map no lugar do
+      # /scan (ICP dos fechamentos de laço e grade de ocupação).
+      Lidar {
+        translation 0 0 0.80
+        name "lidar3d"
+        fieldOfView 6.283185
+        horizontalResolution 1800
+        numberOfLayers 16
+        verticalFieldOfView 0.523599
+        near 0.06
+        minRange 0.2
+        maxRange 150.0
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.75 0.75 0.78
+              roughness 0.6
+              metalness 0
+            }
+            geometry Cylinder {
+              height 0.10
+              radius 0.04875
             }
           }
         ]
@@ -180,16 +218,28 @@ PROTO agrobot [
           }
         ]
       }
-      # Mastro da câmera de aquisição, da travessa do topo do quadro até o
-      # corpo da câmera; fica atrás do corpo (y < 0), fora da imagem dela, e
+      # Mastro da câmera de aquisição e do LiDAR 3D, da travessa do topo do
+      # quadro até a base do LiDAR 3D, passando pelo corpo da câmera; fica atrás do corpo (y < 0), fora da imagem dela, e
       # atrás do plano da imagem da câmera RGB-D (x < 0,45 m).
       Pose {
-        translation 0 -0.055 0.45
+        translation 0 -0.055 0.4775
         children [
           Shape {
             appearance USE aluminium
             geometry Box {
-              size 0.03 0.03 0.47
+              size 0.03 0.03 0.525
+            }
+          }
+        ]
+      }
+      # Base do LiDAR 3D no topo do mastro (z 0,74 a 0,75 m).
+      Pose {
+        translation 0 -0.0075 0.745
+        children [
+          Shape {
+            appearance USE aluminium
+            geometry Box {
+              size 0.11 0.125 0.01
             }
           }
         ]
@@ -207,8 +257,8 @@ PROTO agrobot [
           }
         ]
       }
-      # Suporte do LiDAR frontal: braço sob o tubo frontal e haste até o
-      # topo do LiDAR (z -0,08 m). Tudo acima do plano do scan (z -0,10 m) e
+      # Suporte do LiDAR de segurança: braço sob o tubo frontal e haste até
+      # o topo do LiDAR (z -0,07 m). Tudo acima do plano do scan (z -0,09 m) e
       # abaixo do campo de visão da câmera.
       Pose {
         translation 0.535 0 0.0475
@@ -222,12 +272,12 @@ PROTO agrobot [
         ]
       }
       Pose {
-        translation 0.65 0 -0.0225
+        translation 0.65 0 -0.0175
         children [
           Shape {
             appearance USE aluminium
             geometry Box {
-              size 0.03 0.03 0.115
+              size 0.03 0.03 0.105
             }
           }
         ]

@@ -1,16 +1,19 @@
 import array
 import ctypes
 import math
+import os
 import time
 
 from agrobot_webots.sensor_noise import random_seed, SensorNoise
+import numpy as np
 import rclpy
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
-from sensor_msgs.msg import CameraInfo, Image, Imu, JointState, LaserScan
+from sensor_msgs.msg import (CameraInfo, Image, Imu, JointState, LaserScan,
+                             PointCloud2, PointField)
 from std_srvs.srv import SetBool
 from tf2_ros import TransformBroadcaster
 
@@ -67,6 +70,77 @@ def quaternion_from_matrix(m):
         return ((r01 + r10) / s, 0.25 * s, (r12 + r21) / s, (r02 - r20) / s)
     s = 2.0 * math.sqrt(1.0 + r22 - r00 - r11)
     return ((r02 + r20) / s, (r12 + r21) / s, 0.25 * s, (r10 - r01) / s)
+
+
+# LiDAR de segurança (front_lidar, modelo Delta-2A): 360 graus na frente do
+# robô, 15 cm acima do chão. Para trás e para os lados, parte dos raios bate
+# nas rodas e nos motores; esses raios saem como NaN (sem leitura), senão o
+# collision_monitor veria o próprio robô e pararia para sempre. A caixa do
+# robô no base_link, um pouco maior que a pegada do Nav2 (1,2 x 1,12 m):
+SAFETY_LIDAR_DEVICE = 'front_lidar'
+SAFETY_LIDAR_FRAME = 'front_lidar_link'
+SAFETY_LIDAR_X = 0.65               # posição no base_link (agrobot.proto)
+SELF_BOX_X = (-0.65, 0.62)
+SELF_BOX_Y = (-0.58, 0.58)
+
+# LiDAR 3D (lidar3d, modelo Helios-16P) no topo: nuvem em /lidar3d/points,
+# no frame do sensor, só com os pontos válidos (x, y, z em float32).
+LIDAR3D_DEVICE = 'lidar3d'
+LIDAR3D_FRAME = 'lidar3d_link'
+LIDAR3D_TOPIC = '/lidar3d/points'
+LIDAR3D_LOG_PERIOD = 60.0
+
+
+def lidar_angles(fov, count):
+    """
+    Ângulos (rad) dos raios de um Lidar do Webots, na ordem da range image.
+
+    O Webots vai da esquerda (+fov/2) para a direita. Com 360 graus cada raio
+    fica no meio da sua fatia de fov/count (o primeiro em +fov/2 - meio
+    passo); com menos, o primeiro e o último ficam nas bordas. Conferido com
+    a nuvem de pontos do Webots (AGROBOT_LIDAR_CHECK=1).
+    """
+    if fov > 2.0 * math.pi - 1e-3:
+        step = fov / count
+        return fov / 2.0 - step * (np.arange(count) + 0.5)
+    return fov / 2.0 - fov / max(count - 1, 1) * np.arange(count)
+
+
+def mask_self_hits(ranges, angles, lidar_x, box_x, box_y):
+    """
+    Troca por NaN os raios cujo ponto cai dentro da caixa do robô.
+
+    ranges e angles na mesma ordem; o LiDAR em (lidar_x, 0) no base_link.
+    """
+    ranges = np.array(ranges, dtype=np.float32)
+    with np.errstate(invalid='ignore'):
+        x = lidar_x + ranges * np.cos(angles)
+        y = ranges * np.sin(angles)
+        inside = ((x >= box_x[0]) & (x <= box_x[1])
+                  & (y >= box_y[0]) & (y <= box_y[1]))
+    ranges[inside] = np.nan
+    return ranges
+
+
+def lidar_directions(fov, count, vertical_fov, layers):
+    """
+    Vetores unitários (layers*count, 3) dos raios de um Lidar do Webots.
+
+    Na ordem da range image: canal a canal, do mais alto para o mais baixo,
+    e em cada canal da esquerda para a direita.
+    """
+    azimuth = lidar_angles(fov, count)
+    if layers > 1:
+        elevation = (vertical_fov / 2.0
+                     - vertical_fov / (layers - 1) * np.arange(layers))
+    else:
+        elevation = np.zeros(1)
+    azimuth, elevation = np.meshgrid(azimuth, elevation)
+    return np.stack([
+        np.cos(elevation) * np.cos(azimuth),
+        np.cos(elevation) * np.sin(azimuth),
+        np.sin(elevation),
+    ], axis=-1).reshape(-1, 3).astype(np.float32)
 
 
 # Sem /cmd_vel por mais que isto (s de simulação), o robô para. O Nav2 e a
@@ -139,11 +213,21 @@ class AgrobotDriver:
         # O Ros2Lidar do webots_ros2_driver carimba o /scan com tempo 0
         # (o relógio do nó dele não avança), e o Nav2 descarta tudo.
         # Por isso o scan é publicado aqui, com o mesmo relógio da odometria.
-        self.lidar = self.robot.getDevice('front_lidar')
-        self.lidar_period = 3 * self.time_step
+        self.lidar = self.robot.getDevice(SAFETY_LIDAR_DEVICE)
+        self.lidar_period = self.period_property(
+            properties, 'safetyLidarPeriod', 160, minimum=self.time_step)
         self.lidar.enable(self.lidar_period)
+        self.lidar_angles = None
         # Ler a range image antes da primeira amostra derruba o controlador.
         self.next_scan_time = 2 * self.lidar_period / 1000.0
+        self.init_lidar3d(properties)
+        # AGROBOT_LIDAR_CHECK=1: confere uma vez a geometria dos raios (ângulos
+        # e canais) com a nuvem de pontos do próprio Webots e sai no log.
+        self.lidar_check = os.environ.get('AGROBOT_LIDAR_CHECK') == '1'
+        if self.lidar_check:
+            self.lidar.enablePointCloud()
+            if self.lidar3d_period_ms > 0:
+                self.lidar3d.enablePointCloud()
 
         # Pose verdadeira pelo Supervisor (supervisor TRUE no agrobot.proto),
         # só para medir erros: nada da localização a usa.
@@ -185,6 +269,13 @@ class AgrobotDriver:
             Imu, '/imu/data', qos_profile_sensor_data)
         self.scan_publisher = self.node.create_publisher(
             LaserScan, '/scan', qos_profile_sensor_data)
+        if self.lidar3d_period_ms > 0:
+            self.lidar3d_publisher = self.node.create_publisher(
+                PointCloud2, LIDAR3D_TOPIC, qos_profile_sensor_data)
+            self.node.get_logger().info(
+                f'LiDAR 3D: {self.lidar3d_layers} canais x '
+                f'{self.lidar3d_columns} colunas a cada '
+                f'{self.lidar3d_period_ms} ms em {LIDAR3D_TOPIC}.')
         self.joint_state_publisher = self.node.create_publisher(
             JointState, '/joint_states', 10)
         if self.robot_node is not None:
@@ -230,12 +321,45 @@ class AgrobotDriver:
                 'aquisição fica desligada.')
         if self.noise is not None:
             self.node.get_logger().info(
-                'Sensores com ruído (IMU, encoders, LiDAR e câmera RGB-D), '
+                'Sensores com ruído (IMU, encoders, LiDARs e câmera RGB-D), '
                 f'semente {self.noise.seed}; repita com '
                 f'noise_seed:={self.noise.seed}.')
         else:
             self.node.get_logger().info('Sensores sem ruído (ideais).')
         self.node.get_logger().info('Controlador Webots do agrobot iniciado.')
+
+    def period_property(self, properties, name, default, minimum=0):
+        """Período em ms de uma propriedade do plugin (múltiplo do passo)."""
+        period = int(properties.get(name, default))
+        if period <= 0 and minimum <= 0:
+            return 0
+        period = max(period, minimum)
+        if period % self.time_step != 0:
+            raise RuntimeError(
+                f'{name} ({period} ms) tem que ser múltiplo do passo do '
+                f'Webots ({self.time_step} ms).')
+        return period
+
+    def init_lidar3d(self, properties):
+        """Liga o LiDAR 3D do topo (lidar3dPeriod 0, de lidar3d:=false, desliga)."""
+        self.lidar3d = self.robot.getDevice(LIDAR3D_DEVICE)
+        self.lidar3d_period_ms = 0
+        if self.lidar3d is None:
+            return
+        self.lidar3d_period_ms = self.period_property(
+            properties, 'lidar3dPeriod', 96)
+        if self.lidar3d_period_ms == 0:
+            return
+        self.lidar3d.enable(self.lidar3d_period_ms)
+        self.lidar3d_enable_ms = round(self.robot.getTime() * 1000.0)
+        self.lidar3d_columns = self.lidar3d.getHorizontalResolution()
+        self.lidar3d_layers = self.lidar3d.getNumberOfLayers()
+        self.lidar3d_directions = lidar_directions(
+            self.lidar3d.getFov(), self.lidar3d_columns,
+            self.lidar3d.getVerticalFov(), self.lidar3d_layers)
+        self.lidar3d_cost = 0.0
+        self.lidar3d_count = 0
+        self.lidar3d_next_log = LIDAR3D_LOG_PERIOD
 
     def init_vslam_camera(self, properties):
         # O Ros2Camera e o Ros2RangeFinder do webots_ros2_driver carimbam com
@@ -409,6 +533,11 @@ class AgrobotDriver:
         if now >= self.next_scan_time:
             self.next_scan_time = now + self.lidar_period / 1000.0
             self.publish_scan(stamp)
+        if self.lidar3d_period_ms > 0:
+            elapsed = round(now * 1000.0) - self.lidar3d_enable_ms
+            if (elapsed >= 2 * self.lidar3d_period_ms
+                    and elapsed % self.lidar3d_period_ms == 0):
+                self.publish_lidar3d(now, stamp)
         if self.vslam_period_ms > 0:
             elapsed = round(now * 1000.0) - self.vslam_enable_ms
             # Como no LiDAR, só depois de 2 períodos: antes da primeira
@@ -565,21 +694,101 @@ class AgrobotDriver:
         ranges = self.lidar.getRangeImage()
         if not ranges:
             return
-        fov = self.lidar.getFov()
+        count = len(ranges)
+        if self.lidar_angles is None:
+            # Na ordem do Webots (da esquerda para a direita).
+            self.lidar_angles = lidar_angles(self.lidar.getFov(), count)
+        if self.lidar_check:
+            self.check_lidar_geometry(
+                'front_lidar', self.lidar,
+                np.stack([np.cos(self.lidar_angles),
+                          np.sin(self.lidar_angles),
+                          np.zeros(count)], axis=-1),
+                np.asarray(ranges))
+        if self.noise is not None:
+            ranges = self.noise.safety_lidar(ranges)
+        ranges = mask_self_hits(ranges, self.lidar_angles, SAFETY_LIDAR_X,
+                                SELF_BOX_X, SELF_BOX_Y)
         message = LaserScan()
         message.header.stamp = stamp
-        message.header.frame_id = 'front_lidar_link'
-        # O Webots entrega da esquerda (+fov/2) para a direita.
-        message.angle_min = -fov / 2.0
-        message.angle_max = fov / 2.0
-        message.angle_increment = fov / (len(ranges) - 1)
+        message.header.frame_id = SAFETY_LIDAR_FRAME
+        # O LaserScan vai da direita para a esquerda: ordem invertida.
+        message.angle_min = float(self.lidar_angles[-1])
+        message.angle_max = float(self.lidar_angles[0])
+        message.angle_increment = float(
+            self.lidar_angles[0] - self.lidar_angles[1])
         message.scan_time = self.lidar_period / 1000.0
         message.range_min = self.lidar.getMinRange()
         message.range_max = self.lidar.getMaxRange()
-        if self.noise is not None:
-            ranges = self.noise.lidar(ranges)
-        message.ranges = [float(r) for r in reversed(ranges)]
+        message.ranges = ranges[::-1].tolist()
         self.scan_publisher.publish(message)
+
+    def publish_lidar3d(self, now, stamp):
+        start = time.perf_counter()
+        # Ponteiro para os floats do Webots: lido de uma vez com o numpy (a
+        # lista do getRangeImage custaria vários ms).
+        pointer = self.lidar3d.range_image
+        if not pointer:
+            return
+        count = self.lidar3d_layers * self.lidar3d_columns
+        ranges = np.ctypeslib.as_array(pointer, shape=(count,)).copy()
+        if self.lidar_check:
+            self.check_lidar_geometry(
+                'lidar3d', self.lidar3d, self.lidar3d_directions, ranges)
+        if self.noise is not None:
+            ranges = self.noise.lidar3d(ranges)
+        valid = np.isfinite(ranges)
+        points = (self.lidar3d_directions[valid]
+                  * ranges[valid, None]).astype(np.float32)
+        message = PointCloud2()
+        message.header.stamp = stamp
+        message.header.frame_id = LIDAR3D_FRAME
+        message.height = 1
+        message.width = len(points)
+        message.fields = [
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32,
+                       count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32,
+                       count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32,
+                       count=1),
+        ]
+        message.is_bigendian = False
+        message.point_step = 12
+        message.row_step = 12 * len(points)
+        message.is_dense = True
+        message.data = array.array('B', points.tobytes())
+        self.lidar3d_publisher.publish(message)
+        self.lidar3d_cost += time.perf_counter() - start
+        self.lidar3d_count += 1
+        if now >= self.lidar3d_next_log:
+            self.node.get_logger().info(
+                f'LiDAR 3D: {len(points)} pontos por volta, '
+                f'{1000.0 * self.lidar3d_cost / self.lidar3d_count:.1f} ms '
+                'por volta no driver.')
+            self.lidar3d_cost = 0.0
+            self.lidar3d_count = 0
+            self.lidar3d_next_log = now + LIDAR3D_LOG_PERIOD
+
+    def check_lidar_geometry(self, name, lidar, directions, ranges):
+        """Compara os raios calculados com a nuvem do Webots (uma vez)."""
+        cloud = lidar.getPointCloud()
+        if not cloud:
+            return
+        webots = np.array([[p.x, p.y, p.z] for p in cloud])
+        ours = directions * np.asarray(ranges)[:, None]
+        valid = np.all(np.isfinite(webots), axis=1) & np.all(
+            np.isfinite(ours), axis=1)
+        if not valid.any():
+            return
+        error = np.abs(webots[valid] - ours[valid]).max()
+        self.node.get_logger().info(
+            f'Checagem do {name}: {int(valid.sum())} pontos, diferença '
+            f'máxima de {error:.4f} m entre os raios calculados e a nuvem do '
+            f'Webots. Primeiros: Webots {webots[valid][:3].round(3).tolist()}'
+            f', calculados {ours[valid][:3].round(3).tolist()}.')
+        if name == 'lidar3d':
+            self.lidar_check = False
 
     def read_imu(self):
         """Lê a IMU uma vez por passo e aplica o ruído (self.imu_reading)."""

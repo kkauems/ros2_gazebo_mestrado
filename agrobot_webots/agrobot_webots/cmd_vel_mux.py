@@ -15,7 +15,12 @@ robô se o /cmd_vel parar de chegar.
 Tópicos:
     /cmd_vel_teleop      (geometry_msgs/Twist)  entrada, prioridade alta
     /cmd_vel_nav_out     (geometry_msgs/Twist)  entrada, saída do Nav2
-    /cmd_vel             (geometry_msgs/Twist)  saída, para o driver
+    /cmd_vel             (geometry_msgs/Twist)  saída, para o driver; com a
+                                                camada de segurança
+                                                (safety:=true), parâmetro
+                                                output_topic /cmd_vel_raw,
+                                                que passa pelo
+                                                collision_monitor
     /cmd_vel_mux/source  (std_msgs/String)      quem comanda: teleop, nav
                                                 ou none (só quando muda)
 """
@@ -73,12 +78,14 @@ class CmdVelMux(Node):
         self.declare_parameter('teleop_timeout', 0.5)
         self.declare_parameter('nav_timeout', 0.5)
         self.declare_parameter('rate', 20.0)
+        self.declare_parameter('output_topic', '/cmd_vel')
         self.state = MuxState(
             self.get_parameter('teleop_timeout').value,
             self.get_parameter('nav_timeout').value)
         self.source = NONE
 
-        self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.publisher = self.create_publisher(
+            Twist, self.get_parameter('output_topic').value, 10)
         latched = QoSProfile(
             depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.source_publisher = self.create_publisher(
