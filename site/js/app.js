@@ -7,7 +7,8 @@
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const NO = Object.fromEntries(window.NOS.map(n => [n.id, n]));
   const CAMADAS = [
-    ['rotulos', 'Rótulos'], ['lidar', 'Raios do LiDAR'], ['rgbd', 'Visão da RGB-D'],
+    ['rotulos', 'Rótulos'], ['lidar', 'Raios do LiDAR de segurança'], ['lidar3d', 'Pontos do LiDAR 3D'],
+    ['seguranca', 'Zonas de segurança'], ['rgbd', 'Visão da RGB-D'],
     ['camdados', 'Visão da câmera de aquisição'], ['tf', 'Frames (TF)'],
     ['trilhas', 'Trilhas (real × estimada)'], ['fantasma', 'Pose estimada'],
     ['waypoints', 'Waypoints'], ['caminho', 'Caminho do Nav2'], ['costmap', 'Costmap local'],
@@ -129,7 +130,8 @@
     Cena.destacar([parte]);
     const cam = new Set(Cena.camadas());
     cam.add('rotulos');
-    if (['lidar', 'rgbd', 'camdados'].includes(parte)) cam.add(parte);
+    if (['lidar', 'lidar3d', 'rgbd', 'camdados'].includes(parte)) cam.add(parte);
+    if (parte === 'lidar') cam.add('seguranca');
     Cena.definirCamadas([...cam]);
     sincronizarCamadas();
     marcarNoGrafo(null, usam.map(n => n.id));
@@ -138,15 +140,16 @@
   const DESCRICAO_PARTE = {
     chassi: 'Quadro de alumínio do CAD (malha <code>chassis.stl</code>), 37 kg no modelo. Colisão em caixa de 1,2 × 0,8 × 0,35 m. O <code>base_link</code> fica no centro, 0,24 m acima do chão.',
     rodas: 'Quatro rodas de 0,22 m de raio com 16 garras, bitola de 0,96 m, tração skid-steer. Os encoders dão a odometria das rodas (<code>/wheel/odom</code>), que escorrega nas curvas: por isso o yaw vem da IMU.',
-    lidar: 'LiDAR de um plano, 0,65 m à frente e ~13 cm do chão: 172°, 300 raios, 0,1 a 8 m. Baixo para ver caixas e pedras de 0,2 m; mais baixo que isso o plano batia no chão quando o robô inclinava.',
+    lidar: 'LiDAR de segurança (modelo 3irobotix Delta-2A): um plano a 15 cm do chão, 0,65 m à frente. Gira 360° (1° por raio, 0,13 a 8 m, 6,25 Hz), mas os raios que batem nas rodas e no chassi são descartados, então na prática vê ~186° à frente. Baixo para ver pernas de pessoas, pedras e caixas: alimenta a parada de segurança (collision_monitor) e os costmaps do Nav2.',
+    lidar3d: 'LiDAR 3D (modelo RoboSense RS-Helios-16P) no topo do mastro, ~1,04 m do chão: 16 canais de -15° a +15°, 360° com 0,2°, até 150 m, ~10 Hz. Vê troncos, copas e o relevo a dezenas de metros. Serve só à localização: o ICP do RTAB-Map confere cada fechamento de laço com a nuvem dele. Acima de tudo no robô, nenhum raio bate nele mesmo.',
     rgbd: 'Câmera RGB-D como a Intel RealSense D455: 0,45 m à frente, ~0,61 m do chão, 15° para baixo, 424 × 240, 87°, profundidade de 0,5 a 6 m, ~10 Hz. É a entrada do VSLAM.',
     camdados: 'Câmera RGB de aquisição: no centro do robô, ~0,90 m do chão, olhando para a esquerda. 1280 × 960, 90°, uma foto a cada ~1 s. Cada foto cobre ~1,8 m de fileira por 1,35 m de altura. Não entra na localização.',
-    imu: 'IMU (InertialUnit, Gyro e Accelerometer do Webots) 0,35 m acima do base_link. Dá o yaw e a velocidade de giro do EKF. Na simulação não tem ruído nem deriva, o que favorece o EKF.',
+    imu: 'IMU (InertialUnit, Gyro e Accelerometer do Webots) 0,35 m acima do base_link. Dá o yaw e a velocidade de giro do EKF. Com o ruído ligado (padrão), o giroscópio tem ruído, bias e erro de escala de uma IMU MEMS de baixo custo: o yaw deriva ~2° em 5 min parado, sem magnetômetro para corrigir.',
   };
 
   function botaoNo(n) {
     const G = window.GRUPOS[n.grupo];
-    return `<button class="item-no" data-no="${n.id}" style="--c:${G.cor}"><span class="bolinha"></span><span><b>${n.nome}</b><small>${n.faz.replace(/<[^>]+>/g, '').split('. ')[0]}.</small></span></button>`;
+    return `<button class="item-no" data-no="${n.id}" style="--c:${G.cor}"><span class="bolinha"></span><span><b>${n.nome}</b><small>${n.faz.replace(/<[^>]+>/g, '').split('. ')[0].replace(/\.$/, '')}.</small></span></button>`;
   }
 
   function ligarBotoesNo(raiz) {
@@ -168,8 +171,8 @@
   // Caixas de 166 x 44 (o h do nó muda a altura). As ligações seguem a rota
   // dada em dados.js. Os rótulos só aparecem nas ligações do nó escolhido, e
   // cada um vai para onde não cubra caixas, linhas acesas nem outro rótulo.
-  const W = 166, H = 44, TOPO = 18, LARG = 1210, ALT = 680;
-  const COLUNAS = [[20, 'Webots'], [220, 'Ponte'], [420, 'Pré-processamento'], [620, 'Localização e dados'], [820, 'Nav2 e missão'], [1020, 'Comando']];
+  const W = 166, H = 44, TOPO = 18, LARG = 1410, ALT = 740;
+  const COLUNAS = [[20, 'Webots'], [220, 'Ponte e segurança'], [420, 'Pré-processamento'], [620, 'Localização e dados'], [820, 'Nav2 e missão'], [1020, 'Comando'], [1220, 'Operador']];
   let LIG = [], LIG_PONTOS = [];
   const altura = (n) => n.h || H;
 
@@ -294,7 +297,7 @@
       html += `<g class="no${n.grupo === 'legado' ? ' legado' : ''}" data-no="${n.id}" transform="translate(${n.x},${n.y})" tabindex="0" role="button" aria-label="${esc(n.nome)}">
         <rect width="${W}" height="${h}" rx="8" style="--c:${G.cor}"/>
         <rect width="5" height="${h}" rx="2" fill="${G.cor}"/>
-        <text x="${W / 2 + 2}" y="${h / 2 - 3}" text-anchor="middle" class="nome">${esc(n.nome)}</text>
+        <text x="${W / 2 + 2}" y="${h / 2 - 3}" text-anchor="middle" class="nome"${n.nome.length > 20 ? ' textLength="150" lengthAdjust="spacingAndGlyphs"' : ''}>${esc(n.nome)}</text>
         <text x="${W / 2 + 2}" y="${h / 2 + 12}" text-anchor="middle" class="sub">${esc(sub.length > 27 ? sub.slice(0, 26) + '…' : sub)}</text>
       </g>`;
     }
@@ -363,6 +366,11 @@
         <li>"No alvo" usa a pose verdadeira: o Nav2 pode achar que chegou estando na entrelinha errada.</li>
       </ul>
       <p class="dica">No 3D (plantação), troque o método para ver a rodada real de cada um: a trilha verde é a pose verdadeira, a colorida é a estimada.</p>`;
+    for (const bloco of window.RESULTADOS_NOVOS || []) {
+      html += `<h4>${esc(bloco.titulo)}</h4><p class="dica">${bloco.texto}</p>
+        <table class="res"><thead><tr>${bloco.cab.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
+        ${bloco.linhas.map(l => `<tr>${l.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    }
     $('#aba-resultados').innerHTML = html;
   }
 
@@ -406,7 +414,8 @@
     if (document.activeElement !== $('#tempo')) $('#tempo').value = Math.min(1000, info.t / info.fim * 1000);
     $('#t-texto').textContent = `${fmt(Math.min(info.t, info.fim))} / ${fmt(info.fim)}`;
     $('#wp-texto').textContent = `waypoint ${Math.min(info.wp, info.nWp)}/${info.nWp}: ${info.nomeWp}`;
-    $('#erro-texto').textContent = info.erro === null ? '' : `erro agora: ${info.erro.toFixed(2).replace('.', ',')} m`;
+    $('#erro-texto').textContent = (info.erro === null ? '' : `erro agora: ${info.erro.toFixed(2).replace('.', ',')} m`)
+      + (info.seguranca ? ` · zona de ${info.seguranca}` : '');
   }
 
   // ---------------------------------------------------------------- início
