@@ -215,9 +215,15 @@ def run(name, label, output_dir):
             self.started = False
             self.create_subscription(Odometry, '/ground_truth/odom',
                                      self.on_robot, 10)
-            self.create_subscription(CollisionMonitorState,
-                                     '/collision_monitor_state',
-                                     self.on_state, 10)
+            # Os dois nós da camada: parada e limite de velocidade. A parada
+            # vale mais.
+            self.states = {'stop': (0, ''), 'limit': (0, '')}
+            self.create_subscription(
+                CollisionMonitorState, '/collision_monitor_state',
+                lambda m: self.on_state('stop', m), 10)
+            self.create_subscription(
+                CollisionMonitorState, '/collision_monitor_limit_state',
+                lambda m: self.on_state('limit', m), 10)
             self.teleop = self.create_publisher(Twist, '/cmd_vel_teleop', 10)
             self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
 
@@ -229,8 +235,10 @@ def run(name, label, output_dir):
             self.robot = (p.position.x, p.position.y, yaw,
                           message.twist.twist.linear.x)
 
-        def on_state(self, message):
-            self.action = (message.action_type, message.polygon_name)
+        def on_state(self, monitor, message):
+            self.states[monitor] = (message.action_type, message.polygon_name)
+            stop = self.states['stop']
+            self.action = stop if stop[0] else self.states['limit']
 
         def now(self):
             return self.get_clock().now().nanoseconds * 1e-9

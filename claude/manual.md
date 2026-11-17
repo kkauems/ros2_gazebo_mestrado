@@ -56,7 +56,7 @@ Fechar o Webots encerra o launch inteiro.
 | `camera` | `true` | Câmera RGB-D do VSLAM. `false` alivia a CPU nas rodadas sem VSLAM |
 | `vslam` | `false` | RTAB-Map publica `map → odom` e o mapa. Exige `ekf:=true`, `camera:=true` e `lidar3d:=true` (o launch para com erro se faltar) |
 | `lidar3d` | `true` | LiDAR 3D do topo (`/lidar3d/points`), usado pelo RTAB-Map. `false` alivia a CPU nas rodadas sem VSLAM |
-| `safety` | `true` | Camada de segurança: `collision_monitor` com o LiDAR de segurança entre todos os comandos e as rodas (seção 5). `false` só para comparar: o robô anda sem parada de segurança |
+| `safety` | `true` | Camada de segurança: dois `collision_monitor` (limite e parada) com o LiDAR de segurança entre todos os comandos e as rodas (seção 5). `false` só para comparar: o robô anda sem parada de segurança |
 | `vslam_localization` | `false` | Com `vslam:=true`: localiza num mapa salvo em vez de mapear |
 | `vslam_db` | `dados/vslam/<mundo>.db` | Banco do RTAB-Map (o mapa). Um nome sem pasta (`vslam_db:=olival_mapa1`) vai para `dados/vslam/<nome>.db`. O mapeamento começa num banco vazio; um mapa que já existia com o mesmo nome vira `<nome>_<data>.db` |
 | `rtabmap_viz` | `false` | Abre a janela do `rtabmap_viz` |
@@ -259,9 +259,11 @@ escala. Os obstáculos ficam a 2,5 m ou mais dos waypoints do `caso4` e do `caso
 
 ```
 rodas (/wheel/odom) + IMU (/imu/data) ─► EKF ─► /odom, TF odom → base_link
-câmera RGB-D + LiDAR 3D (/lidar3d/points) + odom do EKF ─► RTAB-Map ─► TF map → odom, /rtabmap/map
+LiDAR 3D (/lidar3d/points) + LiDAR de segurança (/scan) ─► lidar_merge ─► /lidar3d/merged
+câmera RGB-D + /lidar3d/merged + odom do EKF ─► RTAB-Map ─► TF map → odom, /rtabmap/map
 Nav2 (costmaps com o /scan): planeja em map, controla em odom ─► /cmd_vel_raw
-/cmd_vel_raw + LiDAR de segurança (/scan) ─► collision_monitor ─► /cmd_vel ─► driver
+/cmd_vel_raw ─► collision_monitor_limit ─► collision_monitor ─► /cmd_vel ─► driver
+                (lentidão, aproximação)     (parada)      (os dois com o /scan)
 ```
 
 ### EKF (`config/ekf.yaml`, `ekf:=true`)
@@ -316,7 +318,7 @@ a nuvem do LiDAR 3D. Escolhas e motivos:
 - **`Reg/Strategy` 2 (visual + ICP com a nuvem do LiDAR 3D) e `Optimizer/Robust`
   (Vertigo):** a textura do solo se repete a cada 2 m e gerava fechamentos falsos; o ICP e a
   otimização robusta os derrubam.
-- **LiDAR 3D no lugar do `/scan`:** o scan a 13 cm só via colmos e troncos num corte fino, e
+- **LiDAR 3D no ICP, no lugar do `/scan`:** o scan a 13 cm só via colmos e troncos num corte fino, e
   as entrelinhas davam o mesmo scan. A nuvem 3D tem o chão, os troncos, as copas e o relevo,
   que travam x, y e yaw no ICP ponto-a-plano (`Icp/PointToPlane`, voxel de 10 cm, até 0,5 m
   entre correspondências, correção de até 0,3 m sobre o chute do EKF). Com 16 canais a
@@ -325,15 +327,27 @@ a nuvem do LiDAR 3D. Escolhas e motivos:
   correção (com 0,5 m o ICP escorregava ao longo da fileira e o mapa piorava). Cada nó guarda a nuvem reduzida
   a 10 cm (`Mem/LaserScanVoxelSize`). O LiDAR 3D **não** vira odometria nem localização
   principal: a pose continua sendo o EKF corrigido pelos fechamentos.
-- **Grade pela nuvem 3D:** chão e obstáculo pela altura no `base_link`: chão até ~12 cm
-  acima do chão, obstáculo de ~12 a ~34 cm (o que bate no robô; copas e folhas altas do milho
-  fechariam as entrelinhas na grade, e o robô passa por baixo delas). Os raios marcam o espaço
-  livre (`Grid/RayTracing`), até 8 m de cada nó; sem isso, os ~4 m em volta do robô ficariam
-  desconhecidos (o canal mais baixo só toca o chão a ~3,9 m). A separação pela normal (padrão
-  do RTAB-Map) não serve com 16 canais: o chão vem em anéis, um por canal, a normal sai torta
-  e o chão virava anéis de obstáculos. Na encosta do olival o robô inclina junto com o chão,
-  então o corte por altura continua valendo; um relevo que muda de inclinação dentro dos 8 m
-  pode virar obstáculo falso.
+- **Grade só pelo LiDAR de segurança, LiDAR 3D só no ICP:** o RTAB-Map assina uma nuvem só
+  (`/lidar3d/merged`, do nó `lidar_merge`): a do LiDAR 3D com o scan de segurança junto. O
+  `lidar_merge` tira da nuvem 3D os pontos da faixa de altura que a grade usa, e a grade
+  (`Grid/MinGroundHeight`, `MaxGroundHeight`, `MaxObstacleHeight`) só vê o scan: obstáculo
+  onde ele bate, livre ao longo dos raios, e cada raio sem retorno vira chão a 5 m (como o
+  `Grid/Scan2dUnknownSpaceFilled` do scan 2D). Assim a grade mostra o mesmo que os costmaps
+  do Nav2. Com a grade pela nuvem 3D, as fileiras sumiam do mapa em ~1 minuto de mapeamento:
+  o LiDAR 3D, a ~1 m do chão, só vê um colmo numa faixa a 2,6–4 m, e os raios dele até o chão
+  passam por cima das plantas e, na grade 2D, apagavam o que a passada anterior tinha
+  marcado. E o relevo (camalhões) a 5–6 m virava obstáculo falso no meio das entrelinhas, e a
+  checagem recusava waypoints.
+- **Toques do scan no chão:** o LiDAR de segurança é um plano a 15 cm; com o relevo, ele bate
+  no chão (ou num galho num camalhão) a alguns metros. Antes de entrar na grade, o
+  `lidar_merge` confere cada ponto do scan na nuvem 3D: sem nada mais alto que ele (+5 cm) a
+  até 15 cm, é chão e sai; além de 3 m sem nenhum ponto 3D por perto, também sai (um
+  obstáculo de verdade aparece na nuvem). Perto do robô (a nuvem 3D não vê abaixo de ~3 m),
+  o scan vale sozinho. No caso 3, ~20% dos pontos do scan eram chão. Esse filtro vale só
+  para a grade: a camada de segurança e os costmaps usam o `/scan` cru.
+- **Ocupado pesa mais que livre (`GridGlobal/ProbMiss` 0,47):** um colmo de 2 a 4 cm nem
+  sempre é atingido, e com o padrão (0,4) dois ou três raios que passavam ao lado o apagavam.
+  Agora são ~7 raios livres para desfazer um acerto.
 - **Fechamento global desligado (`Rtabmap/LoopThr` e `RGBD/AggressiveLoopThr` em 1,01):** as
   entrelinhas são iguais para a câmera e para o LiDAR (1,8 m de deslocamento dava o mesmo
   scan 2D). Só valem fechamentos por proximidade, perto da pose do EKF (câmera até 1 m e 45°,
@@ -373,23 +387,34 @@ a nuvem do LiDAR 3D. Escolhas e motivos:
 ### Camada de segurança (`collision_monitor`, `safety:=true`)
 
 O LiDAR de segurança (seção 3) tem prioridade sobre o planejamento: pode haver uma pessoa no
-campo. Quem aplica isso é o `collision_monitor` do Nav2 (`config/collision_monitor.yaml`), o
-último nó antes das rodas. Tudo o que comanda o robô (Nav2, comportamentos de recuperação,
-joystick, teclado, página web) publica em `/cmd_vel_raw`, e só ele publica no `/cmd_vel` do
-driver. Ele não planeja: só corta ou reduz a velocidade pedida quando há pontos do `/scan`
-dentro de zonas que andam com o robô. O Nav2 continua usando o mesmo `/scan` nos costmaps
+campo. Quem aplica isso são dois `collision_monitor` do Nav2 em série
+(`config/collision_monitor.yaml`), os últimos nós antes das rodas. Tudo o que comanda o robô
+(Nav2, comportamentos de recuperação, joystick, teclado, página web) publica em
+`/cmd_vel_raw`; o `collision_monitor_limit` limita a velocidade (`/cmd_vel_limited`) e o
+`collision_monitor` para (`/cmd_vel` do driver). Eles não planejam: só reduzem ou cortam a
+velocidade pedida quando há pontos do `/scan` dentro de zonas que andam com o robô. O Nav2 continua usando o mesmo `/scan` nos costmaps
 para desviar; a camada de segurança é o que garante a parada quando o desvio não basta (uma
 pessoa que entra na frente de repente, o operador conduzindo mal).
 
-| Zona | Forma (no `base_link`; robô de x ±0,6, y ±0,56) | Ação |
-|---|---|---|
-| Parada (`stop_zone`) | Depende do comando: para a frente, até 0,6 m à frente do robô e 6 cm de cada lado; para trás, o mesmo atrás; girando no lugar, a pegada com 5 cm de folga | Velocidade zero |
-| Lentidão (`slowdown_zone`) | De 0 a 1,4 m à frente do robô, 10 cm de cada lado | 50% da velocidade pedida |
-| Aproximação (`approach_zone`) | Simula a pegada (5 cm de folga) andando com o comando pedido | Reduz para que nada fique a menos de 1,5 s de colisão (cuida das curvas e dos giros) |
+| Zona | Nó | Forma (no `base_link`; robô de x ±0,6, y ±0,56) | Ação |
+|---|---|---|---|
+| Lentidão (`slowdown_zone`) | limite | De 0 a 1,4 m à frente do robô, 10 cm de cada lado | Limita a 0,2 m/s |
+| Aproximação (`approach_zone`) | limite | Simula a pegada (5 cm de folga) andando com o comando | Reduz para que nada fique a menos de 1,5 s de colisão (curvas e giros) |
+| Parada (`stop_zone`) | parada | Pela velocidade que chega do 1º nó: até 0,2 m/s, 0,5 m à frente do robô; mais rápido, 0,7 m; 6 cm de cada lado; para trás, o mesmo atrás; girando no lugar, a pegada com 5 cm de folga | Velocidade zero |
 
-- **Por que 0,6 m à frente:** o LiDAR a 15 cm vê a canela; o corpo e os pés da pessoa vão
-  ~0,25 m além dela, e entre o scan e a roda passam ~0,25 s. Com 0,35 m, o operador a
-  0,4 m/s parava com o para-choque a 0,28 m das pernas, encostando no corpo.
+- **Parar x desviar:** a camada não sabe se é uma pessoa, uma planta ou um galho. A zona de
+  parada depende da velocidade, como os campos de proteção dos veículos autônomos
+  industriais (ISO 3691-4): perto de qualquer obstáculo o robô anda a 0,2 m/s, e nessa
+  velocidade ele para em ~6 cm, então a zona de parada pode ser curta e não pega as plantas
+  por onde o Nav2 passa raspando nas manobras. Quem desvia é o Nav2 (costmaps); a parada fica
+  para o que chega perto demais, como uma pessoa que entra na frente. Com uma zona fixa de
+  0,6 m, o robô parava de frente para as plantas na cabeceira e ficava travado.
+- **Por que dois nós:** o `collision_monitor` escolhe a zona de parada pela velocidade que
+  recebe, não pela que sai. Num nó só, o Nav2 pedindo 0,4 m/s perto das plantas usaria a zona
+  longa mesmo com a lentidão agindo.
+- **Tamanho das zonas:** o LiDAR a 15 cm vê a canela; o corpo e os pés da pessoa vão ~0,25 m
+  além dela, e entre o scan e a roda passam ~0,25 s. A 0,2 m/s o robô anda ~6 cm até parar;
+  a 0,5 m/s, ~15 cm.
 - **Por que zonas que dependem do movimento:** parado na frente de um obstáculo, o robô
   ainda consegue girar ou recuar para sair (a zona olha para onde ele quer ir), mas não
   avançar sobre ele.
@@ -402,12 +427,15 @@ pessoa que entra na frente de repente, o operador conduzindo mal).
 - **`safety:=false`** volta ao Nav2 e ao operador mandando direto nas rodas. Serve só para
   comparar (controle dos testes).
 - **Na página do operador** aparece "PARADA DE SEGURANÇA" (ou "segurança: devagar") quando
-  uma zona age; o estado sai em `/collision_monitor_state` e as zonas em
+  uma zona age; o estado sai em `/collision_monitor_state` (parada) e
+  `/collision_monitor_limit_state` (lentidão e aproximação), e as zonas em
   `/collision_monitor/stop_zone` e `/collision_monitor/slowdown_zone` (RViz).
 - **Não é um sistema de segurança certificado:** o Delta-2A não é um sensor de segurança e
   nada aqui segue a ISO 13849 ou a IEC 61496. Na dissertação, "camada de segurança da
   navegação". Ele também só vê o que corta o plano a 15 cm: uma pessoa deitada, ou algo
-  pendurado acima disso, passa.
+  pendurado acima disso, passa. E com o relevo o plano pode bater no chão ou num galho num
+  camalhão: perto do robô (até 0,7 m) isso exige uma rampa forte; mais longe, só limita a
+  velocidade.
 
 **Teste com uma pessoa no caminho (`scripts/teste_pessoa.py`).** Põe um `Pedestrian` do
 Webots (com o controlador `controllers/pessoa_teste`, que o anima e grava a posição) num
@@ -429,20 +457,20 @@ quando o robô chega a ~2 m, para aparecer a ~0,6 m do para-choque) e `plantacao
 Os resultados vão para `dados/seguranca/` (CSV a 10 Hz e uma linha por rodada em
 `resumo.md`); `--rotulo sem-seguranca` com `safety:=false` no launch dá o controle.
 
-Resultados na nuvem (2026-11-16, EKF + VSLAM, folga entre o círculo de 0,25 m da pessoa e a
+Resultados na nuvem (2026-11-17, EKF + VSLAM, folga entre o círculo de 0,25 m da pessoa e a
 pegada; `dados/seguranca/resumo.md`):
 
 | Cenário | Folga mínima | O que aconteceu |
 |---|---|---|
 | `plantacao_operador`, sem a camada (`safety:=false`) | contato | o robô passa por cima da pessoa |
-| `plantacao_operador` | 0,24 m | lentidão a ~1,4 m, parada; o operador continua mandando e o robô não anda |
-| `plantacao_cruzando` | 0,61 m | lentidão e parada enquanto ela atravessa; o Nav2 chega ao objetivo depois |
-| `plantacao_parada` | 0,98 m | o Nav2 desvia pela entrelinha vizinha; a camada não precisou parar |
-| `olival_cruzando` | 0,42 m | lentidão; o Nav2 chega ao objetivo |
+| `plantacao_operador` | 0,13 m | limite a 0,2 m/s a ~1,4 m, parada; o operador continua mandando e o robô não anda (com a zona devagar de 0,45 m, 0,08 m) |
+| `plantacao_cruzando` | 0,70 m | limite enquanto ela atravessa; o Nav2 chega ao objetivo |
+| `olival_cruzando` | 0,49 m | limite; o Nav2 chega ao objetivo |
 
-No `plantacao_parada`, o Nav2 desistiu de voltar à entrelinha y = 0 pela cabeceira leste (o
-planejador não acha caminho saindo de perto das plantas da ponta da fileira): é limite do
-Nav2 na cabeceira, não da camada de segurança.
+Missões com a camada (sem pessoa): no caso 3 (serpentina na plantação), uma rodada com 11/11
+waypoints e nenhuma parada; outra com 10/11 e 14 paradas, todas com o robô torto dentro da
+entrelinha, de frente para as plantas, quando a pose estimada estava 0,5 a 0,8 m errada (o
+Nav2 achava que estava no meio da entrelinha). No olival (caso 4), 15/15 e nenhuma parada.
 
 ### Teleoperação e mapeamento manual (`teleop:=joy|keyboard`)
 
@@ -451,7 +479,7 @@ O primeiro mapa do campo real vai ser feito com um operador conduzindo o robô (
 
 ```
 joystick / teclado ─► /cmd_vel_teleop ─┐
-Nav2 (velocity_smoother) ─► /cmd_vel_nav_out ─┴► cmd_vel_mux ─► /cmd_vel_raw ─► collision_monitor ─► /cmd_vel ─► driver
+Nav2 (velocity_smoother) ─► /cmd_vel_nav_out ─┴► cmd_vel_mux ─► /cmd_vel_raw ─► collision_monitor_limit ─► collision_monitor ─► /cmd_vel ─► driver
 ```
 
 - **`cmd_vel_mux`:** o operador tem prioridade. Enquanto chegam comandos dele, o Nav2 é
@@ -699,7 +727,7 @@ dele direto. Dá para usar junto com o RViz (`rviz:=true`) e com `waypoints:=<ca
 página mostra a missão desse arquivo).
 
 ```
-navegador ─WebSocket 9090─► rosbridge ─► /cmd_vel_teleop ─► cmd_vel_mux ─► collision_monitor ─► driver
+navegador ─WebSocket 9090─► rosbridge ─► /cmd_vel_teleop ─► cmd_vel_mux ─► collision_monitors ─► driver
           │                           ─► /waypoint_mission/command ─► waypoint_mission ─► Nav2
           │                           ◄─ /operator/* (operator_bridge) e /waypoint_mission/status
           └─HTTP 8080─► operator_web: a página (agrobot_webots/web/) e dados/ só para leitura

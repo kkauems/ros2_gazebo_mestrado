@@ -50,6 +50,7 @@ setup(
             'teleop_keyboard = agrobot_webots.teleop_keyboard:main',
             'operator_bridge = agrobot_webots.operator_bridge:main',
             'operator_web = agrobot_webots.operator_web:main',
+            'lidar_merge = agrobot_webots.lidar_merge:main',
         ],
     },
 )

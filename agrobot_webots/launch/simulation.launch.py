@@ -45,6 +45,10 @@ LIDAR3D_OFF = '<lidar3dPeriod>0</lidar3dPeriod>'
 # cmd_vel_mux) publica em /cmd_vel_raw, e só o collision_monitor publica no
 # /cmd_vel do driver.
 CMD_VEL_RAW = 'cmd_vel_raw'
+# Camada de segurança: limite de velocidade e depois a parada.
+SAFETY_NODES = ('collision_monitor_limit', 'collision_monitor')
+# Nuvem do LiDAR 3D com o scan de segurança junto, para o RTAB-Map.
+LIDAR_MERGED = '/lidar3d/merged'
 
 
 def driver_urdf(robot_description, ekf, camera, data_camera=False,
@@ -476,12 +480,22 @@ def generate_launch_description():
             output='screen',
             parameters=[config, rtabmap_parameters,
                         {'use_sim_time': True}],
-            remappings=[('scan_cloud', '/lidar3d/points')],
+            remappings=[('scan_cloud', LIDAR_MERGED)],
             # O rtabmap grava o mapa no banco ao fechar, e num mapa grande
             # isso passa dos 5 s que o launch espera antes de matá-lo.
             sigterm_timeout='120',
         )
-        nodes = actions + [rgbd_sync_node(config), rtabmap]
+        # O scan de segurança junto da nuvem 3D (lidar_merge.py): sem ele, os
+        # obstáculos baixos perto do robô somem da grade.
+        merge = Node(
+            package='agrobot_webots',
+            executable='lidar_merge',
+            name='lidar_merge',
+            output='screen',
+            parameters=[{'use_sim_time': True,
+                         'output_topic': LIDAR_MERGED}],
+        )
+        nodes = actions + [rgbd_sync_node(config), merge, rtabmap]
         if mapping:
             def map_saved(event, context):
                 if not os.path.isfile(database):
@@ -503,7 +517,7 @@ def generate_launch_description():
                 namespace='rtabmap',
                 output='screen',
                 parameters=[config, {'use_sim_time': True}],
-                remappings=[('scan_cloud', '/lidar3d/points')],
+                remappings=[('scan_cloud', LIDAR_MERGED)],
             ))
         return nodes
 
@@ -586,18 +600,21 @@ def generate_launch_description():
             return [LogInfo(msg=(
                 'safety:=false: SEM a camada de segurança; o Nav2 e o '
                 'operador mandam direto nas rodas.'))]
-        return [
+        config = os.path.join(webots_share, 'config', 'collision_monitor.yaml')
+        # Dois em série (config/collision_monitor.yaml): o 1º limita a
+        # velocidade perto de obstáculos e o 2º para, com a zona escolhida
+        # pela velocidade já limitada.
+        monitors = [
             Node(
                 package='nav2_collision_monitor',
                 executable='collision_monitor',
-                name='collision_monitor',
+                name=name,
                 output='screen',
-                parameters=[
-                    os.path.join(
-                        webots_share, 'config', 'collision_monitor.yaml'),
-                    {'use_sim_time': True},
-                ],
-            ),
+                parameters=[config, {'use_sim_time': True}],
+            )
+            for name in SAFETY_NODES
+        ]
+        return monitors + [
             Node(
                 package='nav2_lifecycle_manager',
                 executable='lifecycle_manager',
@@ -606,7 +623,7 @@ def generate_launch_description():
                 parameters=[{
                     'use_sim_time': True,
                     'autostart': True,
-                    'node_names': ['collision_monitor'],
+                    'node_names': list(SAFETY_NODES),
                 }],
             ),
         ]

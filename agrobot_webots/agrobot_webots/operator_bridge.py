@@ -172,11 +172,17 @@ class OperatorBridge(Node):
             String, '/cmd_vel_mux/source', self.source_callback, latched)
         self.create_subscription(
             Bool, '/wheel/slip', self.slip_callback, latched)
-        # Camada de segurança: qual zona do collision_monitor está agindo.
+        # Camada de segurança: qual zona está agindo, no nó da parada
+        # (/collision_monitor_state) e no do limite de velocidade; a parada
+        # vale mais.
+        self.safety_states = {'stop': '', 'limit': ''}
         self.safety = ''
         self.create_subscription(
             CollisionMonitorState, '/collision_monitor_state',
-            self.safety_callback, 10)
+            lambda m: self.safety_callback('stop', m), 10)
+        self.create_subscription(
+            CollisionMonitorState, '/collision_monitor_limit_state',
+            lambda m: self.safety_callback('limit', m), 10)
         self.create_subscription(Path, '/plan', self.plan_callback, 10)
         self.create_subscription(
             LaserScan, '/scan', self.scan_callback, qos_profile_sensor_data)
@@ -230,12 +236,16 @@ class OperatorBridge(Node):
     def slip_callback(self, message):
         self.slip = bool(message.data)
 
-    def safety_callback(self, message):
+    def safety_callback(self, monitor, message):
+        # A zona de lentidão limita a velocidade (ação limit): para a página,
+        # é "lentidão".
         actions = {CollisionMonitorState.STOP: 'parada',
                    CollisionMonitorState.SLOWDOWN: 'lentidao',
                    CollisionMonitorState.APPROACH: 'aproximacao',
-                   CollisionMonitorState.LIMIT: 'limite'}
-        self.safety = actions.get(message.action_type, '')
+                   CollisionMonitorState.LIMIT: 'lentidao'}
+        self.safety_states[monitor] = actions.get(message.action_type, '')
+        self.safety = (self.safety_states['stop']
+                       or self.safety_states['limit'])
 
     def plan_callback(self, message):
         points = [(round(p.pose.position.x, 2), round(p.pose.position.y, 2))

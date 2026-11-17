@@ -5,15 +5,16 @@
 # Entra: cor + profundidade + camera_info (/vslam_camera/..., juntados pelo
 # rgbd_sync) e a odometria do TF odom -> base_link, que é do EKF. Sai: TF
 # map -> odom (o RTAB-Map é o dono com vslam:=true; identidade até o primeiro
-# quadro processado), /rtabmap/map (grade feita pela nuvem do LiDAR 3D, não
+# quadro processado), /rtabmap/map (grade feita pelo LiDAR de segurança, não
 # pela profundidade), /rtabmap/mapPath, /rtabmap/info e
 # /rtabmap/localization_pose.
 #
-# A nuvem é a do LiDAR 3D do topo (/lidar3d/points, modelo RoboSense
-# Helios-16P, 16 canais de -15 a +15 graus, ~10 Hz). Ela entra só no ICP que
-# confere e corrige os fechamentos de laço e na grade: a pose continua vindo
-# do EKF (rodas + IMU) corrigido pelos fechamentos da câmera e do LiDAR; o
-# LiDAR 3D não vira odometria. O LiDAR de segurança (/scan) não entra aqui.
+# A nuvem é /lidar3d/merged (lidar_merge.py): a do LiDAR 3D do topo (modelo
+# RoboSense Helios-16P, 16 canais de -15 a +15 graus, ~10 Hz) com o scan do
+# LiDAR de segurança junto. O LiDAR 3D entra só no ICP que confere e corrige
+# os fechamentos de laço; a grade vem do scan de segurança. A pose continua
+# vindo do EKF (rodas + IMU) corrigido pelos fechamentos da câmera e do
+# LiDAR; o LiDAR 3D não vira odometria.
 #
 # Os nós rodam no namespace rtabmap, por isso os nomes completos abaixo.
 # Os parâmetros do núcleo ("Grupo/Nome") são declarados pelo nó como texto:
@@ -168,35 +169,41 @@
     # descrição): o limiar agressivo só entra se for menor que o LoopThr.
     RGBD/AggressiveLoopThr: "1.01"
 
-    # Grade de ocupação pela nuvem do LiDAR 3D em /rtabmap/map (usada pela
-    # checagem dos waypoints e pela página do operador). Cada nó guarda a
-    # grade local dele no banco; a grade global só é montada enquanto alguém
-    # assina /rtabmap/map (o RViz ou a página).
+    # Grade de ocupação em /rtabmap/map (usada pela checagem dos waypoints e
+    # pela página do operador), feita só com o LiDAR de segurança: o
+    # lidar_merge junta o scan à nuvem do LiDAR 3D e tira da nuvem os pontos
+    # da faixa que a grade usa (ver o lidar_merge.py). Cada nó guarda a grade
+    # local dele no banco; a grade global só é montada enquanto alguém assina
+    # /rtabmap/map (o RViz ou a página).
+    #
+    # Por que não o LiDAR 3D: ele fica a ~1 m do chão e só vê um obstáculo
+    # baixo numa faixa a 2,6 a 4 m do robô; os raios dele até o chão passam
+    # por cima das plantas e, na grade 2D, apagavam as fileiras em ~1 minuto
+    # de mapeamento. E com o relevo (camalhões, encosta), o chão a 5 ou 6 m
+    # virava obstáculo falso no meio das entrelinhas.
     Grid/Sensor: "0"                    # 0 = LiDAR (nada de profundidade)
     Grid/CellSize: "0.05"               # mesma resolução do slam_toolbox
     Grid/3D: "false"                    # grade 2D (projeção)
-    # O canal mais baixo (-15°) só toca o chão a ~3,9 m do robô, e um
-    # obstáculo baixo só entra na faixa de altura abaixo a ~2,8 m: a grade
-    # de cada nó vai até 8 m (com o scan 2D eram 5 m).
-    Grid/RangeMax: "8.0"
-    # Chão e obstáculo pela altura no base_link (o base_link fica 0,24 m
-    # acima do chão): chão até 0,12 m acima do chão, obstáculo de 0,12 a
-    # 0,34 m. A separação pela normal de cada ponto (padrão do RTAB-Map) não
-    # funciona com 16 canais: os pontos do chão vêm em anéis (um por canal),
-    # a normal sai torta e o chão inteiro virava anéis de obstáculos. Na
-    # encosta do olival o robô inclina junto com o chão, então o corte por
-    # altura no base_link continua valendo.
+    Grid/RangeMax: "8.0"                # alcance do LiDAR de segurança
+    # Faixas no base_link (0,24 m acima do chão): abaixo de -0,20 (4 cm do
+    # chão) a grade ignora; até -0,105, chão (os pontos que o lidar_merge
+    # põe nos raios sem retorno, para marcar o livre); até 0,10, obstáculo (o
+    # scan, a -0,09); acima, ignora. O lidar_merge tira da nuvem 3D os pontos
+    # de -0,20 a 0,10: na grade só entra o scan.
     Grid/NormalsSegmentation: "false"
-    Grid/MaxGroundHeight: "-0.12"
-    # 0,34 m: é o que bate no robô (o chassi fica a ~0,17 m do chão). Copas
-    # das oliveiras e as folhas do milho acima disso ficam de fora: o robô
-    # passa por baixo delas, e elas fechariam as entrelinhas na grade. O ICP
-    # usa a nuvem inteira, sem esse corte.
+    Grid/MinGroundHeight: "-0.20"
+    Grid/MaxGroundHeight: "-0.105"
     Grid/MaxObstacleHeight: "0.10"
-    # Os raios até cada obstáculo e até o chão visto marcam espaço livre:
-    # sem isso, os 3,9 m em volta do robô (abaixo do canal mais baixo)
-    # ficariam desconhecidos.
+    # Os raios do scan até cada obstáculo e até os pontos de chão marcam
+    # espaço livre.
     Grid/RayTracing: "true"
+    # Na grade global, cada nó soma evidência de ocupado (os pontos) e de
+    # livre (os raios). Um colmo de 2 a 4 cm nem sempre é atingido, e com o
+    # padrão (ProbMiss 0,4) dois ou três raios que passam ao lado (na mesma
+    # célula de 5 cm) o apagavam. Com 0,47, são ~7 raios livres para desfazer
+    # um acerto, um obstáculo falso ainda some com o tempo, e uma célula
+    # desconhecida vira livre com um raio só.
+    GridGlobal/ProbMiss: "0.47"
 
     # Profundidade guardada em float (PNG) no banco. Com o formato de 16 bits
     # (mm), cada pixel +inf vira um aviso "Depth conversion error" por nó.
