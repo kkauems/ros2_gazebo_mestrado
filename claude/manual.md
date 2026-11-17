@@ -735,10 +735,18 @@ navegador ─WebSocket 9090─► rosbridge ─► /cmd_vel_teleop ─► cmd_ve
   inteira pelo tópico `/waypoint_mission/command` (JSON: `set`, `load`, `start`, `cancel`,
   `clear`, `undo`, `save`) e mostra o `/waypoint_mission/status`. Ferramentas do mapa:
   **+ Waypoint** (clique acrescenta, arrastar move, botão direito apaga), **Ir até** (um
-  ponto só, já inicia) e **Varredura**. As missões de `config/waypoints/` e as gravadas em
-  `dados/missions/` deste mundo (e deste mapa) aparecem para carregar; **Gravar lista** cria
-  `dados/missions/<nome>_<data>.yaml`, que também roda com `waypoints:=`. **Cancelar** para
-  a missão; os CSVs são gravados com os waypoints restantes como `cancelado`.
+  ponto só, já inicia) e **Varredura**. **Cancelar** para a missão; os CSVs são gravados com
+  os waypoints restantes como `cancelado`.
+- **Editar missões gravadas:** **Carregar para editar** traz uma missão de
+  `config/waypoints/` ou de `dados/missions/` (só as deste mundo e deste mapa). Na lista, ✎
+  abre nome, x, y e orientação (em graus; vazio = chega olhando para o próximo ponto), ↑ ↓
+  mudam a ordem, + insere um ponto no meio do caminho até o próximo e × apaga; no mapa,
+  arrastar move. **Salvar alterações** grava por cima do arquivo carregado, mas só dos de
+  `dados/missions/`: os casos de estudo do projeto (`config/waypoints/`) não são
+  sobrescritos, para os resultados continuarem comparáveis; use **Salvar como**, que cria
+  `dados/missions/<nome>.yaml` (recusa um nome que já existe sem "substituir" e o nome de
+  um caso do projeto). Essas missões também rodam com `waypoints:=dados/missions/<nome>.yaml`.
+  O comando é `{"op": "save", "name": ..., "overwrite": ...}` no `/waypoint_mission/command`.
 - **Checagem pelas medidas do robô:** cada ponto passa pelo `waypoint_check` (seção 7) assim
   que entra na lista e de novo quando a grade muda. Em roxo, com o motivo e, quando existe,
   o botão **usar ponto livre** (o ponto livre mais perto, até 1 m). "Área ainda não

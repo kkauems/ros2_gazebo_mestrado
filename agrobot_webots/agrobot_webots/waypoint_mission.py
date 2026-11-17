@@ -579,13 +579,19 @@ class WaypointMission(Node):
         response.success, response.message = self.save_list('rviz')
         return response
 
-    def save_list(self, name):
-        """Grava a lista em output_dir/<name>_<data>.yaml: (ok, caminho)."""
+    def save_list(self, name, path=None):
+        """
+        Grava a lista: (ok, caminho).
+
+        Sem path, em output_dir/<name>_<data>.yaml.
+        """
         if not self.waypoints:
             return False, 'lista vazia'
         os.makedirs(self.output_dir, exist_ok=True)
-        path = os.path.join(
-            self.output_dir, f'{name}_{time.strftime("%Y%m%d-%H%M%S")}.yaml')
+        if path is None:
+            path = os.path.join(
+                self.output_dir,
+                f'{name}_{time.strftime("%Y%m%d-%H%M%S")}.yaml')
         lines = ['# Gravado pelo waypoint_mission.',
                  f'# Coordenadas no frame {self.frame}, a partir da partida.']
         if self.world:
@@ -866,6 +872,10 @@ class WaypointMission(Node):
         self.checks = []          # checagem de cada waypoint, para a página
         self.checked_key = None   # grade e lista da última checagem
         self.cases = None         # arquivos de missão deste mundo (cache)
+        # Arquivo de onde veio a lista (para gravar por cima) e se ela mudou
+        # desde que foi carregada ou gravada.
+        self.case_file = self.get_parameter('waypoints_file').value or None
+        self.edited = False
         self.status_publisher = self.create_publisher(
             String, '~/status', QoSProfile(
                 depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -879,9 +889,14 @@ class WaypointMission(Node):
     def set_message(self, text, level='info'):
         self.message = text
         self.message_level = level
-        log = {'info': self.get_logger().info, 'warn': self.get_logger().warn,
-               'error': self.get_logger().error}[level]
-        log(text)
+        # Uma chamada por nível: o rclpy não deixa a mesma linha logar com
+        # severidades diferentes (ValueError e o nó cai).
+        if level == 'error':
+            self.get_logger().error(text)
+        elif level == 'warn':
+            self.get_logger().warn(text)
+        else:
+            self.get_logger().info(text)
         self.publish_status()
 
     def command_callback(self, message):
@@ -899,9 +914,7 @@ class WaypointMission(Node):
             self.publish_status()
             return
         if op == 'save':
-            ok, text = self.save_list(safe_name(command.get('name'), 'operador'))
-            self.set_message(f'Lista gravada em {text}' if ok else text,
-                             'info' if ok else 'warn')
+            self.save_command(command)
             return
         if self.running():
             self.set_message(
@@ -920,16 +933,22 @@ class WaypointMission(Node):
                 self.set_message(f'Lista inválida: {error}', 'error')
                 return
             self.waypoints = points
-            self.case = safe_name(command.get('name'), 'operador')
+            name = safe_name(command.get('name'), 'operador')
+            if name != self.case:
+                self.case_file = None   # virou outra lista
+            self.case = name
+            self.edited = True
             self.after_edit()
         elif op == 'load':
             self.load_case(str(command.get('case', '')))
         elif op == 'clear':
             self.waypoints = []
+            self.edited = True
             self.after_edit()
         elif op == 'undo':
             if self.waypoints:
                 self.waypoints.pop()
+            self.edited = True
             self.after_edit()
         else:
             self.set_message(f'Comando desconhecido: {op}', 'error')
@@ -964,7 +983,62 @@ class WaypointMission(Node):
             return
         self.waypoints = points
         self.case = os.path.splitext(os.path.basename(path))[0]
+        self.case_file = path
+        self.edited = False
         self.after_edit()
+
+    def editable(self):
+        """O arquivo carregado pode ser sobrescrito (está em output_dir)."""
+        if not self.case_file:
+            return False
+        folder = os.path.realpath(os.path.dirname(self.case_file))
+        return folder == os.path.realpath(self.output_dir)
+
+    def save_command(self, command):
+        """
+        Grava a lista editada pela página.
+
+        overwrite sem nome: sobrescreve o arquivo carregado (só os de
+        output_dir; os casos de config/waypoints/ fazem parte do projeto).
+        Com nome: output_dir/<nome>.yaml, recusando sobrescrever um que já
+        existe sem overwrite. Sem nada: <caso>_<data>.yaml.
+        """
+        name = str(command.get('name') or '').strip()
+        if name.endswith('.yaml'):
+            name = name[:-len('.yaml')]
+        name = safe_name(name, '')
+        overwrite = bool(command.get('overwrite'))
+        path = None
+        if not name and overwrite:
+            if not self.editable():
+                self.set_message(
+                    f'{self.case} é um caso de estudo do projeto '
+                    '(config/waypoints/) ou não veio de um arquivo: grave '
+                    'com outro nome.', 'warn')
+                return
+            path = self.case_file
+            name = self.case
+        elif name:
+            if any(c['name'] == name and not c['saved']
+                   for c in self.list_cases()):
+                self.set_message(
+                    f'{name} é o nome de um caso de estudo do projeto: '
+                    'escolha outro.', 'warn')
+                return
+            path = os.path.join(self.output_dir, f'{name}.yaml')
+            if os.path.exists(path) and not overwrite:
+                self.set_message(
+                    f'Já existe {name}.yaml: marque "substituir" para gravar '
+                    'por cima.', 'warn')
+                return
+        ok, text = self.save_list(name or self.case, path)
+        if not ok:
+            self.set_message(text, 'warn')
+            return
+        self.case = os.path.splitext(os.path.basename(text))[0]
+        self.case_file = text
+        self.edited = False
+        self.set_message(f'Lista gravada em {text}')
 
     def case_dirs(self):
         dirs = [self.output_dir]
@@ -1099,6 +1173,9 @@ class WaypointMission(Node):
             level = 'error'
         status = {
             'case': self.case, 'frame': self.frame, 'world': self.world,
+            'case_file': (os.path.basename(self.case_file)
+                          if self.case_file else None),
+            'editable': self.editable(), 'edited': self.edited,
             'map': self.map, 'running': self.running(),
             'starting': self.start_timer is not None,
             'finished': self.finished, 'current': self.current,
@@ -1111,9 +1188,10 @@ class WaypointMission(Node):
         self.status_publisher.publish(String(data=json.dumps(status)))
 
 
-def safe_name(name, default):
-    """Nome para arquivos: letras, números, '-' e '_' (sem espaços)."""
-    text = ''.join(c if c.isalnum() or c in '-_' else '-'
+def safe_name(name, default, extra=''):
+    """Nome para arquivos: letras, números, '-', '_' e extra (sem espaços)."""
+    allowed = '-_' + extra
+    text = ''.join(c if c.isalnum() or c in allowed else '-'
                    for c in str(name or '').strip())
     return text.strip('-') or default
 
@@ -1127,7 +1205,8 @@ def parse_points(entries):
             raise ValueError(f'waypoint {i + 1} sem coordenadas')
         yaw = entry.get('yaw')
         points.append({
-            'name': safe_name(entry.get('name'), f'wp{i + 1}'),
+            # Ponto no nome do waypoint vale (cabeceira_leste_y1.8).
+            'name': safe_name(entry.get('name'), f'wp{i + 1}', '.'),
             'x': x, 'y': y,
             'yaw_in': None if yaw is None else float(yaw),
         })

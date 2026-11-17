@@ -129,7 +129,15 @@ function onMission(m) {
   for (const id of ['btn-undo', 'btn-clear', 'btn-load', 'btn-sw-use']) {
     $(id).disabled = busy || (id === 'btn-sw-use' && !map.preview.length);
   }
-  renderWaypoints(m);
+  $('btn-save').disabled = !m.editable || !m.edited || !m.waypoints.length;
+  $('btn-save-as').disabled = !m.waypoints.length;
+  $('list-file').textContent = m.case_file
+    ? `Arquivo: ${m.case_file}${m.edited ? ' · alterada, não gravada' : ''}`
+      + (m.editable ? '' : ' (caso de estudo do projeto: use Salvar como)')
+    : (m.waypoints.length ? 'Lista nova, ainda sem arquivo.' : '');
+  // Com o formulário de edição aberto, a lista não é redesenhada (perderia
+  // o que está sendo digitado); redesenha quando ele fecha.
+  if (editing === null) renderWaypoints(m);
   renderCases(m);
   if (first && m.waypoints.length) map.fitWaypoints();
 }
@@ -159,6 +167,22 @@ function renderWaypoints(m) {
     }
     const actions = document.createElement('div');
     actions.className = 'actions';
+    if (!m.running) {
+      const last = m.waypoints.length - 1;
+      for (const [label, title, enabled, fn] of [
+        ['✎', 'Editar nome, posição e orientação', true, () => openEditor(i)],
+        ['↑', 'Subir na ordem', i > 0, () => editList((pts) => swap(pts, i, i - 1))],
+        ['↓', 'Descer na ordem', i < last, () => editList((pts) => swap(pts, i, i + 1))],
+        ['+', 'Inserir um ponto depois deste', true, () => editList((pts) => insertAfter(pts, i))],
+      ]) {
+        const button = document.createElement('button');
+        button.textContent = label;
+        button.title = title;
+        button.disabled = !enabled;
+        button.onclick = fn;
+        actions.appendChild(button);
+      }
+    }
     if (wp.check && wp.check.suggestion && !m.running) {
       const fix = document.createElement('button');
       fix.textContent = 'usar ponto livre';
@@ -175,9 +199,97 @@ function renderWaypoints(m) {
       remove.onclick = () => editList((pts) => pts.splice(i, 1));
       actions.appendChild(remove);
     }
+    body.classList.add('clickable');
+    body.title = 'Centralizar no mapa';
+    body.onclick = () => {
+      map.follow = false;
+      $('btn-follow').classList.remove('on');
+      map.center = { x: wp.x, y: wp.y };
+    };
     li.append(dot, body, actions);
     list.appendChild(li);
   });
+}
+
+function swap(points, a, b) {
+  [points[a], points[b]] = [points[b], points[a]];
+}
+
+// Novo ponto no meio do caminho até o próximo (ou 1 m adiante, no último).
+function insertAfter(points, i) {
+  const p = points[i];
+  const q = points[i + 1];
+  let x;
+  let y;
+  if (q) {
+    x = (p.x + q.x) / 2;
+    y = (p.y + q.y) / 2;
+  } else {
+    const prev = points[i - 1];
+    const heading = prev ? Math.atan2(p.y - prev.y, p.x - prev.x) : 0;
+    x = p.x + Math.cos(heading);
+    y = p.y + Math.sin(heading);
+  }
+  const used = new Set(points.map((w) => w.name));
+  let name = `${p.name}_a`;
+  for (let k = 1; used.has(name); k += 1) name = `${p.name}_${k}`;
+  points.splice(i + 1, 0, { name, x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100, yaw: null });
+}
+
+// Formulário de edição de um waypoint, dentro da lista.
+let editing = null;
+
+function openEditor(i) {
+  const wp = mission.waypoints[i];
+  editing = i;
+  const li = $('wp-list').children[i];
+  const form = document.createElement('form');
+  form.className = 'editor';
+  const yaw = wp.yaw === null ? '' : (wp.yaw * 180 / Math.PI).toFixed(1);
+  form.innerHTML = `
+    <label>Nome <input name="name" value="${escapeHtml(wp.name)}"></label>
+    <div class="grid3">
+      <label>x (m) <input name="x" type="number" step="0.05" value="${wp.x}"></label>
+      <label>y (m) <input name="y" type="number" step="0.05" value="${wp.y}"></label>
+      <label>orientação (°) <input name="yaw" type="number" step="5" value="${yaw}"
+        placeholder="auto"></label>
+    </div>
+    <p class="hint">Orientação vazia: o robô chega olhando para o próximo ponto.
+      0° é +x, 90° é +y.</p>
+    <div class="row"><button class="primary" type="submit">Aplicar</button>
+      <button type="button" data-cancel>Cancelar</button></div>`;
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const data = new FormData(form);
+    const x = parseFloat(data.get('x'));
+    const y = parseFloat(data.get('y'));
+    const yawText = String(data.get('yaw')).trim();
+    const yawDeg = parseFloat(yawText);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || (yawText && !Number.isFinite(yawDeg))) {
+      toast('Valores inválidos.', 'warn');
+      return;
+    }
+    closeEditor();
+    editList((pts) => {
+      pts[i] = {
+        name: String(data.get('name')).trim() || pts[i].name,
+        x,
+        y,
+        yaw: yawText ? yawDeg * Math.PI / 180 : null,
+      };
+    });
+  };
+  form.querySelector('[data-cancel]').onclick = () => {
+    closeEditor();
+    if (mission) renderWaypoints(mission);
+  };
+  li.replaceChildren(form);
+  li.classList.add('editing');
+  form.querySelector('input[name=x]').focus();
+}
+
+function closeEditor() {
+  editing = null;
 }
 
 function renderCases(m) {
@@ -210,6 +322,7 @@ function editList(fn) {
   }
   const points = mission.waypoints.map((w) => ({ name: w.name, x: w.x, y: w.y, yaw: w.yaw }));
   fn(points);
+  // Os nomes automáticos (wp1, wp2...) acompanham a nova ordem.
   points.forEach((p, i) => { if (/^wp\d+$/.test(p.name)) p.name = `wp${i + 1}`; });
   const name = mission.case === 'rviz' ? 'operador' : mission.case;
   command('set', { name, waypoints: points });
@@ -241,7 +354,16 @@ $('btn-load').onclick = () => {
   const name = $('case-select').value;
   if (name) command('load', { case: name });
 };
-$('btn-save').onclick = () => command('save', { name: $('save-name').value.trim() || 'operador' });
+$('btn-save').onclick = () => command('save', { overwrite: true });
+$('btn-save-as').onclick = () => {
+  const name = $('save-name').value.trim();
+  if (!name) {
+    toast('Escreva um nome para a missão.', 'warn');
+    $('save-name').focus();
+    return;
+  }
+  command('save', { name, overwrite: $('save-overwrite').checked });
+};
 
 for (const button of $('tools').querySelectorAll('button')) {
   button.onclick = () => {
