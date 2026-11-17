@@ -20,7 +20,8 @@
   const ALTURA_BASE = 0.24;          // base_link acima do chão (rodas r 0,22, eixo z -0,02)
   const RODA_R = 0.22;
   const MEIA_BITOLA = 0.48;
-  const LIDAR = [0.65, 0, -0.10];
+  const LIDAR = [0.65, 0, -0.09];    // LiDAR de segurança (Delta-2A), 15 cm do chão
+  const LIDAR3D = [0, 0, 0.80];      // LiDAR 3D (Helios-16P), ~1,04 m do chão
   const RGBD = [0.45, 0, 0.38];
   const RGBD_PITCH = 0.2618;
   const CAMDADOS = [0, 0, 0.66];
@@ -51,7 +52,8 @@
     velocidade: 4,
     seguir: true,
     labels: [],
-    obstaculos: { plantacao: [], olival: [] },
+    obstaculos: { plantacao: [], olival: [] },   // [x, y, raio] no plano do LiDAR de segurança
+    obst3d: { plantacao: [], olival: [] },       // [x, y, raio, z0, z1] para o LiDAR 3D
   };
 
   // ROS (x, y, z) -> three (x, z, -y)
@@ -72,7 +74,7 @@
   // ---------------------------------------------------------------- robô
   function construirRobo() {
     const g = new T.Group();
-    const partes = { chassi: [], rodas: [], lidar: [], rgbd: [], camdados: [], imu: [] };
+    const partes = { chassi: [], rodas: [], lidar: [], lidar3d: [], rgbd: [], camdados: [], imu: [] };
     function add(parte, malha, pai) {
       malha.castShadow = true;
       malha.userData.parte = parte;
@@ -109,16 +111,27 @@
     caixa('chassi', 0.045, 0.49, 0.045, 0, 0, 0.1925, ALUMINIO);
     caixa('imu', 0.03, 0.03, 0.12, 0, 0, 0.275, ALUMINIO);
     caixa('imu', 0.08, 0.05, 0.03, 0, 0, 0.35, 0x1d1f24);
-    caixa('camdados', 0.03, 0.03, 0.47, 0, -0.055, 0.45, ALUMINIO);
+    caixa('camdados', 0.03, 0.03, 0.525, 0, -0.055, 0.4775, ALUMINIO);
+    caixa('lidar3d', 0.11, 0.125, 0.01, 0, -0.0075, 0.745, ALUMINIO);
     caixa('rgbd', 0.03, 0.03, 0.155, 0.4175, 0, 0.2925, ALUMINIO);
     caixa('lidar', 0.27, 0.04, 0.025, 0.535, 0, 0.0475, ALUMINIO);
-    caixa('lidar', 0.03, 0.03, 0.115, 0.65, 0, -0.0225, ALUMINIO);
+    caixa('lidar', 0.03, 0.03, 0.105, 0.65, 0, -0.0175, ALUMINIO);
 
-    // LiDAR.
+    // LiDAR de segurança.
     const lidar = new T.Mesh(new T.CylinderGeometry(0.04, 0.04, 0.04, 24), mat(0x111111));
     lidar.rotation.x = Math.PI / 2;
     lidar.position.set(...LIDAR);
     add('lidar', lidar);
+
+    // LiDAR 3D no topo do mastro (corpo de 9,75 cm de diâmetro e 10 cm de altura).
+    const l3 = new T.Mesh(new T.CylinderGeometry(0.04875, 0.04875, 0.10, 32), mat(0xc4c6cc, { metalness: 0.4, roughness: 0.45 }));
+    l3.rotation.x = Math.PI / 2;
+    l3.position.set(...LIDAR3D);
+    add('lidar3d', l3);
+    const janela = new T.Mesh(new T.CylinderGeometry(0.0495, 0.0495, 0.035, 32), mat(0x15171a, { metalness: 0.5, roughness: 0.25 }));
+    janela.rotation.x = Math.PI / 2;
+    janela.position.set(LIDAR3D[0], LIDAR3D[1], LIDAR3D[2] - 0.005);
+    add('lidar3d', janela);
 
     // Câmera RGB-D: frame com x para a frente, inclinado 15° para baixo.
     const rgbd = new T.Group();
@@ -324,6 +337,7 @@
         folhas.setColorAt(i * nFolhas + k, corF);
       }
       S.obstaculos.plantacao.push([x, y, 0.035]);
+      S.obst3d.plantacao.push([x, y, 0.03, 0, h]);
     });
     for (const m of [colmo, folhas, pendao]) { m.castShadow = true; g.add(m); }
     // Pedras, torrões e galhos nas entrelinhas.
@@ -354,6 +368,7 @@
         m.castShadow = true;
         g.add(m);
         S.obstaculos.plantacao.push([x, y, 0.06]);
+        S.obst3d.plantacao.push([x, y, 0.06, 0, 1.2]);
       }
       const arame = new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x1, y1, 0.9), new T.Vector3(x2, y2, 0.9)]), new T.LineBasicMaterial({ color: 0x555555 }));
       g.add(arame);
@@ -403,6 +418,7 @@
         copa.setColorAt(i * nCopa + k, cor);
       }
       S.obstaculos.olival.push([x, y, 0.18 * esc]);
+      S.obst3d.olival.push([x, y, 0.18 * esc, 0, h + 0.3 * esc], [x, y, 1.4 * esc, h + 0.3 * esc, h + 2.1 * esc]);
     });
     tronco.castShadow = copa.castShadow = true;
     g.add(tronco, copa);
@@ -545,8 +561,13 @@
     S.wps = { g, marcadores, labels };
   }
 
+  // LiDAR de segurança: 360°, mas os raios que batem no próprio robô (para
+  // trás e para os lados, |ângulo| > ~93° a partir da frente) saem como NaN
+  // no driver. Aqui, um raio a cada 2°.
+  const LIDAR_MEIO = 93 * Math.PI / 180;
+
   function construirLidar() {
-    const N = 100;
+    const N = 94;
     const pos = new Float32Array(N * 6);
     const geo = new T.BufferGeometry();
     geo.setAttribute('position', new T.BufferAttribute(pos, 3));
@@ -574,7 +595,7 @@
     L.acertos = [];
     let np = 0;
     for (let i = 0; i < L.N; i++) {
-      const a = yaw - 1.5 + 3.0 * i / (L.N - 1);
+      const a = yaw - LIDAR_MEIO + 2 * LIDAR_MEIO * i / (L.N - 1);
       const dx = Math.cos(a), dy = Math.sin(a);
       let best = 8.0;
       for (const [cx, cy, r] of obs) {
@@ -584,7 +605,7 @@
         const d2 = fx * fx + fy * fy - tca * tca;
         if (d2 > r * r) continue;
         const th = tca - Math.sqrt(r * r - d2);
-        if (th > 0.1 && th < best) best = th;
+        if (th > 0.13 && th < best) best = th;
       }
       const hit = best < 8.0;
       pos.set([ox, oy, z, ox + dx * best, oy + dy * best, z], i * 6);
@@ -602,6 +623,114 @@
     L.linhas.geometry.attributes.color.needsUpdate = true;
     L.pontos.geometry.setDrawRange(0, np);
     L.pontos.geometry.attributes.position.needsUpdate = true;
+  }
+
+  // LiDAR 3D: 16 canais de -15° a +15° (2° entre canais). Aqui, uma coluna a
+  // cada 2° (o real tem 0,2°) e até 30 m, contra o chão plano, os colmos, os
+  // mourões, os troncos e as copas. A cor dá a altura do ponto.
+  const L3_CANAIS = 16, L3_COLUNAS = 180, L3_ALCANCE = 30;
+
+  function construirLidar3d() {
+    const n = L3_CANAIS * L3_COLUNAS;
+    const geo = new T.BufferGeometry();
+    geo.setAttribute('position', new T.BufferAttribute(new Float32Array(n * 3), 3));
+    geo.setAttribute('color', new T.BufferAttribute(new Float32Array(n * 3), 3));
+    const pontos = new T.Points(geo, new T.PointsMaterial({ size: 0.07, vertexColors: true }));
+    pontos.frustumCulled = false;
+    S.mundoG.add(pontos);
+    S.lidar3d = { pontos, ultimo: -1 };
+  }
+
+  function atualizarLidar3d(x, y, yaw, agora) {
+    const L = S.lidar3d;
+    if (Math.abs(agora - L.ultimo) < 0.12) return;
+    L.ultimo = agora;
+    const ox = x + Math.cos(yaw) * LIDAR3D[0], oy = y + Math.sin(yaw) * LIDAR3D[0];
+    const oz = ALTURA_BASE + LIDAR3D[2];
+    const obs = S.obst3d[S.mundo].filter(([a, b, r]) => Math.hypot(a - ox, b - oy) < L3_ALCANCE + r);
+    const pos = L.pontos.geometry.attributes.position.array;
+    const cor = L.pontos.geometry.attributes.color.array;
+    const c = new T.Color();
+    let n = 0;
+    for (let j = 0; j < L3_COLUNAS; j++) {
+      const a = yaw + j * 2 * Math.PI / L3_COLUNAS;
+      const dx = Math.cos(a), dy = Math.sin(a);
+      // Distância horizontal até cada cilindro nesta coluna (igual para os 16 canais).
+      const cand = [];
+      for (const [cx, cy, r, z0, z1] of obs) {
+        const fx = cx - ox, fy = cy - oy;
+        const tca = fx * dx + fy * dy;
+        if (tca < 0.2) continue;
+        const d2 = fx * fx + fy * fy - tca * tca;
+        if (d2 > r * r) continue;
+        const meia = Math.sqrt(r * r - d2);
+        cand.push([tca - meia, tca + meia, z0, z1]);
+      }
+      for (let k = 0; k < L3_CANAIS; k++) {
+        const tg = Math.tan((-15 + 2 * k) * Math.PI / 180);
+        let best = L3_ALCANCE;
+        if (tg < 0) best = Math.min(best, -oz / tg);
+        for (const [t0, t1, z0, z1] of cand) {
+          if (t0 >= best) continue;
+          // Entra pela lateral, ou pelo topo/fundo quando o raio cruza z0/z1 dentro do cilindro.
+          const zt = oz + t0 * tg;
+          if (zt >= z0 && zt <= z1) { best = t0; continue; }
+          const zp = zt > z1 ? z1 : z0;
+          if (tg === 0) continue;
+          const tp = (zp - oz) / tg;
+          if (tp > t0 && tp < Math.min(t1, best)) best = tp;
+        }
+        if (best >= L3_ALCANCE) continue;
+        const pz = oz + best * tg;
+        pos[n * 3] = ox + dx * best; pos[n * 3 + 1] = oy + dy * best; pos[n * 3 + 2] = Math.max(0.02, pz);
+        c.setHSL(0.66 - Math.min(1, Math.max(0, pz / 3)) * 0.66, 0.9, 0.55);
+        cor[n * 3] = c.r; cor[n * 3 + 1] = c.g; cor[n * 3 + 2] = c.b;
+        n++;
+      }
+    }
+    L.pontos.geometry.setDrawRange(0, n);
+    L.pontos.geometry.attributes.position.needsUpdate = true;
+    L.pontos.geometry.attributes.color.needsUpdate = true;
+  }
+
+  // Zonas da camada de segurança (config/collision_monitor.yaml), presas ao
+  // robô, no chão: lentidão de 0 a 1,4 m à frente (10 cm de cada lado) e
+  // parada de 0,5 m (até 0,2 m/s) ou 0,7 m (mais rápido), 6 cm de cada lado.
+  function construirSeguranca() {
+    const g = new T.Group();
+    const ret = (cor, op) => {
+      const m = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({ color: cor, transparent: true, opacity: op, depthWrite: false, side: T.DoubleSide }));
+      m.geometry.translate(0.5, 0, 0);
+      m.renderOrder = 3;
+      return m;
+    };
+    const lenta = ret(0xf2c94c, 0.3), parada = ret(0xe5484d, 0.4);
+    lenta.scale.set(1.4, 1.12 + 0.2, 1);
+    lenta.position.set(0.6, 0, -ALTURA_BASE + 0.07);
+    parada.position.set(0.6, 0, -ALTURA_BASE + 0.075);
+    const contorno = new T.LineSegments(new T.EdgesGeometry(new T.PlaneGeometry(1.2, 1.12)), new T.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }));
+    contorno.position.z = -ALTURA_BASE + 0.07;
+    g.add(lenta, parada, contorno);
+    S.robo.grupo.add(g);
+    S.seguranca = { g, lenta, parada, vel: 0 };
+  }
+
+  function atualizarSeguranca(x, y, yaw, v) {
+    const Z = S.seguranca;
+    Z.vel = Z.vel * 0.9 + v * 0.1;
+    const comp = Z.vel > 0.2 ? 0.7 : 0.5;
+    Z.parada.scale.set(comp, 1.12 + 0.12, 1);
+    // Acende a zona que tem pontos do LiDAR de segurança dentro.
+    let naLenta = 0, naParada = 0;
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    for (const [hx, hy] of S.lidar.acertos) {
+      const lx = (hx - x) * c + (hy - y) * s, ly = -(hx - x) * s + (hy - y) * c;
+      if (lx > 0.6 && lx < 0.6 + comp && Math.abs(ly) < 0.62) naParada++;
+      else if (lx > 0.6 && lx < 2.0 && Math.abs(ly) < 0.66) naLenta++;
+    }
+    Z.lenta.material.opacity = naLenta + naParada >= 1 ? 0.55 : 0.3;
+    Z.parada.material.opacity = naParada >= 1 ? 0.75 : 0.4;
+    Z.estado = naParada ? 'parada' : (naLenta ? 'lentidão' : '');
   }
 
   // Costmap local: 4 × 4 m alinhado ao odom, com inflação de 0,7 m.
@@ -691,7 +820,7 @@
   // ------------------------------------------------------------ câmera 3D
   const PRESETS = {
     geral: { rel: true, pos: [-1.1, 2.6, 1.5], alvo: [0.1, 0, 0.1] },
-    sensores: { rel: true, pos: [1.35, 1.05, 0.75], alvo: [0.3, 0, 0.12] },
+    sensores: { rel: true, pos: [-1.3, 1.3, 1.45], alvo: [0.3, 0, 0.3] },
     lado: { rel: true, pos: [-1.7, -0.25, 2.5], alvo: [0.25, 0.85, 0.45] },
     segue: { rel: true, pos: [-3.8, -1.2, 4.6], alvo: [1.2, 0, 0] },
     cima: {
@@ -799,14 +928,17 @@
     fBase.position.z = 0.02;
     S.robo.grupo.add(fBase);
     const fLidar = eixos(0.18, 0.006); fLidar.position.set(...LIDAR); S.robo.grupo.add(fLidar);
+    const fLidar3d = eixos(0.18, 0.006); fLidar3d.position.set(...LIDAR3D); S.robo.grupo.add(fLidar3d);
     const fRgbd = eixos(0.18, 0.006); S.robo.rgbd.add(fRgbd);
     const fCam = eixos(0.18, 0.006); fCam.rotation.z = -Math.PI / 2; S.robo.camdados.add(fCam);
     const fImu = eixos(0.15, 0.006); fImu.position.set(0, 0, 0.35); S.robo.grupo.add(fImu);
     const fMap = eixos(1.0, 0.025); fMap.position.z = 0.02; tf.add(fMap);
     mundoG.add(tf);
-    S.tf = [fBase, fLidar, fRgbd, fCam, fImu, tf];
+    S.tf = [fBase, fLidar, fLidar3d, fRgbd, fCam, fImu, tf];
 
     construirLidar();
+    construirLidar3d();
+    construirSeguranca();
     construirCostmap();
     construirCaminho();
     construirFantasma();
@@ -814,7 +946,8 @@
     // Rótulos das partes e dos frames.
     const R = S.robo.grupo;
     const em = (obj, x, y, z) => () => obj.localToWorld(new T.Vector3(x, y, z));
-    criarLabel('LiDAR · /scan', 'parte', em(R, ...LIDAR), 'rotulos', 'lidar');
+    criarLabel('LiDAR de segurança · /scan', 'parte', em(R, LIDAR[0] + 0.05, 0, LIDAR[2]), 'rotulos', 'lidar');
+    criarLabel('LiDAR 3D · /lidar3d/points', 'parte', em(R, 0, 0, LIDAR3D[2] + 0.07), 'rotulos', 'lidar3d');
     criarLabel('Câmera RGB-D · VSLAM', 'parte', em(R, RGBD[0] + 0.02, 0, RGBD[2] + 0.06), 'rotulos', 'rgbd');
     criarLabel('Câmera de aquisição', 'parte', em(R, 0, 0, CAMDADOS[2] + 0.06), 'rotulos', 'camdados');
     criarLabel('IMU · /imu/data', 'parte', em(R, -0.05, 0, 0.37), 'rotulos', 'imu');
@@ -822,6 +955,7 @@
     criarLabel('Chassi', 'parte', em(R, -0.3, 0.3, 0.2), 'rotulos', 'chassi');
     criarLabel('base_link', 'tf', em(R, 0.47, 0, 0.05), 'tf');
     criarLabel('front_lidar_link', 'tf', em(R, LIDAR[0] + 0.2, 0, LIDAR[2]), 'tf');
+    criarLabel('lidar3d_link', 'tf', em(R, 0.2, 0, LIDAR3D[2]), 'tf');
     criarLabel('vslam_camera_link', 'tf', em(S.robo.rgbd, 0.22, 0, 0.02), 'tf');
     criarLabel('data_camera_link', 'tf', em(S.robo.camdados, 0.05, 0, 0.2), 'tf');
     criarLabel('imu_link', 'tf', em(R, 0, -0.18, 0.35), 'tf');
@@ -883,6 +1017,10 @@
         for (const r of S.robo.rodas) r.grupo.rotation.y += (ds - r.lado * dyaw * MEIA_BITOLA) / RODA_R;
       }
     }
+    const dtSim = S.tocando ? dt * S.velocidade : 0;
+    let vel = 0;
+    if (S.poseAnterior && dtSim > 0) vel = Math.hypot(x - S.poseAnterior[0], y - S.poseAnterior[1]) / dtSim;
+    if (vel > 1.5) vel = 0;
     S.poseAnterior = [x, y, yaw];
     const R = S.robo.grupo;
     const dx = x - R.position.x, dy = y - R.position.y;
@@ -912,7 +1050,11 @@
     // Camadas.
     const on = (c) => S.camadas.has(c);
     S.lidar.g.visible = on('lidar');
-    if (on('lidar') || on('costmap')) atualizarLidar(x, y, yaw);
+    if (on('lidar') || on('costmap') || on('seguranca')) atualizarLidar(x, y, yaw);
+    S.lidar3d.pontos.visible = on('lidar3d');
+    if (on('lidar3d')) atualizarLidar3d(x, y, yaw, agora);
+    S.seguranca.g.visible = on('seguranca');
+    if (on('seguranca')) atualizarSeguranca(x, y, yaw, vel);
     S.costmap.g.visible = on('costmap');
     if (on('costmap')) atualizarCostmap(x, y, agora);
     S.fov.rgbd.visible = on('rgbd');
@@ -959,7 +1101,7 @@
     }
     if (S.aoAtualizar) {
       const erro = temEst ? Math.hypot(ex - x, ey - y) : null;
-      S.aoAtualizar({ t: S.t, fim: duracao(), erro, wp, nWp: lista.length, nomeWp: alvo[0] });
+      S.aoAtualizar({ t: S.t, fim: duracao(), erro, wp, nWp: lista.length, nomeWp: alvo[0], seguranca: on('seguranca') ? S.seguranca.estado : '' });
     }
   }
 
