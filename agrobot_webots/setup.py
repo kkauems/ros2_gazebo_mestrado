@@ -51,6 +51,7 @@ setup(
             'operator_bridge = agrobot_webots.operator_bridge:main',
             'operator_web = agrobot_webots.operator_web:main',
             'lidar_merge = agrobot_webots.lidar_merge:main',
+            'stable_map = agrobot_webots.stable_map:main',
         ],
     },
 )
