@@ -280,7 +280,9 @@ Nav2 (costmaps com o /scan): planeja em map, controla em odom ─► /cmd_vel_ra
   arrancar, e andava 4 a 8% menos que as rodas. No caso 3 isso dava 0,3 a 0,45 m de erro ao
   longo da fileira (que o ICP não corrige, porque a fileira é igual em todo o comprimento), e
   o robô ficava preso na saída da entrelinha. Com 1,0 o EKF segue as rodas no mesmo passo
-  (perde ~0,4%).
+  (perde ~0,4%). Na mesma semente de ruído, o caso 3 foi de 7/11 com 15 paradas para 11/11
+  sem paradas (ATE 0,30 → 0,09 m) e o caso 4 do olival de ATE 1,01 para 0,73 m (15/15 nos
+  dois); resultados em `resultados/erro_pose_serpentina/` nos arquivos do projeto.
 - O frame `odom` deriva por definição; nenhuma entrada do EKF mede posição. Quem corrige é o
   VSLAM.
 - Com `sensor_noise:=true` (padrão) o yaw do IMU deriva como o de uma IMU MEMS real (seção 3);
