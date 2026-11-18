@@ -27,6 +27,18 @@ ekf_filter_node:
     # dynamic_process_noise_covariance escala o ruído dos estados de pose
     # pela velocidade: parado, não soma nada.
     dynamic_process_noise_covariance: true
+    #
+    # vx com 1,0 (o padrão é 0,025): o robô passa de 0,4 m/s a 0 (e de volta)
+    # num passo de 32 ms, e na entrelinha o Nav2 e a camada de segurança
+    # fazem isso várias vezes por segundo. A variância das rodas é
+    # proporcional à velocidade (quase zero parado), então com 0,025 o EKF
+    # zerava a velocidade na hora ao parar, mas levava ~5 passos para voltar
+    # a 0,4 ao arrancar: cada arrancada perdia ~3 cm, e no caso 3 o EKF
+    # andava 4 a 6% menos que as rodas (0,3 a 0,45 m por entrelinha, ao longo
+    # da fileira, onde o ICP não corrige). Com 1,0 ele segue as rodas no
+    # mesmo passo; na gravação do caso 3 a perda caiu de 8,8% para ~0,5%.
+    # Parado, a elipse continua sem crescer: o que entra na pose é a
+    # velocidade depois da correção, que parado é a das rodas (~0).
     process_noise_covariance: [
         0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
         0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
@@ -34,7 +46,7 @@ ekf_filter_node:
         0.0,   0.0,   0.0,  0.03,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
         0.0,   0.0,   0.0,   0.0,  0.03,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
         0.0,   0.0,   0.0,   0.0,   0.0,  0.06,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
-        0.0,   0.0,   0.0,   0.0,   0.0,   0.0, 0.025,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
         0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0, 0.025,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
         0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.04,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
         0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,   0.0,   0.0,   0.0,

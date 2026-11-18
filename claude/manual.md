@@ -273,6 +273,14 @@ Nav2 (costmaps com o /scan): planeja em map, controla em odom ─► /cmd_vel_ra
   piora a posição).
 - `process_noise_covariance` de x/y em 0 e covariância das rodas proporcional ao movimento:
   a elipse cresce com o deslocamento e na direção dele, e não com o tempo parado.
+- **Ruído de processo de vx em 1,0** (o padrão é 0,025): na entrelinha o Nav2 para e arranca
+  várias vezes por segundo (o RPP vê as plantas ao lado como colisão à frente), e o robô vai
+  de 0,4 m/s a 0 num passo de 32 ms. Como a variância das rodas parado é quase zero, com
+  0,025 o EKF zerava a velocidade na hora ao parar, mas levava ~5 passos para voltar a 0,4 ao
+  arrancar, e andava 4 a 8% menos que as rodas. No caso 3 isso dava 0,3 a 0,45 m de erro ao
+  longo da fileira (que o ICP não corrige, porque a fileira é igual em todo o comprimento), e
+  o robô ficava preso na saída da entrelinha. Com 1,0 o EKF segue as rodas no mesmo passo
+  (perde ~0,4%).
 - O frame `odom` deriva por definição; nenhuma entrada do EKF mede posição. Quem corrige é o
   VSLAM.
 - Com `sensor_noise:=true` (padrão) o yaw do IMU deriva como o de uma IMU MEMS real (seção 3);
@@ -467,10 +475,14 @@ pegada; `dados/seguranca/resumo.md`):
 | `plantacao_cruzando` | 0,70 m | limite enquanto ela atravessa; o Nav2 chega ao objetivo |
 | `olival_cruzando` | 0,49 m | limite; o Nav2 chega ao objetivo |
 
-Missões com a camada (sem pessoa): no caso 3 (serpentina na plantação), uma rodada com 11/11
-waypoints e nenhuma parada; outra com 10/11 e 14 paradas, todas com o robô torto dentro da
-entrelinha, de frente para as plantas, quando a pose estimada estava 0,5 a 0,8 m errada (o
-Nav2 achava que estava no meio da entrelinha). No olival (caso 4), 15/15 e nenhuma parada.
+Missões com a camada (sem pessoa): no caso 3 (serpentina na plantação), as paradas com o robô
+torto na entrelinha vinham da pose errada ao longo da fileira (o EKF perdia distância nas
+arrancadas; corrigido no `ekf.yaml`, seção 5). Depois da correção (nuvem, 2026-11-18, 3
+rodadas): 11/11 com ATE 0,09 m na semente que antes parava 15 vezes; 8/11 numa semente com
+giroscópio 2,4% fora de escala (o yaw do EKF derivou 15° e o VSLAM segurou em 2–4°); e 8/11
+numa semente nova, preso no contorno da pedra da cabeceira leste com a pose certa (erro de
+0,07 m): o vão de ~1,5 m ali, com a camada de segurança, às vezes não deixa o robô passar.
+No olival (caso 4), 15/15 e nenhuma parada.
 
 ### Teleoperação e mapeamento manual (`teleop:=joy|keyboard`)
 
