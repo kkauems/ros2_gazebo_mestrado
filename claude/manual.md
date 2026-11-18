@@ -376,6 +376,11 @@ a nuvem do LiDAR 3D. Escolhas e motivos:
   passaram de 202 para 393; a conferida ficou igual à da primeira volta (213 fora do lugar,
   23% das fileiras faltando). Com 0,2 e 0,3 m: rtabmap 202 → 436 fora do lugar e 60%
   faltando; conferida 213 → 221 e 28%. Testes em `test/test_stable_map.py`.
+  **Limite:** a conferência só pega desalinhamento de até 0,8 m (menos que meia entrelinha
+  da plantação, para não casar com a fileira vizinha) e não conserta o que já entrou errado
+  na primeira passada. Uma deriva lenta e grande é problema da localização: no olival
+  (2 voltas mapeando, 2026-11-18) a pose derivou até 3 m na lateral, e as duas grades ficaram
+  com as oliveiras deslocadas.
 - **Fechamento global desligado (`Rtabmap/LoopThr` e `RGBD/AggressiveLoopThr` em 1,01):** as
   entrelinhas são iguais para a câmera e para o LiDAR (1,8 m de deslocamento dava o mesmo
   scan 2D). Só valem fechamentos por proximidade, perto da pose do EKF (câmera até 1 m e 45°,
