@@ -60,6 +60,7 @@ Fechar o Webots encerra o launch inteiro.
 | `vslam_localization` | `false` | Com `vslam:=true`: localiza num mapa salvo em vez de mapear |
 | `vslam_db` | `dados/vslam/<mundo>.db` | Banco do RTAB-Map (o mapa). Um nome sem pasta (`vslam_db:=olival_mapa1`) vai para `dados/vslam/<nome>.db`. O mapeamento começa num banco vazio; um mapa que já existia com o mesmo nome vira `<nome>_<data>.db` |
 | `rtabmap_viz` | `false` | Abre a janela do `rtabmap_viz` |
+| `stable_map` | `true` | Com `vslam:=true`: a grade `/rtabmap/map` é montada pelo nó `stable_map`, que compara cada passada com o mapa já feito (seção 5). `false`: a grade do próprio rtabmap, como antes (para comparar) |
 | `data_camera` | `false` | Câmera RGB de aquisição de dados (seção 6) |
 | `data_record` | `true` | Com `data_camera:=true`, grava as fotos com a pose de cada uma (seção 6). `false` só mostra as imagens |
 | `data_dir` | `dados/fotos/` | Pasta das fotos gravadas |
@@ -109,8 +110,8 @@ ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true
 - **Objetivo avulso:** no RViz, ferramenta **Nav2 Goal**. Sem SLAM/VSLAM as coordenadas
   estão em `odom`; com `vslam:=true`, em `map`. Os dois nascem na pose inicial do robô, não
   no centro do mundo.
-- **Durante o mapeamento, deixe o RViz aberto:** a grade `/rtabmap/map` só é montada
-  enquanto alguém a assina.
+- A grade `/rtabmap/map` é montada o tempo todo pelo nó `stable_map` (com `stable_map:=false`,
+  a do rtabmap só é montada enquanto alguém a assina, como o RViz).
 - **O mapa é salvo quando a simulação fecha** (feche o Webots ou Ctrl-C no launch): o
   rtabmap grava o banco ao sair e o launch espera até 2 min por ele. A linha "Mapa salvo em
   ..." no log confirma. Dê nomes aos mapas com `vslam_db:=<nome>`.
@@ -348,6 +349,38 @@ a nuvem do LiDAR 3D. Escolhas e motivos:
 - **Ocupado pesa mais que livre (`GridGlobal/ProbMiss` 0,47):** um colmo de 2 a 4 cm nem
   sempre é atingido, e com o padrão (0,4) dois ou três raios que passavam ao lado o apagavam.
   Agora são ~7 raios livres para desfazer um acerto.
+- **Grade conferida (`stable_map.py`, `stable_map:=true`):** a grade do rtabmap soma a grade
+  local de todos os nós; quando uma passada volta com a pose deslocada da anterior (a deriva do
+  EKF entre fechamentos de laço passa de 0,3 m na serpentina), as fileiras aparecem de novo ao
+  lado e os raios livres da passada torta apagam as fileiras certas. O nó `stable_map` monta
+  `/rtabmap/map` com os mesmos dados (`/rtabmap/mapData`: grafo otimizado + grade local de
+  cada nó) e o mesmo log-odds, mas compara cada nó novo com o mapa já feito
+  (a grade do rtabmap continua em `/rtabmap/map_rtabmap`):
+  - célula vista de perto (até 4 m) por menos de 3 nós ainda está no mapeamento inicial e é
+    atualizada normalmente; o que o nó vê longe só preenche o que ainda não foi assentado;
+  - **conferência do nó:** os pontos ocupados do nó em lugar já mapeado são comparados com o
+    mapa na pose dele e deslocados até 0,8 m e 2,3°. Se uma pose deslocada (≥ 0,25 m) bate
+    25 pontos percentuais melhor, a passada está desalinhada e o nó fica de fora da grade;
+  - nó conferido: ponto ocupado a até 0,3 m de um obstáculo do mapa é o mesmo obstáculo (não
+    engorda nem duplica a fileira); longe, é obstáculo novo e entra com ~3 nós, como no
+    rtabmap. Raio livre só apaga um obstáculo do mapa se o nó não tem ponto ocupado a até
+    0,3 m dali.
+  A camada de segurança e os costmaps do Nav2 não usam essa grade (leem o `/scan` cru), então
+  um obstáculo novo é sempre visto na hora; na grade (checagem dos waypoints, RViz, página do
+  operador) ele aparece depois de alguns nós. Na localização, o mapa salvo é carregado do
+  rtabmap no início e o que mudar na grade vale só para a sessão (o banco não muda).
+  **Medido** (plantação, mapeando 3 voltas no mesmo trajeto, mesmo banco reprocessado com a
+  pose verdadeira como referência): sem deslocamento, as duas grades ficam iguais (o ruído
+  cai com as voltas nas duas). Com as voltas 2 e 3 deslocadas 0,4 m/1,7° e 0,6 m/-1,7°
+  (simulando a deriva), a grade do rtabmap perdeu 62% das fileiras e as células fora do lugar
+  passaram de 202 para 393; a conferida ficou igual à da primeira volta (213 fora do lugar,
+  23% das fileiras faltando). Com 0,2 e 0,3 m: rtabmap 202 → 436 fora do lugar e 60%
+  faltando; conferida 213 → 221 e 28%. Testes em `test/test_stable_map.py`.
+  **Limite:** a conferência só pega desalinhamento de até 0,8 m (menos que meia entrelinha
+  da plantação, para não casar com a fileira vizinha) e não conserta o que já entrou errado
+  na primeira passada. Uma deriva lenta e grande é problema da localização: no olival
+  (2 voltas mapeando, 2026-11-18) a pose derivou até 3 m na lateral, e as duas grades ficaram
+  com as oliveiras deslocadas.
 - **Fechamento global desligado (`Rtabmap/LoopThr` e `RGBD/AggressiveLoopThr` em 1,01):** as
   entrelinhas são iguais para a câmera e para o LiDAR (1,8 m de deslocamento dava o mesmo
   scan 2D). Só valem fechamentos por proximidade, perto da pose do EKF (câmera até 1 m e 45°,

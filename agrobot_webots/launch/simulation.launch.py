@@ -467,6 +467,14 @@ def generate_launch_description():
             'Mem/IncrementalMemory': 'true' if mapping else 'false',
             'Mem/InitWMWithAllNodes': 'false' if mapping else 'true',
         }
+        # Grade conferida (stable_map.py): o próprio nó monta /rtabmap/map
+        # com os dados do rtabmap, comparando cada passada com o mapa que já
+        # existe. A grade do rtabmap vai para /rtabmap/map_rtabmap (só é
+        # montada se alguém a assina, para comparar).
+        stable = flag(context, 'stable_map')
+        rtabmap_remappings = [('scan_cloud', LIDAR_MERGED)]
+        if stable:
+            rtabmap_remappings.append(('map', 'map_rtabmap'))
         if not mapping:
             # O robô nasce no mesmo lugar do mundo que no mapeamento, isto é,
             # no primeiro nó do mapa. Sem isso, a localização começaria onde
@@ -480,7 +488,7 @@ def generate_launch_description():
             output='screen',
             parameters=[config, rtabmap_parameters,
                         {'use_sim_time': True}],
-            remappings=[('scan_cloud', LIDAR_MERGED)],
+            remappings=rtabmap_remappings,
             # O rtabmap grava o mapa no banco ao fechar, e num mapa grande
             # isso passa dos 5 s que o launch espera antes de matá-lo.
             sigterm_timeout='120',
@@ -496,6 +504,14 @@ def generate_launch_description():
                          'output_topic': LIDAR_MERGED}],
         )
         nodes = actions + [rgbd_sync_node(config), merge, rtabmap]
+        if stable:
+            nodes.append(Node(
+                package='agrobot_webots',
+                executable='stable_map',
+                name='stable_map',
+                output='screen',
+                parameters=[config, {'use_sim_time': True}],
+            ))
         if mapping:
             def map_saved(event, context):
                 if not os.path.isfile(database):
@@ -828,6 +844,10 @@ def generate_launch_description():
         DeclareLaunchArgument('vslam_localization', default_value='false'),
         DeclareLaunchArgument('vslam_db', default_value=''),
         DeclareLaunchArgument('rtabmap_viz', default_value='false'),
+        # Grade do VSLAM conferida contra o mapa já feito (stable_map.py):
+        # as passadas repetidas não acumulam ruído. false: a grade do
+        # próprio rtabmap em /rtabmap/map, como antes (para comparar).
+        DeclareLaunchArgument('stable_map', default_value='true'),
         # Checagem de patinagem das rodas pela odometria visual (com
         # ekf:=true e camera:=true; sem efeito sem eles).
         DeclareLaunchArgument('slip_check', default_value='true'),
