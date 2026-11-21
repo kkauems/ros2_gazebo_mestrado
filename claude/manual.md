@@ -755,6 +755,39 @@ Compare pelo ATE e pelo erro máximo, não pelo erro final: o robô chega perto 
 *acha* que o alvo está, mesmo com a estimativa errada. Rode cada caso várias vezes; com a
 CPU no limite os resultados variam entre rodadas.
 
+**Bateria de avaliação (várias rodadas com estatística):**
+
+```bash
+python3 agrobot_webots/scripts/bateria.py            # casos 2 a 5, sementes 101 202 303 404 505
+python3 agrobot_webots/scripts/bateria.py --cases caso3_plantacao_serpentina --seeds 1 2 3
+python3 agrobot_webots/scripts/estatistica_bateria.py dados/bateria/<data> --por-rodada
+```
+
+O `bateria.py` roda cada caso com `ekf:=true vslam:=true rviz:=false noise_seed:=<semente>`,
+uma rodada por vez, espera a missão terminar, fecha o launch e passa à próxima (por semente,
+para que uma bateria interrompida tenha todos os casos; rodar de novo com `--out` na mesma
+pasta continua de onde parou). Grava em `dados/bateria/<data>/` os CSVs, o log de cada
+rodada e `rodadas.csv`, e apaga os bancos do mapeamento. `--headless` usa o `xvfb-run`
+(nuvem); argumentos a mais vão para o launch (`vslam_localization:=true`). O
+`estatistica_bateria.py` dá, por caso, média ± desvio padrão do ATE, do erro máximo, do RMSE
+do yaw, dos waypoints atingidos e no alvo (≤ 0,5 m de verdade), das paradas (robô parado
+≥ 1 s fora da parada programada nos waypoints) e do tempo.
+
+Resultado da bateria final (nuvem, 2026-11-20, 5 sementes; detalhes em
+`resultados/bateria_final/resumo.md` nos arquivos do projeto):
+
+| Caso | ATE (m) | Erro máx. (m) | Atingidos | No alvo ≤ 0,5 m | Paradas |
+|---|---|---|---|---|---|
+| caso2 plantação | 0,10 ± 0,04 | 0,20 ± 0,08 | 100% | 100% | 0,8 ± 1,1 |
+| caso3 plantação | 0,22 ± 0,18 | 0,46 ± 0,29 | 93 ± 8% | 91 ± 11% | 6,2 ± 4,9 |
+| caso4 olival | 1,48 ± 1,24 | 3,11 ± 2,94 | 100% | 52 ± 24% | 0,6 ± 1,3 |
+| caso5 olival | 1,07 ± 0,32 | 1,94 ± 0,72 | 100% | 32 ± 11% | 0 |
+
+Na plantação a localização segura (os waypoints perdidos do caso 3 são quase todos o
+contorno da pedra da cabeceira leste). No olival o Nav2 cumpre tudo, mas o robô chega onde
+*acha* que é o alvo: o erro de yaw de 4 a 6° nas manobras de cabeceira vira metros de desvio
+lateral na volta (até 8 m na semente 303 do caso 4), e o RTAB-Map não fecha laço para corrigir.
+
 ## 8. Interface web do operador (`operator:=true`)
 
 Página para operar o robô de um computador qualquer pelo navegador, sem ROS instalado nele
@@ -888,8 +921,7 @@ apresentação, os resultados do passo 3 e os próximos passos.
 - As especificações do Delta-2A e do Helios-16P vieram de fichas técnicas de revendas (os
   sites dos links não abriram daqui); confira alcance, frequência e ruído com as fichas
   oficiais antes de citar na dissertação.
-- O ruído dos sensores só foi testado em missão no caso2 da plantação; faltam o caso3 e o
-  olival. Ele é branco e gaussiano, menos o bias do giroscópio: faltam buracos e bordas falsas na profundidade, reflexos no LiDAR e deriva por temperatura.
+- O ruído dos sensores (ligado em todas as rodadas da bateria final, nos quatro casos) é branco e gaussiano, menos o bias do giroscópio: faltam buracos e bordas falsas na profundidade, reflexos no LiDAR e deriva por temperatura.
 - A interface web só foi conferida na nuvem (Chromium headless); falta abrir no navegador do
   Windows com o WSL.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
@@ -897,6 +929,7 @@ apresentação, os resultados do passo 3 e os próximos passos.
 - Ao girar no lugar na arena, a quina do robô pode empurrar a `cardboard box(2)`.
 - No olival, o robô escorrega encosta abaixo no declive lateral (nas manobras, nos desvios
   dos obstáculos e ao passar por cima de galhos), e as rodas e o IMU não veem isso: na nuvem,
-  com a encosta de 4 a 5%, o erro da pose chegou a 1,6 m no `caso4` e 1,4 m no `caso5`. O
+  com a encosta de 4 a 5%, o erro da pose chegou a 1,6 m no `caso4` e 1,4 m no `caso5`
+  (na bateria final, 3,1 ± 2,9 m e 1,9 ± 0,7 m de erro máximo, seção 7). O
   RTAB-Map não corrigiu, porque na volta o robô vê as árvores de outro ângulo e não fecha
   laço. `--slope 0.03` gera a encosta mais suave (2 a 3%) e `--slope 0` o olival plano.
