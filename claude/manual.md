@@ -921,8 +921,7 @@ apresentação, os resultados do passo 3 e os próximos passos.
 - As especificações do Delta-2A e do Helios-16P vieram de fichas técnicas de revendas (os
   sites dos links não abriram daqui); confira alcance, frequência e ruído com as fichas
   oficiais antes de citar na dissertação.
-- O ruído dos sensores só foi testado em missão no caso2 da plantação; faltam o caso3 e o
-  olival. Ele é branco e gaussiano, menos o bias do giroscópio: faltam buracos e bordas falsas na profundidade, reflexos no LiDAR e deriva por temperatura.
+- O ruído dos sensores (ligado em todas as rodadas da bateria final, nos quatro casos) é branco e gaussiano, menos o bias do giroscópio: faltam buracos e bordas falsas na profundidade, reflexos no LiDAR e deriva por temperatura.
 - A interface web só foi conferida na nuvem (Chromium headless); falta abrir no navegador do
   Windows com o WSL.
 - O joystick ainda não rodou no Webots (o teclado sim). O salvamento do mapa com nome, o
