@@ -816,6 +816,21 @@ contorno da pedra da cabeceira leste). No olival o Nav2 cumpre tudo, mas o robô
 *acha* que é o alvo: o erro de yaw de 4 a 6° nas manobras de cabeceira vira metros de desvio
 lateral na volta (até 8 m na semente 303 do caso 4), e o RTAB-Map não fecha laço para corrigir.
 
+**Olival depois das correções de yaw** (rumo pelas fileiras e ajustes do RTAB-Map no olival,
+seção 5; nuvem, 2026-11-23, mesmas sementes; CSVs em `resultados/yaw_olival/` nos arquivos
+do projeto):
+
+| Caso, semente | ATE (m) antes → depois | Erro máx. (m) | No alvo ≤ 0,5 m |
+|---|---|---|---|
+| caso4, 303 | 3,51 → 0,72 | 8,04 → 1,37 | 8/15 → 5/15 |
+| caso4, 101 | 1,13 → 0,96 | 2,12 → 1,66 | 5/15 → 5/15 |
+| caso5, 101 | 1,08 → 0,54 | 1,95 → 1,09 | 5/12 → 7/12 |
+
+O yaw na ida do caso 4 ficou com 0,4 a 0,5° rms (antes até 1,7°) e a volta não diverge mais.
+O que sobra no caso 4 não é yaw: na semente 101 o EKF anda 1,1 m a menos que o robô em 66 m
+(o raio das rodas sorteado pelo ruído erra ~1,7%) e o robô escorrega 0,3 a 0,5 m encosta abaixo
+na ida; nenhum dos dois é visto pelas rodas ou pelo IMU, e na ida não há com que fechar laço.
+
 ## 8. Interface web do operador (`operator:=true`)
 
 Página para operar o robô de um computador qualquer pelo navegador, sem ROS instalado nele
@@ -958,6 +973,10 @@ apresentação, os resultados do passo 3 e os próximos passos.
 - No olival, o robô escorrega encosta abaixo no declive lateral (nas manobras, nos desvios
   dos obstáculos e ao passar por cima de galhos), e as rodas e o IMU não veem isso: na nuvem,
   com a encosta de 4 a 5%, o erro da pose chegou a 1,6 m no `caso4` e 1,4 m no `caso5`
-  (na bateria final, 3,1 ± 2,9 m e 1,9 ± 0,7 m de erro máximo, seção 7). O
-  RTAB-Map não corrigiu, porque na volta o robô vê as árvores de outro ângulo e não fecha
-  laço. `--slope 0.03` gera a encosta mais suave (2 a 3%) e `--slope 0` o olival plano.
+  (na bateria final, 3,1 ± 2,9 m e 1,9 ± 0,7 m de erro máximo, seção 7). O erro de yaw que
+  fazia a volta divergir está corrigido (rumo pelas fileiras e ajustes do RTAB-Map, seção 5);
+  sobram o escorregamento lateral e o erro de distância das rodas na ida, que levam o robô a
+  1 a 1,7 m do alvo na cabeceira leste do caso 4. `--slope 0.03` gera a encosta mais suave
+  (2 a 3%) e `--slope 0` o olival plano.
+- O rumo pelas fileiras supõe fileiras retas e paralelas e foi validado em 3 rodadas no olival
+  (sementes 101 e 303); falta a bateria completa de 5 sementes com ele.
