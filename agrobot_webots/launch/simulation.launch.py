@@ -461,6 +461,17 @@ def generate_launch_description():
                     f'Já havia um mapa em {database}; ele foi guardado como '
                     f'{backup}.')))
         config = os.path.join(webots_share, 'config', 'rtabmap.yaml')
+        # Ajustes de um mundo (config/rtabmap_<mundo>.yaml), por cima do
+        # rtabmap.yaml: no olival, a correção máxima do ICP e a busca por
+        # proximidade sem limite no grafo (ver o arquivo).
+        world = os.path.splitext(os.path.basename(
+            LaunchConfiguration('world_name').perform(context)))[0]
+        world_config = os.path.join(
+            webots_share, 'config', f'rtabmap_{world}.yaml')
+        world_configs = [world_config] if os.path.isfile(world_config) else []
+        if world_configs:
+            actions.append(LogInfo(msg=(
+                f'RTAB-Map com os ajustes do mundo: {world_config}')))
         rtabmap_parameters = {
             'database_path': database,
             'delete_db_on_start': mapping,
@@ -486,8 +497,8 @@ def generate_launch_description():
             name='rtabmap',
             namespace='rtabmap',
             output='screen',
-            parameters=[config, rtabmap_parameters,
-                        {'use_sim_time': True}],
+            parameters=[config] + world_configs + [
+                rtabmap_parameters, {'use_sim_time': True}],
             remappings=rtabmap_remappings,
             # O rtabmap grava o mapa no banco ao fechar, e num mapa grande
             # isso passa dos 5 s que o launch espera antes de matá-lo.
