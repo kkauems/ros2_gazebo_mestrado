@@ -825,6 +825,7 @@ do projeto):
 | caso4, 303 | 3,51 → 0,72 | 8,04 → 1,37 | 8/15 → 5/15 |
 | caso4, 101 | 1,13 → 0,96 | 2,12 → 1,66 | 5/15 → 5/15 |
 | caso5, 101 | 1,08 → 0,54 | 1,95 → 1,09 | 5/12 → 7/12 |
+| caso5, 303 | 1,57 → 0,59 | 3,12 → 1,13 | 3/12 → 7/12 |
 
 O yaw na ida do caso 4 ficou com 0,4 a 0,5° rms (antes até 1,7°) e a volta não diverge mais.
 O que sobra no caso 4 não é yaw: na semente 101 o EKF anda 1,1 m a menos que o robô em 66 m
@@ -978,5 +979,5 @@ apresentação, os resultados do passo 3 e os próximos passos.
   sobram o escorregamento lateral e o erro de distância das rodas na ida, que levam o robô a
   1 a 1,7 m do alvo na cabeceira leste do caso 4. `--slope 0.03` gera a encosta mais suave
   (2 a 3%) e `--slope 0` o olival plano.
-- O rumo pelas fileiras supõe fileiras retas e paralelas e foi validado em 3 rodadas no olival
+- O rumo pelas fileiras supõe fileiras retas e paralelas e foi validado em 4 rodadas no olival
   (sementes 101 e 303); falta a bateria completa de 5 sementes com ele.
