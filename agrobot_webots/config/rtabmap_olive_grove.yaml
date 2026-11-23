@@ -1,0 +1,29 @@
+# RTAB-Map no olival (olive_grove.wbt): o que muda em relação ao
+# rtabmap.yaml. O simulation.launch.py carrega config/rtabmap_<mundo>.yaml
+# depois do rtabmap.yaml quando o arquivo existe; a plantação usa só o
+# rtabmap.yaml.
+#
+# Por quê: na ida pela entrelinha não há nada para fechar laço, e o yaw do
+# EKF deriva (bias do giroscópio, ~0,3 grau por minuto, e erro de escala de
+# 1%, ~2 graus nos dois giros de 90 graus da cabeceira). Na volta, pela
+# entrelinha a 7 m da de ida, a deriva já passa de 0,3 m, e com o
+# Icp/MaxTranslation da plantação (0,3 m) todo fechamento com a passada de
+# ida era recusado: o erro só crescia (bateria final: 1,5 m de ATE no caso 4,
+# até 8 m numa semente, e o robô no alvo em 52% dos waypoints).
+#
+# A correção máxima de 0,3 m existe para a plantação: as entrelinhas ficam a
+# 1,8 m e, com 0,5 m, o ICP escorregava ao longo da fileira ou para a
+# vizinha. No olival as entrelinhas ficam a 7 m e as árvores a cada 7 m: 1 m
+# ainda é menos de um terço da meia distância entre fileiras (3,5 m), e o ICP
+# com o LiDAR 3D trava nos troncos e nas copas. No banco de 2 voltas do
+# olival reprocessado (pose verdadeira como referência), o erro online da
+# pose caiu de 1,76 m (0,3 m) para 0,61 (0,6 m), 0,40 (0,8 m), 0,34 (1,0 m)
+# e 0,36 m (1,5 m).
+/rtabmap/rtabmap:
+  ros__parameters:
+    Icp/MaxTranslation: "1.0"
+    # Padrão 50: a busca por proximidade só olha nós a até 50 elos do grafo
+    # (uns 20 m de caminho). A passada de ida fica a mais de 150 elos da de
+    # volta até o primeiro fechamento; 0 tira o limite e deixa só o raio
+    # (RGBD/LocalRadius, 10 m) e a correção máxima do ICP decidirem.
+    RGBD/ProximityMaxGraphDepth: "0"

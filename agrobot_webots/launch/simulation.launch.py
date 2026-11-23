@@ -298,6 +298,22 @@ def generate_launch_description():
 
     # Rodas + IMU -> /odom e TF odom -> base_link (no lugar do driver). Com
     # a checagem de patinagem, as rodas chegam pelo wheel_slip_monitor.
+    def row_heading_on(context):
+        # Precisa do LiDAR 3D (a nuvem) e do EKF (quem funde a medida).
+        value = LaunchConfiguration('row_heading').perform(context).strip()
+        if value == 'auto':
+            # Ligado onde faz falta: no olival a ida pela entrelinha de 65 m
+            # não tem com que fechar laço e o yaw do giroscópio deriva. Na
+            # plantação o VSLAM já segura o yaw (fileiras de 9 m e
+            # entrelinhas a 1,8 m), e no caso 2 o rumo pelas fileiras não
+            # melhorou (yaw 0,6 -> 1,0 grau rms numa rodada).
+            world = os.path.basename(
+                LaunchConfiguration('world_name').perform(context))
+            on = world.startswith('olive_grove')
+        else:
+            on = value.lower() in ('true', '1', 'yes')
+        return on and flag(context, 'ekf') and flag(context, 'lidar3d')
+
     def start_ekf(context):
         if not flag(context, 'ekf'):
             return []
@@ -307,7 +323,23 @@ def generate_launch_description():
         ]
         if slip_check_on(context):
             parameters.append({'odom0': '/wheel/odom_checked'})
-        return [Node(
+        nodes = []
+        if row_heading_on(context):
+            # Rumo pelas fileiras (row_heading.py): o yaw absoluto vem do
+            # ângulo das fileiras no LiDAR 3D, e o IMU fica só com a
+            # velocidade de giro. O yaw do IMU deriva e não volta (sem
+            # magnetômetro); com os dois, o EKF ficaria entre a medida das
+            # fileiras e a deriva.
+            parameters.insert(1, os.path.join(
+                webots_share, 'config', 'ekf_row_heading.yaml'))
+            nodes.append(Node(
+                package='agrobot_webots',
+                executable='row_heading',
+                name='row_heading',
+                output='screen',
+                parameters=[{'use_sim_time': True}],
+            ))
+        return nodes + [Node(
             package='robot_localization',
             executable='ekf_node',
             name='ekf_filter_node',
@@ -461,6 +493,17 @@ def generate_launch_description():
                     f'Já havia um mapa em {database}; ele foi guardado como '
                     f'{backup}.')))
         config = os.path.join(webots_share, 'config', 'rtabmap.yaml')
+        # Ajustes de um mundo (config/rtabmap_<mundo>.yaml), por cima do
+        # rtabmap.yaml: no olival, a correção máxima do ICP e a busca por
+        # proximidade sem limite no grafo (ver o arquivo).
+        world = os.path.splitext(os.path.basename(
+            LaunchConfiguration('world_name').perform(context)))[0]
+        world_config = os.path.join(
+            webots_share, 'config', f'rtabmap_{world}.yaml')
+        world_configs = [world_config] if os.path.isfile(world_config) else []
+        if world_configs:
+            actions.append(LogInfo(msg=(
+                f'RTAB-Map com os ajustes do mundo: {world_config}')))
         rtabmap_parameters = {
             'database_path': database,
             'delete_db_on_start': mapping,
@@ -486,8 +529,8 @@ def generate_launch_description():
             name='rtabmap',
             namespace='rtabmap',
             output='screen',
-            parameters=[config, rtabmap_parameters,
-                        {'use_sim_time': True}],
+            parameters=[config] + world_configs + [
+                rtabmap_parameters, {'use_sim_time': True}],
             remappings=rtabmap_remappings,
             # O rtabmap grava o mapa no banco ao fechar, e num mapa grande
             # isso passa dos 5 s que o launch espera antes de matá-lo.
@@ -653,6 +696,9 @@ def generate_launch_description():
         if slip_check_on(context):
             # EKF com a checagem de patinagem pela odometria visual.
             modes[modes.index('ekf')] = 'ekf-vo'
+        if row_heading_on(context):
+            # Yaw do EKF pelo rumo das fileiras (row_heading.py).
+            modes[0] += '-rumo'
         if 'vslam' in modes and flag(context, 'vslam_localization'):
             # Localização num mapa salvo: outro rótulo nos CSVs, para não
             # misturar com as rodadas de mapeamento. Hífen, e não '_', porque
@@ -851,6 +897,11 @@ def generate_launch_description():
         # Checagem de patinagem das rodas pela odometria visual (com
         # ekf:=true e camera:=true; sem efeito sem eles).
         DeclareLaunchArgument('slip_check', default_value='true'),
+        # Rumo pelas fileiras (row_heading.py): o EKF recebe o yaw medido
+        # pelo ângulo das fileiras no LiDAR 3D no lugar do yaw do IMU, que
+        # deriva. Só com ekf:=true e lidar3d:=true. auto: só no olival;
+        # true ou false forçam. false: yaw só pelo IMU.
+        DeclareLaunchArgument('row_heading', default_value='auto'),
         # Ruído realista na IMU, nos encoders, no LiDAR e na câmera RGB-D
         # (sensor_noise.py). false: sensores ideais do Webots (rótulo
         # '-ideal' nos CSVs). noise_seed: 0 sorteia (a semente sai no log);

@@ -69,6 +69,7 @@ Fechar o Webots encerra o launch inteiro.
 | `waypoint_check` | `true` | Recusa waypoints onde o robô não cabe, não gira ou não chega (seção 7) |
 | `teleop` | vazio | Teleoperação: `joy` (joystick) ou `keyboard` (teclado, num terminal próprio). O operador tem prioridade sobre o Nav2 (seção 5) |
 | `slip_check` | `true` | Checagem de patinagem das rodas pela odometria visual (seção 5). Só age com `ekf:=true` e `camera:=true` |
+| `row_heading` | `auto` | Rumo pelas fileiras: o yaw do EKF vem do ângulo das fileiras no LiDAR 3D, no lugar do yaw do IMU (seção 5). `auto` liga só no olival; `true`/`false` forçam. Só com `ekf:=true` e `lidar3d:=true`; acrescenta `-rumo` ao rótulo dos CSVs |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 10) |
 | `sensor_noise` | `true` | Ruído realista na IMU, nos encoders, nos dois LiDARs e na câmera RGB-D (seção 3). `false`: sensores ideais do Webots, com `-ideal` no rótulo dos CSVs |
 | `noise_seed` | `0` | Semente do ruído. `0` sorteia uma nova (sai no log do driver); outro valor repete o ruído de uma rodada |
@@ -284,6 +285,25 @@ Nav2 (costmaps com o /scan): planeja em map, controla em odom ─► /cmd_vel_ra
   (perde ~0,4%). Na mesma semente de ruído, o caso 3 foi de 7/11 com 15 paradas para 11/11
   sem paradas (ATE 0,30 → 0,09 m) e o caso 4 do olival de ATE 1,01 para 0,73 m (15/15 nos
   dois); resultados em `resultados/erro_pose_serpentina/` nos arquivos do projeto.
+- **Rumo pelas fileiras (`row_heading.py`, `config/ekf_row_heading.yaml`, `row_heading:=auto`,
+  ligado no olival):** o yaw do giroscópio deriva (~0,6° por minuto com o ruído da seção 3, e
+  ~1° a cada giro de 90° pelo erro de escala) e, numa ida pela entrelinha de 65 m do olival, não
+  há nada já visto para o RTAB-Map fechar laço. Num pomar as fileiras são retas e paralelas:
+  o nó mede a direção delas na nuvem do LiDAR 3D (pontos de 0,3 a 4 m acima do chão local, até
+  40 m; para cada ângulo a até 8° do yaw previsto, projeta os pontos na normal e procura o
+  ângulo em que eles se juntam em faixas de 0,2 m) e publica o yaw em `/row_heading/pose`. O
+  EKF usa essa medida como yaw absoluto e o IMU só como velocidade de giro (o yaw do IMU deriva
+  e não volta). A direção das fileiras no `odom` é medida nas 5 primeiras nuvens, então o robô
+  não precisa partir alinhado; no olival a grade de 7 × 7 m tem linhas nas duas direções, e
+  vale o múltiplo de 90° mais perto. Só mede com o robô quase sem girar, com o pico nítido e a
+  até 3° do EKF. Hipótese: fileiras retas e paralelas.
+  - Medido no banco de um caso 4 (pose verdadeira, trechos retos): 0,5° rms por nuvem, sem
+    viés, contra 1,2° do EKF só com o IMU.
+  - O ruído de processo do yaw cai de 0,06 para 1e-5 rad²/s: com 0,06 cada medida substituía o
+    yaw, ele pulava a cada 0,4 s, o robô ziguezagueava (desvio do yaw na ida de 0,5 para 6°) e
+    escorregava encosta abaixo (2,3 m de erro lateral). Com 1e-5 a medida corrige aos poucos.
+  - Na plantação fica desligado: o VSLAM já segura o yaw ali, e no caso 2 o yaw rms foi de 0,6
+    para 1,0° com ele ligado (uma rodada).
 - O frame `odom` deriva por definição; nenhuma entrada do EKF mede posição. Quem corrige é o
   VSLAM.
 - Com `sensor_noise:=true` (padrão) o yaw do IMU deriva como o de uma IMU MEMS real (seção 3);
@@ -391,6 +411,14 @@ a nuvem do LiDAR 3D. Escolhas e motivos:
   na primeira passada. Uma deriva lenta e grande é problema da localização: no olival
   (2 voltas mapeando, 2026-11-18) a pose derivou até 3 m na lateral, e as duas grades ficaram
   com as oliveiras deslocadas.
+- **Ajustes do olival (`config/rtabmap_olive_grove.yaml`):** o launch carrega
+  `config/rtabmap_<mundo>.yaml` por cima do `rtabmap.yaml` quando existe. No olival,
+  `Icp/MaxTranslation` 1,0 m (0,3 na plantação) e `RGBD/ProximityMaxGraphDepth` 0 (padrão 50).
+  Na volta do caso 4, pela entrelinha a 7 m da de ida, a deriva já passava de 0,3 m e todo
+  fechamento com a passada de ida era recusado; e a ida fica a mais de 50 elos no grafo. Os 0,3 m
+  existem por causa das entrelinhas a 1,8 m da plantação; no olival elas ficam a 7 m. No banco de
+  2 voltas do olival reprocessado, o erro online da pose caiu de 1,76 m (0,3 m) para 0,61 (0,6),
+  0,40 (0,8), 0,34 (1,0) e 0,36 m (1,5).
 - **Fechamento global desligado (`Rtabmap/LoopThr` e `RGBD/AggressiveLoopThr` em 1,01):** as
   entrelinhas são iguais para a câmera e para o LiDAR (1,8 m de deslocamento dava o mesmo
   scan 2D). Só valem fechamentos por proximidade, perto da pose do EKF (câmera até 1 m e 45°,
@@ -788,6 +816,22 @@ contorno da pedra da cabeceira leste). No olival o Nav2 cumpre tudo, mas o robô
 *acha* que é o alvo: o erro de yaw de 4 a 6° nas manobras de cabeceira vira metros de desvio
 lateral na volta (até 8 m na semente 303 do caso 4), e o RTAB-Map não fecha laço para corrigir.
 
+**Olival depois das correções de yaw** (rumo pelas fileiras e ajustes do RTAB-Map no olival,
+seção 5; nuvem, 2026-11-23, mesmas sementes; CSVs em `resultados/yaw_olival/` nos arquivos
+do projeto):
+
+| Caso, semente | ATE (m) antes → depois | Erro máx. (m) | No alvo ≤ 0,5 m |
+|---|---|---|---|
+| caso4, 303 | 3,51 → 0,72 | 8,04 → 1,37 | 8/15 → 5/15 |
+| caso4, 101 | 1,13 → 0,96 | 2,12 → 1,66 | 5/15 → 5/15 |
+| caso5, 101 | 1,08 → 0,54 | 1,95 → 1,09 | 5/12 → 7/12 |
+| caso5, 303 | 1,57 → 0,59 | 3,12 → 1,13 | 3/12 → 7/12 |
+
+O yaw na ida do caso 4 ficou com 0,4 a 0,5° rms (antes até 1,7°) e a volta não diverge mais.
+O que sobra no caso 4 não é yaw: na semente 101 o EKF anda 1,1 m a menos que o robô em 66 m
+(o raio das rodas sorteado pelo ruído erra ~1,7%) e o robô escorrega 0,3 a 0,5 m encosta abaixo
+na ida; nenhum dos dois é visto pelas rodas ou pelo IMU, e na ida não há com que fechar laço.
+
 ## 8. Interface web do operador (`operator:=true`)
 
 Página para operar o robô de um computador qualquer pelo navegador, sem ROS instalado nele
@@ -930,6 +974,10 @@ apresentação, os resultados do passo 3 e os próximos passos.
 - No olival, o robô escorrega encosta abaixo no declive lateral (nas manobras, nos desvios
   dos obstáculos e ao passar por cima de galhos), e as rodas e o IMU não veem isso: na nuvem,
   com a encosta de 4 a 5%, o erro da pose chegou a 1,6 m no `caso4` e 1,4 m no `caso5`
-  (na bateria final, 3,1 ± 2,9 m e 1,9 ± 0,7 m de erro máximo, seção 7). O
-  RTAB-Map não corrigiu, porque na volta o robô vê as árvores de outro ângulo e não fecha
-  laço. `--slope 0.03` gera a encosta mais suave (2 a 3%) e `--slope 0` o olival plano.
+  (na bateria final, 3,1 ± 2,9 m e 1,9 ± 0,7 m de erro máximo, seção 7). O erro de yaw que
+  fazia a volta divergir está corrigido (rumo pelas fileiras e ajustes do RTAB-Map, seção 5);
+  sobram o escorregamento lateral e o erro de distância das rodas na ida, que levam o robô a
+  1 a 1,7 m do alvo na cabeceira leste do caso 4. `--slope 0.03` gera a encosta mais suave
+  (2 a 3%) e `--slope 0` o olival plano.
+- O rumo pelas fileiras supõe fileiras retas e paralelas e foi validado em 4 rodadas no olival
+  (sementes 101 e 303); falta a bateria completa de 5 sementes com ele.
