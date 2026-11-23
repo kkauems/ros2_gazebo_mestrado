@@ -330,22 +330,8 @@ def generate_launch_description():
             # velocidade de giro. O yaw do IMU deriva e não volta (sem
             # magnetômetro); com os dois, o EKF ficaria entre a medida das
             # fileiras e a deriva.
-            parameters.append({
-                'imu0_config': [False, False, False,
-                                False, False, False,
-                                False, False, False,
-                                False, False, True,
-                                False, False, False],
-                'pose0': '/row_heading/pose',
-                'pose0_config': [False, False, False,
-                                 False, False, True,
-                                 False, False, False,
-                                 False, False, False,
-                                 False, False, False],
-                'pose0_queue_size': 5,
-                'pose0_differential': False,
-                'pose0_relative': False,
-            })
+            parameters.insert(1, os.path.join(
+                webots_share, 'config', 'ekf_row_heading.yaml'))
             nodes.append(Node(
                 package='agrobot_webots',
                 executable='row_heading',

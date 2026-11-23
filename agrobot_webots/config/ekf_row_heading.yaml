@@ -1,0 +1,51 @@
+# EKF com o rumo pelas fileiras (row_heading.py, row_heading:=true ou auto
+# no olival): o que muda em relação ao ekf.yaml. O simulation.launch.py
+# carrega este arquivo depois do ekf.yaml.
+#
+# O yaw absoluto vem de /row_heading/pose (ângulo das fileiras no LiDAR 3D),
+# e o IMU fica só com a velocidade de giro. O yaw do IMU deriva e não volta
+# (sem magnetômetro); com os dois, o EKF ficaria entre a medida das fileiras
+# e a deriva.
+ekf_filter_node:
+  ros__parameters:
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+
+    pose0: /row_heading/pose
+    pose0_config: [false, false, false,
+                   false, false, true,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose0_queue_size: 5
+    pose0_differential: false
+    pose0_relative: false
+
+    # Ruído de processo do yaw 1e-5 rad²/s (o ekf.yaml usa 0,06): entre duas
+    # medidas das fileiras quem leva o yaw é o giroscópio, que erra ~0,01
+    # grau/s. Com 0,06 a incerteza do yaw crescia ~14 graus/√s, cada medida
+    # (0,5 a 1 grau de erro) substituía o yaw inteiro, e o yaw pulava a cada
+    # 0,4 s: o controlador corrigia os pulos, o robô ziguezagueava (desvio
+    # padrão do yaw na ida de 0,5 para 6 graus) e escorregava encosta abaixo
+    # (2,3 m de erro lateral na ida do caso 4). Com 1e-5 cada medida
+    # corrige uma fração pequena, e a média das medidas segura a deriva.
+    # Só o elemento do yaw (linha e coluna 6) muda.
+    process_noise_covariance: [
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,  0.06,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,  0.03,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,  0.03,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0, 0.00001, 0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0, 0.025,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.04,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.02,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0, 0.015]
