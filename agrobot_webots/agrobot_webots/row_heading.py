@@ -210,6 +210,7 @@ class RowHeading(Node):
         self.declare_parameter('max_yaw_rate', 0.05)   # rad/s
         self.declare_parameter('min_points', 200)
         self.declare_parameter('calibration_samples', 5)
+        self.declare_parameter('azimuth_distance', 10.0)   # m
         # 1 grau de desvio por medida: a medida erra ~0,5 grau rms e o EKF
         # soma várias por segundo.
         self.declare_parameter('yaw_std_deg', 1.0)
@@ -242,6 +243,8 @@ class RowHeading(Node):
         self.max_yaw_rate = p('max_yaw_rate').value
         self.min_points = p('min_points').value
         self.calibration_samples = p('calibration_samples').value
+        self.azimuth_distance = p('azimuth_distance').value
+        self.azimuth_start = None
         self.yaw_variance = math.radians(p('yaw_std_deg').value) ** 2
         self.lateral = p('lateral').value
         # Espaçamento das linhas na normal: k par anda ao longo das
@@ -359,7 +362,7 @@ class RowHeading(Node):
             self.rejected += 1
             return
         if self.azimuth is None:
-            self.calibrate(obstacles, yaw_then)
+            self.calibrate(obstacles, pose_then)
             return
         if self.lateral and None in self.reference:
             # Referência das linhas: junta os primeiros metros e segue
@@ -383,7 +386,7 @@ class RowHeading(Node):
             self.measure_lateral(obstacles, angle, k, pose_then)
 
     def normal(self, parity):
-        """Devolve a normal (no odom) das linhas de paridade 0 (fileiras) ou 1."""
+        """Devolve o vetor perpendicular (no odom) às linhas de paridade k % 2."""
         direction = self.azimuth + parity * QUARTER
         return -math.sin(direction), math.cos(direction)
 
@@ -479,9 +482,15 @@ class RowHeading(Node):
         message.pose.covariance = covariance
         self.position_publisher.publish(message)
 
-    def calibrate(self, obstacles, yaw_then):
+    def calibrate(self, obstacles, pose):
         # Direção das fileiras no odom: busca em todos os ângulos (de -45 a
-        # 45 graus em volta da frente do robô) e tira a média circular.
+        # 45 graus em volta da frente do robô) e tira a média circular das
+        # nuvens dos primeiros azimuth_distance m. Só com as nuvens da
+        # partida (na cabeceira, com as árvores só à frente) a direção saía
+        # 0,35 a 0,47 grau torta: 0,4 a 0,5 m de erro lateral a 60 m.
+        yaw_then = pose[0]
+        if self.azimuth_start is None:
+            self.azimuth_start = pose[1:]
         angle, quality, _ = heading_from_points(
             obstacles, 0.0, math.radians(45.0), bin_width=self.bin_width,
             range_max=self.range_max)
@@ -489,7 +498,10 @@ class RowHeading(Node):
             self.rejected += 1
             return
         self.calibration.append(wrap(yaw_then + angle))
-        if len(self.calibration) < self.calibration_samples:
+        travelled = math.hypot(pose[1] - self.azimuth_start[0],
+                               pose[2] - self.azimuth_start[1])
+        if (len(self.calibration) < self.calibration_samples
+                or travelled < self.azimuth_distance):
             return
         # Média em 4x o ângulo: as direções valem módulo 90 graus.
         c = np.mean([math.cos(4 * a) for a in self.calibration])
@@ -497,7 +509,8 @@ class RowHeading(Node):
         self.azimuth = math.atan2(s, c) / 4
         self.get_logger().info(
             f'Fileiras a {math.degrees(self.azimuth):.2f} graus no odom '
-            f'({len(self.calibration)} nuvens); o rumo pelas fileiras '
+            f'({len(self.calibration)} nuvens em {travelled:.0f} m); o rumo '
+            'pelas fileiras '
             'passa a corrigir o yaw do EKF.')
 
     def publish(self, yaw):
