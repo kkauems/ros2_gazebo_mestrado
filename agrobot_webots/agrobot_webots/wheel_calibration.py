@@ -40,6 +40,7 @@ import numpy as np
 import rclpy
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu
 
 
@@ -130,7 +131,9 @@ class WheelCalibration(Node):
             'heading')}
         self.create_subscription(Odometry, '/ground_truth/odom',
                                  self.truth_callback, 50)
-        self.create_subscription(Imu, '/imu/data', self.imu_callback, 50)
+        # O driver publica a IMU como best effort.
+        self.create_subscription(Imu, '/imu/data', self.imu_callback,
+                                 qos_profile_sensor_data)
         self.create_subscription(Odometry, '/wheel/odom',
                                  self.wheel_callback, 50)
         self.create_timer(self.get_parameter('period').value, self.report)

@@ -28,6 +28,7 @@ import math
 import rclpy
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu
 
 
@@ -59,7 +60,9 @@ class SlopeSlip(Node):
         self.roll = None
         self.publisher = self.create_publisher(
             Odometry, p('output_topic').value, 10)
-        self.create_subscription(Imu, '/imu/data', self.imu_callback, 50)
+        # O driver publica a IMU como best effort.
+        self.create_subscription(Imu, '/imu/data', self.imu_callback,
+                                 qos_profile_sensor_data)
         self.create_subscription(Odometry, p('input_topic').value,
                                  self.odom_callback, 50)
         self.get_logger().info(
