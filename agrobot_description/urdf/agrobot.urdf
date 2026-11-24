@@ -38,6 +38,9 @@
       <wheelRadius>0.22</wheelRadius>
       <wheelSeparation>0.96</wheelSeparation>
       <wheelSeparationScale>1.33</wheelSeparationScale>
+      <!-- Raio efetivo / raio nominal na odometria das rodas (calibração);
+           o simulation.launch.py troca com wheel_radius_scale -->
+      <wheelRadiusScale>1.0</wheelRadiusScale>
       <!-- /odom + TF odom->base_link pelo driver; o simulation.launch.py
            troca para false com ekf:=true (quem publica é o EKF) -->
       <publishOdom>true</publishOdom>

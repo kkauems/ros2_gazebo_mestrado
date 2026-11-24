@@ -4,6 +4,8 @@ import shutil
 import tempfile
 import time
 
+import yaml
+
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -40,6 +42,7 @@ NOISE_OFF = '<sensorNoise>false</sensorNoise>'
 NOISE_SEED = r'<noiseSeed>\s*\d+\s*</noiseSeed>'
 LIDAR3D_ON = r'<lidar3dPeriod>\s*\d+\s*</lidar3dPeriod>'
 LIDAR3D_OFF = '<lidar3dPeriod>0</lidar3dPeriod>'
+WHEEL_SCALE = r'<wheelRadiusScale>[^<]*</wheelRadiusScale>'
 
 # Camada de segurança (safety:=true): tudo o que comanda o robô (Nav2,
 # cmd_vel_mux) publica em /cmd_vel_raw, e só o collision_monitor publica no
@@ -52,7 +55,7 @@ LIDAR_MERGED = '/lidar3d/merged'
 
 
 def driver_urdf(robot_description, ekf, camera, data_camera=False,
-                noise=True, noise_seed=0, lidar3d=True):
+                noise=True, noise_seed=0, lidar3d=True, wheel_scale=1.0):
     """
     Caminho do URDF para o driver, com as trocas pedidas no launch.
 
@@ -60,9 +63,14 @@ def driver_urdf(robot_description, ekf, camera, data_camera=False,
     VSLAM, e sem data_camera, não liga a de aquisição de dados (o Webots
     também deixa de renderizá-las); sem lidar3d, nem o LiDAR 3D. Sem
     noise, os sensores ficam ideais;
-    noise_seed > 0 repete o ruído de uma rodada.
+    noise_seed > 0 repete o ruído de uma rodada. wheel_scale: raio efetivo /
+    nominal na odometria das rodas (calibração).
     """
     replacements = []
+    if wheel_scale != 1.0:
+        replacements.append(
+            (WHEEL_SCALE,
+             f'<wheelRadiusScale>{wheel_scale:.6f}</wheelRadiusScale>'))
     if not noise:
         replacements.append((NOISE_ON, NOISE_OFF))
     if noise_seed > 0:
@@ -145,6 +153,64 @@ def noise_seed(context):
             f'noise_seed:={value} tem que ser um inteiro >= 0 '
             '(0 = semente nova).')
     return int(value)
+
+
+def world_key(context):
+    """Nome do mundo sem .wbt (olive_grove, plantation_field, ...)."""
+    world = os.path.basename(
+        LaunchConfiguration('world_name').perform(context))
+    return os.path.splitext(world)[0]
+
+
+def wheel_calibration(context):
+    """
+    Calibração das rodas e do escorregamento deste mundo e deste robô.
+
+    config/wheel_calibration.yaml, por mundo e por semente do ruído (no
+    simulador a semente faz o papel do robô: o raio de cada pneu e o offset
+    da IMU saem dela), ou 'ideal' com sensor_noise:=false. Vazio quando não
+    há calibração (semente sorteada ou mundo sem entrada).
+    """
+    path = os.path.join(get_package_share_directory('agrobot_webots'),
+                        'config', 'wheel_calibration.yaml')
+    if not os.path.isfile(path):
+        return {}
+    with open(path) as handle:
+        table = (yaml.safe_load(handle) or {}).get(world_key(context)) or {}
+    if not flag(context, 'sensor_noise'):
+        return table.get('ideal') or {}
+    return table.get(noise_seed(context)) or {}
+
+
+def wheel_scale(context):
+    """Raio efetivo / nominal: wheel_radius_scale ou a calibração (auto)."""
+    value = LaunchConfiguration('wheel_radius_scale').perform(context).strip()
+    if value == 'auto':
+        return float(wheel_calibration(context).get('wheel_radius_scale', 1.0))
+    return float(value)
+
+
+LATERAL_MODES = ('none', 'imu', 'rows')
+# lateral_correction:=auto no olival (o modo que ficou melhor nos casos 4 e
+# 5); nos outros mundos, none.
+LATERAL_AUTO = {'olive_grove': 'none'}
+
+
+def lateral_mode(context):
+    """Correção lateral do EKF: 'none', 'imu' (slope_slip) ou 'rows'."""
+    mode = LaunchConfiguration('lateral_correction').perform(
+        context).strip().lower()
+    if mode == 'auto':
+        mode = LATERAL_AUTO.get(world_key(context), 'none')
+    if mode in ('', 'false'):
+        mode = 'none'
+    if mode not in LATERAL_MODES:
+        raise RuntimeError(
+            f'lateral_correction:={mode} não existe; use auto, none, imu '
+            'ou rows.')
+    if not flag(context, 'ekf'):
+        return 'none'
+    return mode
 
 
 TELEOP_MODES = ('joy', 'keyboard')
@@ -288,7 +354,8 @@ def generate_launch_description():
                                 flag(context, 'data_camera'),
                                 flag(context, 'sensor_noise'),
                                 noise_seed(context),
-                                flag(context, 'lidar3d'))},
+                                flag(context, 'lidar3d'),
+                                wheel_scale(context))},
                 {'use_sim_time': True},
             ],
             output='screen',
@@ -321,9 +388,40 @@ def generate_launch_description():
             os.path.join(webots_share, 'config', 'ekf.yaml'),
             {'use_sim_time': True},
         ]
-        if slip_check_on(context):
-            parameters.append({'odom0': '/wheel/odom_checked'})
+        wheels = ('/wheel/odom_checked' if slip_check_on(context)
+                  else '/wheel/odom')
         nodes = []
+        lateral = lateral_mode(context)
+        if lateral == 'imu':
+            # Escorregamento encosta abaixo pela inclinação da IMU
+            # (slope_slip.py): vy das rodas += ganho * sin(roll - offset) *
+            # |vx|, com o ganho e o offset da calibração.
+            calibration = wheel_calibration(context)
+            if 'slope_slip_gain' not in calibration:
+                raise RuntimeError(
+                    'lateral_correction:=imu precisa do ganho do '
+                    'escorregamento em config/wheel_calibration.yaml para '
+                    'este mundo e esta semente (rode o wheel_calibration).')
+            nodes.append(Node(
+                package='agrobot_webots',
+                executable='slope_slip',
+                name='slope_slip',
+                output='screen',
+                parameters=[{
+                    'input_topic': wheels,
+                    'output_topic': '/wheel/odom_slope',
+                    'gain': float(calibration['slope_slip_gain']),
+                    'roll_offset_deg': float(
+                        calibration.get('roll_offset_deg', 0.0)),
+                    'use_sim_time': True,
+                }],
+            ))
+            wheels = '/wheel/odom_slope'
+        parameters.append({'odom0': wheels})
+        if lateral == 'rows' and not row_heading_on(context):
+            raise RuntimeError(
+                'lateral_correction:=rows precisa do rumo pelas fileiras '
+                '(row_heading, ekf:=true e lidar3d:=true).')
         if row_heading_on(context):
             # Rumo pelas fileiras (row_heading.py): o yaw absoluto vem do
             # ângulo das fileiras no LiDAR 3D, e o IMU fica só com a
@@ -332,12 +430,17 @@ def generate_launch_description():
             # fileiras e a deriva.
             parameters.insert(1, os.path.join(
                 webots_share, 'config', 'ekf_row_heading.yaml'))
+            if lateral == 'rows':
+                # Posição lateral pelas fileiras: /row_heading/position.
+                parameters.insert(2, os.path.join(
+                    webots_share, 'config', 'ekf_row_position.yaml'))
             nodes.append(Node(
                 package='agrobot_webots',
                 executable='row_heading',
                 name='row_heading',
                 output='screen',
-                parameters=[{'use_sim_time': True}],
+                parameters=[{'use_sim_time': True,
+                             'lateral': lateral == 'rows'}],
             ))
         return nodes + [Node(
             package='robot_localization',
@@ -699,6 +802,13 @@ def generate_launch_description():
         if row_heading_on(context):
             # Yaw do EKF pelo rumo das fileiras (row_heading.py).
             modes[0] += '-rumo'
+        if modes and modes[0].startswith('ekf'):
+            if wheel_scale(context) != 1.0:
+                # Raio das rodas calibrado (wheel_radius_scale).
+                modes[0] += '-cal'
+            # Correção lateral: inclinação da IMU ou posição pelas fileiras.
+            modes[0] += {'imu': '-incl', 'rows': '-lat'}.get(
+                lateral_mode(context), '')
         if 'vslam' in modes and flag(context, 'vslam_localization'):
             # Localização num mapa salvo: outro rótulo nos CSVs, para não
             # misturar com as rodadas de mapeamento. Hífen, e não '_', porque
@@ -756,6 +866,27 @@ def generate_launch_description():
         )]
 
     mission = OpaqueFunction(function=start_mission)
+
+    def start_wheel_calibration(context):
+        # Rodada de calibração das rodas e do escorregamento
+        # (wheel_calibration.py): grava dados/calibracao/<mundo>_semente<N>.
+        if not flag(context, 'wheel_calibration'):
+            return []
+        seed = (noise_seed(context) if flag(context, 'sensor_noise')
+                else 'ideal')
+        return [Node(
+            package='agrobot_webots',
+            executable='wheel_calibration',
+            name='wheel_calibration',
+            output='screen',
+            parameters=[{
+                'output_file': data_dir(
+                    'calibracao', f'{world_key(context)}_semente{seed}.yaml'),
+                'use_sim_time': True,
+            }],
+        )]
+
+    calibration_node = OpaqueFunction(function=start_wheel_calibration)
 
     def start_recorder(context):
         # Grava as fotos da câmera de aquisição com a pose estimada e a
@@ -908,6 +1039,19 @@ def generate_launch_description():
         # outro valor repete o ruído de uma rodada.
         DeclareLaunchArgument('sensor_noise', default_value='true'),
         DeclareLaunchArgument('noise_seed', default_value='0'),
+        # Raio efetivo / nominal na odometria das rodas. auto: o da
+        # calibração em config/wheel_calibration.yaml para o mundo e a
+        # semente (1,0 se não houver); um número força.
+        DeclareLaunchArgument('wheel_radius_scale', default_value='auto'),
+        # Correção lateral do EKF (o escorregamento encosta abaixo): imu
+        # (slope_slip.py, pela inclinação), rows (row_heading.py, pela
+        # posição das fileiras) ou none. auto: o melhor no olival, none nos
+        # outros mundos.
+        DeclareLaunchArgument('lateral_correction', default_value='auto'),
+        # Rodada de calibração (wheel_calibration.py): mede o raio efetivo,
+        # o offset do roll e o ganho do escorregamento contra a pose
+        # verdadeira.
+        DeclareLaunchArgument('wheel_calibration', default_value='false'),
         # Teleoperação: joy (joystick) ou keyboard (teclado, num terminal
         # próprio). Vazio: sem teleoperação, o Nav2 manda direto no /cmd_vel.
         DeclareLaunchArgument('teleop', default_value=''),
@@ -936,6 +1080,7 @@ def generate_launch_description():
         slam,
         navigation,
         mission,
+        calibration_node,
         recorder,
         operator,
         rviz,

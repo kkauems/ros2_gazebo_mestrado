@@ -5,7 +5,8 @@ import math
 import numpy as np
 
 from agrobot_webots.row_heading import (
-    heading_from_points, obstacle_points, row_yaw, wrap, yaw_from_rows)
+    heading_from_points, obstacle_points, row_offset, row_yaw, RowHeading,
+    wrap, wrap_spacing, yaw_from_rows)
 
 
 def grove(robot_yaw, spacing=7.0, slope=0.05, seed=0):
@@ -81,3 +82,105 @@ def test_no_rows_has_low_quality():
     _, quality, _ = heading_from_points(
         obstacle_points(cloud), 0.0, math.radians(8))
     assert quality < 1.2
+
+
+# --- Posição lateral pelas fileiras (lateral_correction:=rows) ---
+
+def shifted_grove(x, y, yaw, seed=0):
+    """
+    Nuvem vista de um robô em (x, y, yaw) no frame das fileiras.
+
+    Troncos da grade de 7 m em (7 i + 1,3; 7 j + 3,5): com o robô na
+    origem, as fileiras ficam a 3,5 m de cada lado.
+    """
+    cloud = grove(0.0, seed=seed)
+    p = cloud.copy()
+    p[:, 0] -= x
+    p[:, 1] -= y
+    c, s = math.cos(-yaw), math.sin(-yaw)
+    return np.column_stack([c * p[:, 0] - s * p[:, 1],
+                            s * p[:, 0] + c * p[:, 1], p[:, 2]])
+
+
+def test_row_offset_follows_lateral_position():
+    for shift in (0.0, 0.4, -0.8, 1.7):
+        obstacles = obstacle_points(shifted_grove(0.0, shift, 0.0))
+        offset, concentration = row_offset(obstacles, 0.0, 7.0)
+        assert abs(wrap_spacing(offset - (3.5 - shift), 7.0)) < 0.05
+        assert concentration > 3.0
+
+
+def test_row_offset_without_rows_is_flat():
+    rng = np.random.default_rng(1)
+    points = rng.uniform(-15, 15, (3000, 2))
+    _, concentration = row_offset(points, 0.0, 7.0)
+    assert concentration < 1.5
+
+
+class FakeRowHeading(RowHeading):
+    """Só a matemática da posição lateral, sem nó ROS."""
+
+    def __init__(self):
+        self.azimuth = 0.0
+        self.spacing = (7.0, 7.0)
+        self.lateral_range = 15.0
+        self.min_concentration = 2.0
+        self.max_offset = 1.0
+        self.lateral_variance = 0.09
+        self.gate = math.radians(8.0)
+        self.bin_width = 0.2
+        self.range_max = 40.0
+        self.min_quality = 1.2
+        self.calibration_samples = 1
+        self.reference = [None, None]
+        self.reference_samples = ([], [])
+        self.lateral_sent = self.lateral_rejected = 0
+        self.published = []
+
+    def get_logger(self):
+        class Quiet:
+            def info(self, *args, **kwargs):
+                pass
+        return Quiet()
+
+    def publish_position(self, x, y, nx, ny):
+        self.published.append((x, y, nx, ny))
+
+
+def test_lateral_error_is_measured_in_every_direction():
+    node = FakeRowHeading()
+    # Partida: robô na origem, EKF certo.
+    node.calibrate_lateral(
+        obstacle_points(shifted_grove(0.0, 0.0, 0.0)), (0.0, 0.0, 0.0))
+    assert abs(wrap_spacing(node.reference[0] - 3.5, 7.0)) < 0.05
+    # Colunas: direção +y, normal (-1, 0): x = 1,3 vira -1,3.
+    assert abs(wrap_spacing(node.reference[1] + 1.3, 7.0)) < 0.1
+    # (x, y, yaw) verdadeiros e o erro do EKF (dx, dy).
+    for true, error in (((20.0, 0.4, 0.0), (0.0, -0.4)),
+                        ((30.0, -0.3, math.pi), (0.0, 0.3)),
+                        ((40.0, 3.0, math.pi / 2), (0.5, 0.0)),
+                        ((40.0, 10.0, -math.pi / 2), (-0.6, 0.0))):
+        x, y, yaw = true
+        ekf = (yaw, x + error[0], y + error[1])
+        node.position = ekf[1:]
+        node.published.clear()
+        obstacles = obstacle_points(shifted_grove(x, y, yaw))
+        predicted, k = row_yaw(yaw, node.azimuth)
+        angle, _, _ = heading_from_points(obstacles, predicted, node.gate)
+        node.measure_lateral(obstacles, angle, k, ekf)
+        assert len(node.published) == 1, true
+        px, py, nx, ny = node.published[0]
+        # Corrige só na normal das linhas.
+        assert abs((px - x) * nx + (py - y) * ny) < 0.05, true
+        assert abs((px - ekf[1]) * ny - (py - ekf[2]) * nx) < 1e-9
+
+
+def test_lateral_rejects_large_jumps():
+    node = FakeRowHeading()
+    node.calibrate_lateral(
+        obstacle_points(shifted_grove(0.0, 0.0, 0.0)), (0.0, 0.0, 0.0))
+    node.position = (20.0, 0.0)
+    obstacles = obstacle_points(shifted_grove(20.0, 2.0, 0.0))
+    node.measure_lateral(obstacles, 0.0, 0, (0.0, 20.0, 0.0))
+    assert node.published == []
+    assert node.lateral_rejected == 1

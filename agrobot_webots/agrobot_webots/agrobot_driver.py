@@ -162,6 +162,12 @@ class AgrobotDriver:
         self.robot = webots_node.robot
         self.time_step = int(self.robot.getBasicTimeStep())
         self.wheel_radius = float(properties.get('wheelRadius', 0.22))
+        # Calibração do raio efetivo (distância verdadeira / distância das
+        # rodas, medida pelo wheel_calibration.py): só na odometria, o
+        # comando dos motores continua com o raio nominal. O launch troca
+        # com wheel_radius_scale (auto: config/wheel_calibration.yaml).
+        self.wheel_radius_scale = float(
+            properties.get('wheelRadiusScale', 1.0))
         self.wheel_separation = float(properties.get('wheelSeparation', 0.96))
         # Skid-steer escorrega nas curvas: a separação efetiva é maior.
         self.wheel_separation_scale = float(
@@ -871,8 +877,9 @@ class AgrobotDriver:
             self.last_time = now
             return
 
-        d_left = (left - self.last_left) * self.wheel_radius
-        d_right = (right - self.last_right) * self.wheel_radius
+        radius = self.wheel_radius * self.wheel_radius_scale
+        d_left = (left - self.last_left) * radius
+        d_right = (right - self.last_right) * radius
         dt = now - self.last_time
         self.last_left = left
         self.last_right = right

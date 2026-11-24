@@ -37,6 +37,9 @@ CASES = {
     'caso3_plantacao_serpentina': 'plantation_field.wbt',
     'caso4_olival_ida_volta': 'olive_grove.wbt',
     'caso5_olival_encosta': 'olive_grove.wbt',
+    # Rodada de calibração das rodas (com wheel_calibration:=true
+    # wheel_radius_scale:=1.0 lateral_correction:=none; seção 5 do manual).
+    'calibracao_rodas_olival': 'olive_grove.wbt',
 }
 SEEDS = [101, 202, 303, 404, 505]
 
@@ -136,7 +139,8 @@ def run_one(case, world, seed, out_dir, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[1])
-    parser.add_argument('--cases', nargs='+', default=list(CASES))
+    parser.add_argument('--cases', nargs='+', default=[
+        case for case in CASES if not case.startswith('calibracao')])
     parser.add_argument('--seeds', nargs='+', type=int, default=SEEDS)
     parser.add_argument('--out', default='')
     parser.add_argument('--headless', action='store_true',

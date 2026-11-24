@@ -1,0 +1,23 @@
+# EKF com a posição lateral pelas fileiras (row_heading.py com lateral:=true,
+# lateral_correction:=rows): o que muda em relação ao ekf.yaml e ao
+# ekf_row_heading.yaml. O simulation.launch.py carrega este arquivo depois
+# dos dois.
+#
+# /row_heading/position traz a posição do robô corrigida na direção
+# perpendicular às fileiras, com variância pequena só nessa direção e 1e6
+# ao longo delas (a covariância não é diagonal). Assim a mesma entrada
+# corrige y andando ao longo das fileiras e x nas cabeceiras.
+ekf_filter_node:
+  ros__parameters:
+    pose1: /row_heading/position
+    pose1_config: [true,  true,  false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose1_queue_size: 5
+    pose1_differential: false
+    pose1_relative: false
+    # Medida a mais de 4 desvios padrão do previsto: descartada (fileira
+    # confundida com outra estrutura, como a vinha ao norte).
+    pose1_rejection_threshold: 4.0
