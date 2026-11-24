@@ -132,6 +132,8 @@ class FakeRowHeading(RowHeading):
         self.range_max = 40.0
         self.min_quality = 1.2
         self.calibration_samples = 1
+        self.reference_distance = 0.0
+        self.reference_start = None
         self.reference = [None, None]
         self.reference_samples = ([], [])
         self.lateral_sent = self.lateral_rejected = 0

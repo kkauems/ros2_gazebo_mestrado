@@ -220,7 +220,14 @@ class RowHeading(Node):
         self.declare_parameter('lateral_range', 15.0)
         self.declare_parameter('lateral_concentration', 2.0)
         self.declare_parameter('max_offset', 1.0)      # m
-        self.declare_parameter('lateral_std', 0.3)     # m por medida
+        # Medido no banco de 2 voltas do olival (pose verdadeira): 0,15 m
+        # rms por nuvem, mas com erros que mudam devagar ao longo da
+        # entrelinha (copas e árvores jovens ou faltando), de +-0,2 m.
+        self.declare_parameter('lateral_std', 0.2)     # m por medida
+        # A referência das linhas no odom é a média dos primeiros
+        # reference_distance m andados (o EKF ainda quase não derivou):
+        # medida num ponto só, ela herdava o erro local de 0,1 a 0,4 m.
+        self.declare_parameter('reference_distance', 20.0)
         p = self.get_parameter
         self.base_frame = p('base_frame').value
         self.odom_frame = p('odom_frame').value
@@ -244,6 +251,8 @@ class RowHeading(Node):
         self.min_concentration = p('lateral_concentration').value
         self.max_offset = p('max_offset').value
         self.lateral_variance = p('lateral_std').value ** 2
+        self.reference_distance = p('reference_distance').value
+        self.reference_start = None
         # Fase das linhas no odom (k par, k ímpar), medida na partida.
         self.reference = [None, None]
         self.reference_samples = ([], [])
@@ -353,8 +362,9 @@ class RowHeading(Node):
             self.calibrate(obstacles, yaw_then)
             return
         if self.lateral and None in self.reference:
+            # Referência das linhas: junta os primeiros metros e segue
+            # medindo o yaw.
             self.calibrate_lateral(obstacles, pose_then)
-            return
         predicted, k = row_yaw(yaw_then, self.azimuth)
         angle, quality, edge = heading_from_points(
             obstacles, predicted, self.gate, bin_width=self.bin_width,
@@ -369,7 +379,7 @@ class RowHeading(Node):
         yaw_now = self.odom[0]
         self.publish(wrap(measured + wrap(yaw_now - yaw_then)))
         self.sent += 1
-        if self.lateral:
+        if self.lateral and None not in self.reference:
             self.measure_lateral(obstacles, angle, k, pose_then)
 
     def normal(self, parity):
@@ -396,8 +406,11 @@ class RowHeading(Node):
         return (robot + sign * offset) % spacing, concentration
 
     def calibrate_lateral(self, obstacles, pose):
-        # Na partida (o EKF ainda não derivou), a fase das linhas nas duas
-        # direções da grade vira a referência no odom.
+        # Nos primeiros reference_distance m (o EKF ainda quase não
+        # derivou), a fase das linhas nas duas direções da grade, em média,
+        # vira a referência no odom.
+        if self.reference_start is None:
+            self.reference_start = pose[1:]
         for parity in (0, 1):
             # Direção canônica das linhas (k = parity) no frame do robô.
             predicted = wrap(self.azimuth + parity * QUARTER - pose[0])
@@ -410,9 +423,11 @@ class RowHeading(Node):
                 obstacles, angle, parity, pose)
             if concentration >= self.min_concentration:
                 self.reference_samples[parity].append(phase)
-        if min(len(s) for s in self.reference_samples) < (
-                self.calibration_samples):
-            self.lateral_rejected += 1
+        travelled = math.hypot(pose[1] - self.reference_start[0],
+                               pose[2] - self.reference_start[1])
+        if (travelled < self.reference_distance
+                or min(len(s) for s in self.reference_samples) < (
+                    self.calibration_samples)):
             return
         for parity in (0, 1):
             spacing = self.spacing[parity]
@@ -423,8 +438,11 @@ class RowHeading(Node):
             self.reference[parity] = (mean / (2 * math.pi) * spacing) % spacing
         self.get_logger().info(
             f'Linhas no odom a {self.reference[0]:.2f} m (fileiras) e '
-            f'{self.reference[1]:.2f} m (colunas) na normal; a posição '
-            'lateral pelas fileiras passa a corrigir o EKF.')
+            f'{self.reference[1]:.2f} m (colunas) na normal '
+            f'({len(self.reference_samples[0])} e '
+            f'{len(self.reference_samples[1])} nuvens em '
+            f'{travelled:.0f} m); a posição lateral pelas fileiras passa a '
+            'corrigir o EKF.')
 
     def measure_lateral(self, obstacles, angle, k, pose):
         parity = k % 2
