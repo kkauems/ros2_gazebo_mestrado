@@ -210,7 +210,7 @@ class RowHeading(Node):
         self.declare_parameter('max_yaw_rate', 0.05)   # rad/s
         self.declare_parameter('min_points', 200)
         self.declare_parameter('calibration_samples', 5)
-        self.declare_parameter('azimuth_distance', 10.0)   # m
+        self.declare_parameter('azimuth_distance', 0.0)    # m
         # 1 grau de desvio por medida: a medida erra ~0,5 grau rms e o EKF
         # soma várias por segundo.
         self.declare_parameter('yaw_std_deg', 1.0)
@@ -485,9 +485,11 @@ class RowHeading(Node):
     def calibrate(self, obstacles, pose):
         # Direção das fileiras no odom: busca em todos os ângulos (de -45 a
         # 45 graus em volta da frente do robô) e tira a média circular das
-        # nuvens dos primeiros azimuth_distance m. Só com as nuvens da
-        # partida (na cabeceira, com as árvores só à frente) a direção saía
-        # 0,35 a 0,47 grau torta: 0,4 a 0,5 m de erro lateral a 60 m.
+        # primeiras nuvens (e dos primeiros azimuth_distance m, se > 0).
+        # As oliveiras saem da grade até ~0,4 m, e a direção medida de um
+        # lugar só fica 0,3 a 0,6 grau torta (0,4 a 0,6 m a 60 m). Esperar
+        # 10 m andados não ajudou (0,61 grau numa rodada): no caminho o yaw
+        # do IMU já deriva e as árvores vistas ainda são as mesmas.
         yaw_then = pose[0]
         if self.azimuth_start is None:
             self.azimuth_start = pose[1:]
