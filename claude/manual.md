@@ -70,6 +70,9 @@ Fechar o Webots encerra o launch inteiro.
 | `teleop` | vazio | Teleoperação: `joy` (joystick) ou `keyboard` (teclado, num terminal próprio). O operador tem prioridade sobre o Nav2 (seção 5) |
 | `slip_check` | `true` | Checagem de patinagem das rodas pela odometria visual (seção 5). Só age com `ekf:=true` e `camera:=true` |
 | `row_heading` | `auto` | Rumo pelas fileiras: o yaw do EKF vem do ângulo das fileiras no LiDAR 3D, no lugar do yaw do IMU (seção 5). `auto` liga só no olival; `true`/`false` forçam. Só com `ekf:=true` e `lidar3d:=true`; acrescenta `-rumo` ao rótulo dos CSVs |
+| `wheel_radius_scale` | `auto` | Raio efetivo / nominal na odometria das rodas (seção 5). `auto`: o de `config/wheel_calibration.yaml` para o mundo e a semente (hoje só o olival, sementes 101 e 303), 1,0 se não houver; um número força. Diferente de 1, acrescenta `-cal` ao rótulo |
+| `lateral_correction` | `auto` | Correção do escorregamento lateral no EKF (seção 5): `imu` (pela inclinação), `rows` (pela posição das fileiras) ou `none`. `auto`: `imu` no olival quando há calibração para a semente, `none` no resto. Acrescenta `-incl` ou `-lat` ao rótulo |
+| `wheel_calibration` | `false` | Rodada de calibração das rodas (seção 5): grava `dados/calibracao/<mundo>_semente<N>.yaml` |
 | `slam` | `false` | SLAM por LiDAR (slam_toolbox). Só para comparação (seção 10) |
 | `sensor_noise` | `true` | Ruído realista na IMU, nos encoders, nos dois LiDARs e na câmera RGB-D (seção 3). `false`: sensores ideais do Webots, com `-ideal` no rótulo dos CSVs |
 | `noise_seed` | `0` | Semente do ruído. `0` sorteia uma nova (sai no log do driver); outro valor repete o ruído de uma rodada |
@@ -304,8 +307,49 @@ Nav2 (costmaps com o /scan): planeja em map, controla em odom ─► /cmd_vel_ra
     escorregava encosta abaixo (2,3 m de erro lateral). Com 1e-5 a medida corrige aos poucos.
   - Na plantação fica desligado: o VSLAM já segura o yaw ali, e no caso 2 o yaw rms foi de 0,6
     para 1,0° com ele ligado (uma rodada).
-- O frame `odom` deriva por definição; nenhuma entrada do EKF mede posição. Quem corrige é o
-  VSLAM.
+- **Raio efetivo das rodas calibrado (`wheel_radius_scale`, `config/wheel_calibration.yaml`):**
+  o pneu real roda com raio diferente do nominal (carga, pressão, solo), e o ruído da seção 3
+  sorteia esse erro por semente (~1%; 1,8% a menos na semente 101). Na ida de 66 m do caso 4
+  isso dava 1,1 m de erro ao longo da fileira, que o RTAB-Map não corrige (a entrelinha é igual
+  em todo o comprimento). O driver multiplica o raio da odometria pelo fator calibrado (o
+  comando dos motores fica com o nominal). No simulador a semente faz o papel do robô, por
+  isso a tabela é por mundo e por semente; com `noise_seed:=0` não há calibração.
+  - **Como calibrar** (uma rodada de ~45 min na nuvem, ida e volta de 33 m na entrelinha da
+    partida):
+    ```bash
+    ros2 launch agrobot_webots simulation.launch.py world:=olive_grove.wbt ekf:=true \
+        vslam:=true rviz:=false noise_seed:=101 wheel_radius_scale:=1.0 \
+        lateral_correction:=none wheel_calibration:=true \
+        waypoints:=calibracao_rodas_olival
+    # ou: python3 agrobot_webots/scripts/bateria.py --headless \
+    #   --cases calibracao_rodas_olival --seeds 101 -- wheel_calibration:=true \
+    #   wheel_radius_scale:=1.0 lateral_correction:=none
+    ```
+    O `wheel_calibration.py` usa só os trechos retos: raio = distância horizontal verdadeira
+    / distância das rodas; offset do roll da IMU = média do roll na ida e na volta (a encosta
+    inverte o sinal, o offset não); ganho do escorregamento por mínimos quadrados. Copie os
+    valores de `dados/calibracao/` para `config/wheel_calibration.yaml`. A referência é a pose
+    verdadeira do Webots; no campo seria uma trena, um GNSS RTK ou marcos na entrelinha.
+  - Medido: x1,0174 (101) e x1,0036 (303), contra 1,0180 e 1,0039 sorteados; o offset do roll
+    a 0,04° do verdadeiro.
+- **Escorregamento encosta abaixo pela inclinação (`slope_slip.py`, `lateral_correction:=imu`,
+  padrão no olival):** de través na encosta o skid-steer escorrega para baixo, e as rodas
+  dizem vy = 0. O nó fica entre as rodas e o EKF e soma
+  `vy = ganho · sin(roll − offset) · |vx|`, com o roll da IMU e o ganho e o offset da
+  calibração (ganho −0,17 e −0,15 nas duas sementes: é do solo). O modelo explica 33 a 43% da
+  velocidade lateral verdadeira (o resto é o vaivém do controlador), e a variância de vy cresce
+  com a correção.
+- **Posição lateral pelas fileiras (`lateral_correction:=rows`, fica como opção):** o
+  `row_heading` também mede onde o robô está entre as fileiras (a fase do padrão de 7 m na
+  normal delas) e manda ao EKF a posição corrigida só nessa direção
+  (`config/ekf_row_position.yaml`). A referência das linhas no `odom` é a média dos primeiros
+  20 m. Funciona no `odom` (erro lateral do `odom` ≤ 0,4 m nas 4 rodadas), mas a medida erra 0,2
+  a 0,4 m onde as oliveiras saem da grade (até 0,4 m no mundo, como num pomar real), e a direção
+  das fileiras medida na partida já vem 0,3 a 0,6° torta pelo mesmo motivo; nos casos 4 e 5
+  ficou pior que `imu` (seção 7). Para melhorar, precisaria de um mapa das árvores (posição de
+  cada uma), não só da hipótese de grade.
+- O frame `odom` deriva por definição; nenhuma entrada do EKF mede posição (a não ser com
+  `lateral_correction:=rows`). Quem corrige é o VSLAM.
 - Com `sensor_noise:=true` (padrão) o yaw do IMU deriva como o de uma IMU MEMS real (seção 3);
   com `sensor_noise:=false` ele é perfeito e o EKF fica favorecido.
 
@@ -832,6 +876,28 @@ O que sobra no caso 4 não é yaw: na semente 101 o EKF anda 1,1 m a menos que o
 (o raio das rodas sorteado pelo ruído erra ~1,7%) e o robô escorrega 0,3 a 0,5 m encosta abaixo
 na ida; nenhum dos dois é visto pelas rodas ou pelo IMU, e na ida não há com que fechar laço.
 
+**Olival com o raio calibrado e a correção lateral** (seção 5; nuvem, 2026-11-25, mesmas
+sementes, uma rodada por célula; CSVs em `resultados/distancia_escorregamento_olival/` nos
+arquivos do projeto). ATE / erro máximo (m) / no alvo ≤ 0,5 m:
+
+| Caso, semente | Só yaw (antes) | + raio calibrado | + raio + `imu` (padrão) | + raio + `rows` |
+|---|---|---|---|---|
+| caso4, 101 | 0,96 / 1,66 / 5 de 15 | 0,93 / 1,73 / 4 | 0,57 / 1,05 / 5 | 0,33 / 0,79 / 12 |
+| caso4, 303 | 0,72 / 1,37 / 5 de 15 | 1,81 / 3,32 / 2 | 0,40 / 1,00 / 11 | 1,68 / 3,01 / 5 |
+| caso5, 101 | 0,54 / 1,09 / 7 de 12 | 0,67 / 1,22 / 6 | 0,62 / 1,06 / 6 | 0,82 / 1,58 / 5 |
+| caso5, 303 | 0,59 / 1,13 / 7 de 12 | 0,75 / 1,27 / 5 | 0,76 / 1,33 / 6 | 1,03 / 1,93 / 5 |
+| média | 0,70 / 1,31 / 24 de 54 | 1,04 / 1,89 / 17 | **0,59 / 1,11 / 28** | 0,97 / 1,83 / 27 |
+
+- O raio calibrado tira o erro ao longo da fileira (na ida do caso 4, semente 101, de 1,1 m
+  para 0,1 m), mas sozinho não melhorou a média: o erro lateral sobra, e numa rodada (caso 4,
+  303) o RTAB-Map desviou o `map` 2 m na volta.
+- `imu` foi a melhor no conjunto e virou o padrão no olival. No caso 5 (que sobe e desce a
+  encosta quase sem andar de través) ficou igual ao de antes.
+- `rows` deu o melhor resultado de todos numa rodada (caso 4, 101: 12 de 15 no alvo) e o pior
+  em outra (caso 4, 303: o `odom` ficou a 0,4 m, mas o RTAB-Map desviou o `map` 2,5 m na volta,
+  como na rodada só com o raio). Uma rodada por célula não separa bem o método da sorte do
+  RTAB-Map; a bateria de 5 sementes resolveria.
+
 ## 8. Interface web do operador (`operator:=true`)
 
 Página para operar o robô de um computador qualquer pelo navegador, sem ROS instalado nele
@@ -972,12 +1038,20 @@ apresentação, os resultados do passo 3 e os próximos passos.
   aviso "Mapa salvo" e o `map:` nas missões só foram conferidos fora do simulador.
 - Ao girar no lugar na arena, a quina do robô pode empurrar a `cardboard box(2)`.
 - No olival, o robô escorrega encosta abaixo no declive lateral (nas manobras, nos desvios
-  dos obstáculos e ao passar por cima de galhos), e as rodas e o IMU não veem isso: na nuvem,
-  com a encosta de 4 a 5%, o erro da pose chegou a 1,6 m no `caso4` e 1,4 m no `caso5`
-  (na bateria final, 3,1 ± 2,9 m e 1,9 ± 0,7 m de erro máximo, seção 7). O erro de yaw que
-  fazia a volta divergir está corrigido (rumo pelas fileiras e ajustes do RTAB-Map, seção 5);
-  sobram o escorregamento lateral e o erro de distância das rodas na ida, que levam o robô a
-  1 a 1,7 m do alvo na cabeceira leste do caso 4. `--slope 0.03` gera a encosta mais suave
-  (2 a 3%) e `--slope 0` o olival plano.
-- O rumo pelas fileiras supõe fileiras retas e paralelas e foi validado em 4 rodadas no olival
-  (sementes 101 e 303); falta a bateria completa de 5 sementes com ele.
+  dos obstáculos e ao passar por cima de galhos), e as rodas e o IMU não veem isso. O erro de yaw
+  (rumo pelas fileiras), o de distância (raio calibrado) e parte do escorregamento
+  (`lateral_correction:=imu`) estão corrigidos (seção 5); sobra 0,4 a 0,8 m de ATE e cerca de 1 m
+  de erro máximo, metade dos waypoints a mais de 0,5 m do alvo, e rodadas em que o RTAB-Map
+  desvia o `map` 1 a 2 m na volta mesmo com o `odom` bom (caso 4, semente 303, sem correção
+  lateral e com `rows`). `--slope 0.03` gera a encosta mais suave (2 a 3%) e `--slope 0` o
+  olival plano.
+- A calibração das rodas e do escorregamento é feita por quem desenvolve: uma rodada com
+  `wheel_calibration:=true` e os valores copiados à mão para `config/wheel_calibration.yaml`,
+  medidos contra a pose verdadeira do Webots. **Trabalho futuro:** uma opção de calibração para
+  o operador (na interface web): andar uma distância conhecida, ou ida e volta entre dois
+  marcos, e o sistema calcula e grava o fator do raio e o ganho do escorregamento daquele robô
+  naquele solo, sem editar arquivo e sem a pose verdadeira. Também falta calibrar a plantação
+  (lá o VSLAM fecha laço a cada entrelinha de 9 m e o erro de distância é menor).
+- O rumo pelas fileiras supõe fileiras retas e paralelas, e ele, a calibração e a correção
+  pela inclinação foram validados em 4 rodadas no olival (sementes 101 e 303); falta a bateria
+  completa de 5 sementes (e calibrar as sementes 202, 404 e 505).

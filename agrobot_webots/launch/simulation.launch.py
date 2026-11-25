@@ -191,9 +191,11 @@ def wheel_scale(context):
 
 
 LATERAL_MODES = ('none', 'imu', 'rows')
-# lateral_correction:=auto no olival (o modo que ficou melhor nos casos 4 e
-# 5); nos outros mundos, none.
-LATERAL_AUTO = {'olive_grove': 'none'}
+# lateral_correction:=auto: no olival, imu (o melhor nos casos 4 e 5,
+# sementes 101 e 303: ATE médio 0,59 m, contra 0,97 m com rows, cujas
+# medidas erram 0,2 a 0,4 m onde as oliveiras saem da grade); nos outros
+# mundos, none. Sem calibração para a semente, cai para none.
+LATERAL_AUTO = {'olive_grove': 'imu'}
 
 
 def lateral_mode(context):
@@ -202,6 +204,9 @@ def lateral_mode(context):
         context).strip().lower()
     if mode == 'auto':
         mode = LATERAL_AUTO.get(world_key(context), 'none')
+        if mode == 'imu' and 'slope_slip_gain' not in wheel_calibration(
+                context):
+            mode = 'none'
     if mode in ('', 'false'):
         mode = 'none'
     if mode not in LATERAL_MODES:
