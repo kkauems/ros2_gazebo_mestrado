@@ -1,0 +1,25 @@
+# Calibração das rodas e do escorregamento lateral, por mundo e por robô.
+#
+# No simulador a semente do ruído (noise_seed) faz o papel do robô: o raio
+# efetivo de cada pneu e o offset do acelerômetro saem dela
+# (sensor_noise.py). 'ideal' vale para sensor_noise:=false. O launch usa a
+# entrada do mundo e da semente da rodada (wheel_radius_scale:=auto); sem
+# entrada, o raio fica o nominal e lateral_correction:=imu não sobe.
+#
+# Os valores vêm de uma rodada de calibração (wheel_calibration.py, rota
+# config/waypoints/calibracao_rodas_olival.yaml: ida e volta de 33 m na
+# entrelinha da partida), com a pose verdadeira do Webots como referência:
+# - wheel_radius_scale: distância verdadeira / distância das rodas;
+# - roll_offset_deg: offset fixo do roll da IMU (média da ida e da volta);
+# - slope_slip_gain: vy = ganho * sin(roll - offset) * |vx| (slope_slip.py).
+#
+# Por enquanto só o olival é calibrado: na plantação o VSLAM fecha laço a
+# cada entrelinha de 9 m e já corrige a distância.
+olive_grove:
+  # Rodadas de calibração de 2026-11-24 (~55 m em trechos retos cada). O
+  # raio medido bate com o erro sorteado pelo ruído (1,0180 e 1,0039) e o
+  # offset do roll com o verdadeiro (-0,99 e -1,34 graus). O ganho é do solo
+  # e quase não muda com a semente; o modelo explica 33 a 43% da velocidade
+  # lateral verdadeira (o resto é o vaivém do controlador).
+  101: {wheel_radius_scale: 1.0174, roll_offset_deg: -0.952, slope_slip_gain: -0.1717}
+  303: {wheel_radius_scale: 1.0036, roll_offset_deg: -1.319, slope_slip_gain: -0.1521}

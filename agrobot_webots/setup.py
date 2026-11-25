@@ -53,6 +53,8 @@ setup(
             'lidar_merge = agrobot_webots.lidar_merge:main',
             'stable_map = agrobot_webots.stable_map:main',
             'row_heading = agrobot_webots.row_heading:main',
+            'slope_slip = agrobot_webots.slope_slip:main',
+            'wheel_calibration = agrobot_webots.wheel_calibration:main',
         ],
     },
 )

@@ -1,0 +1,16 @@
+# Rodada de calibração das rodas no olival (olive_grove.wbt, ~70 m):
+# ida e volta pela entrelinha da partida (y = 0), de x = 0 a x = 33. Os
+# trechos retos dão o raio efetivo; a ida e a volta pelo mesmo chão dão o
+# offset do roll da IMU (a encosta inverte o roll, o offset não). Use com
+# wheel_calibration:=true wheel_radius_scale:=1.0 (seção 5 do manual).
+#
+# Mesmo frame do caso 4 (x ao longo das fileiras, partida na origem); os
+# pontos são os do caso 4, longe dos obstáculos.
+world: olive_grove.wbt
+waypoints:
+  - {name: y0_x11, x: 11.0, y: 0.0}
+  - {name: y0_x22, x: 22.0, y: 0.0}
+  - {name: y0_x33, x: 33.0, y: 0.0}
+  - {name: volta_x22, x: 22.0, y: 0.0}
+  - {name: volta_x11, x: 11.0, y: 0.0}
+  - {name: partida, x: 0.0, y: 0.0}

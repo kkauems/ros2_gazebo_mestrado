@@ -1,0 +1,48 @@
+# EKF com a posição lateral pelas fileiras (row_heading.py com lateral:=true,
+# lateral_correction:=rows): o que muda em relação ao ekf.yaml e ao
+# ekf_row_heading.yaml. O simulation.launch.py carrega este arquivo depois
+# dos dois.
+#
+# /row_heading/position traz a posição do robô corrigida na direção
+# perpendicular às fileiras, com variância pequena só nessa direção e 1e6
+# ao longo delas (a covariância não é diagonal). Assim a mesma entrada
+# corrige y andando ao longo das fileiras e x nas cabeceiras.
+ekf_filter_node:
+  ros__parameters:
+    pose1: /row_heading/position
+    pose1_config: [true,  true,  false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose1_queue_size: 5
+    pose1_differential: false
+    pose1_relative: false
+    # O row_heading já recusa correções acima de 1 m; aqui só os absurdos.
+    # Com 4 desvios padrão o EKF recusava justamente as medidas que deviam
+    # corrigir uma deriva já grande.
+    pose1_rejection_threshold: 8.0
+
+    # Ruído de processo de x e y em 0,01 (no ekf.yaml, 0). Com 0 a
+    # incerteza da posição só crescia pela das rodas (~2 cm/s na lateral), a
+    # variância ficava em ~1e-3 m², cada medida das fileiras corrigia ~2% do
+    # erro e o EKF levava ~1 minuto para seguir: o escorregamento ganhava e
+    # o erro lateral passava de 0,7 m na ida do caso 4. Com o
+    # dynamic_process_noise_covariance o ruído escala com a velocidade:
+    # parado, a elipse não cresce. Igual ao ekf_row_heading.yaml no resto.
+    process_noise_covariance: [
+        0.01,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.01,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,  0.06,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,  0.03,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,  0.03,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0, 0.00001, 0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0, 0.025,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.04,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.02,   0.0,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,  0.01,   0.0,
+        0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0, 0.015]
