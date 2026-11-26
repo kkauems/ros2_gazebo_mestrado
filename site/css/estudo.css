@@ -101,8 +101,7 @@ pre code { background: none; padding: 0; }
 #indice a.atual { color: var(--texto); background: var(--painel2); border-left: 3px solid var(--acento); }
 #indice li.n2 > a { color: var(--texto); font-weight: 600; margin-top: 8px; }
 /* overflow-x: clip + position: relative: o MathML escondido do KaTeX não alarga a página. */
-
-/* O MathML escondido do KaTeX (só para leitores de tela) não deve alargar a página. */
+#texto { flex: 1; min-width: 0; max-width: 880px; padding: 22px 34px 120px; overflow-x: clip; position: relative; }
 #texto h1 { font-size: 30px; line-height: 1.2; margin: 10px 0 6px; }
 #texto h2 {
   font-size: 25px; line-height: 1.25;
