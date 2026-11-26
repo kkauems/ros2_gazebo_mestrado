@@ -40,8 +40,15 @@ class Grid:
     """Grade de ocupação 2D (como nav_msgs/OccupancyGrid), em linha por y."""
 
     def __init__(self, data, width, height, resolution, origin_x, origin_y,
-                 origin_yaw=0.0, occupied=65):
-        """Guarda a grade; data tem -1 (desconhecido) ou 0 a 100."""
+                 origin_yaw=0.0, occupied=65, speck_radius=0.0,
+                 speck_neighbors=2):
+        """
+        Guarda a grade; data tem -1 (desconhecido) ou 0 a 100.
+
+        speck_radius > 0 tira os ciscos (despeckle): célula ocupada com
+        menos de speck_neighbors outras ocupadas a até speck_radius vira
+        livre. Veja remove_specks.
+        """
         self.data = np.asarray(data, dtype=np.int16).reshape(
             int(height), int(width))
         self.width = int(width)
@@ -52,6 +59,11 @@ class Grid:
         self.cos = math.cos(origin_yaw)
         self.sin = math.sin(origin_yaw)
         self.occupied = occupied
+        self.specks = 0
+        if speck_radius > 0.0:
+            self.data, self.specks = remove_specks(
+                self.data, occupied, speck_radius / self.resolution,
+                speck_neighbors)
 
     def to_index(self, x, y):
         """Célula (i, j) do ponto (x, y); pode cair fora da grade."""
@@ -100,6 +112,34 @@ class Grid:
         out = np.full(i.shape, -1, dtype=np.int16)
         out[inside] = self.data[j[inside], i[inside]]
         return out
+
+
+def remove_specks(data, occupied, radius_cells, neighbors):
+    """
+    Tira da grade as células ocupadas isoladas: (grade nova, quantas).
+
+    Na grade do RTAB-Map (5 cm) os torrões, as pedrinhas e os galhos das
+    entrelinhas, por onde o robô passa por cima, e os toques do LiDAR no chão
+    ondulado viram células soltas no meio da entrelinha, e uma só já
+    recusava o waypoint. O que barra o robô tem vizinhas: as plantas da
+    fileira ficam a cada 0,3 m, e pedra grande, tronco e mourão ocupam
+    várias células. Uma célula ocupada com menos de neighbors outras a até
+    radius_cells células vira livre (0).
+    """
+    solid = data >= occupied
+    count = np.zeros(data.shape, dtype=np.int32)
+    r = int(math.ceil(radius_cells))
+    h, w = data.shape
+    for di in range(-r, r + 1):
+        for dj in range(-r, r + 1):
+            if (di == 0 and dj == 0) or math.hypot(di, dj) > radius_cells:
+                continue
+            count[max(0, dj):h + min(0, dj), max(0, di):w + min(0, di)] += \
+                solid[max(0, -dj):h + min(0, -dj), max(0, -di):w + min(0, -di)]
+    specks = solid & (count < neighbors)
+    out = data.copy()
+    out[specks] = 0
+    return out, int(np.count_nonzero(specks))
 
 
 class Footprint:

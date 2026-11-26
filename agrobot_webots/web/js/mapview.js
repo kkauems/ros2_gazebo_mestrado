@@ -30,6 +30,10 @@ export class MapView {
     this.tool = 'pan';
     this.handlers = {};
     this.drag = null;
+    this.locked = false;      // missão rodando: os pontos não se movem
+    // Checagem do ponto sendo arrastado (resposta do probe do
+    // waypoint_mission): {x, y, status, text, suggestion} ou null.
+    this.probe = null;
     this.setupEvents();
     new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
     this.resize();
@@ -88,12 +92,28 @@ export class MapView {
     this.scale = Math.max(2, Math.min(120, sx, sy));
   }
 
-  waypointAt(px, py) {
-    for (let i = this.waypoints.length - 1; i >= 0; i -= 1) {
-      const [sx, sy] = this.toScreen(this.waypoints[i].x, this.waypoints[i].y);
-      if (Math.hypot(sx - px, sy - py) < 12) return i;
+  // Ponto sob o cursor: {list: 'waypoints' | 'preview', index} ou null.
+  // A prévia da varredura vem primeiro (fica por cima quando existe).
+  pointAt(px, py) {
+    for (const list of ['preview', 'waypoints']) {
+      const points = this[list];
+      const radius = list === 'preview' ? 9 : 12;
+      for (let i = points.length - 1; i >= 0; i -= 1) {
+        const [sx, sy] = this.toScreen(points[i].x, points[i].y);
+        if (Math.hypot(sx - px, sy - py) < radius) return { list, index: i };
+      }
     }
-    return -1;
+    return null;
+  }
+
+  waypointAt(px, py) {
+    const hit = this.pointAt(px, py);
+    return hit && hit.list === 'waypoints' ? hit.index : -1;
+  }
+
+  // Arrastar pontos vale em qualquer ferramenta, menos com a missão rodando.
+  draggableAt(px, py) {
+    return this.locked ? null : this.pointAt(px, py);
   }
 
   setupEvents() {
@@ -114,17 +134,22 @@ export class MapView {
     c.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const [px, py] = pos(e);
-      const i = this.waypointAt(px, py);
-      if (i >= 0) this.fire('remove', i);
+      const hit = this.locked ? null : this.pointAt(px, py);
+      if (hit) this.fire(hit.list === 'preview' ? 'remove-preview' : 'remove', hit.index);
     });
     c.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       c.setPointerCapture(e.pointerId);
       const [px, py] = pos(e);
       const world = this.toWorld(px, py);
-      const index = this.tool === 'add' ? this.waypointAt(px, py) : -1;
-      if (index >= 0) {
-        this.drag = { kind: 'waypoint', index, moved: false };
+      const hit = this.draggableAt(px, py);
+      if (hit) {
+        const p = this[hit.list][hit.index];
+        this.drag = {
+          kind: 'point', list: hit.list, index: hit.index, px, py, moved: false,
+          // Onde o ponto estava e a distância do clique até o centro dele.
+          from: { x: p.x, y: p.y }, offset: { x: p.x - world.x, y: p.y - world.y },
+        };
       } else if (this.tool === 'sweep') {
         this.rect = { a: world, b: world };
         this.drag = { kind: 'rect' };
@@ -133,12 +158,14 @@ export class MapView {
           kind: 'pan', px, py, center: { ...this.center }, moved: false, world,
         };
       }
+      this.updateCursor(px, py);
     });
     c.addEventListener('pointermove', (e) => {
       const [px, py] = pos(e);
       const world = this.toWorld(px, py);
       this.hover = world;
       this.fire('hover', world);
+      this.updateCursor(px, py);
       if (!this.drag) return;
       if (this.drag.kind === 'pan') {
         const dx = px - this.drag.px;
@@ -152,31 +179,65 @@ export class MapView {
             y: this.drag.center.y + dy / this.scale,
           };
         }
-      } else if (this.drag.kind === 'waypoint') {
-        this.drag.moved = true;
-        this.waypoints[this.drag.index] = { ...this.waypoints[this.drag.index], ...round(world) };
+      } else if (this.drag.kind === 'point') {
+        const d = this.drag;
+        if (!d.moved && Math.hypot(px - d.px, py - d.py) < 4) return;
+        d.moved = true;
+        const p = round({ x: world.x + d.offset.x, y: world.y + d.offset.y });
+        const points = this[d.list];
+        points[d.index] = { ...points[d.index], ...p };
+        d.at = p;
+        this.fire('dragging', d.list, d.index, p);
       } else if (this.drag.kind === 'rect') {
         this.rect.b = world;
         this.fire('rect', this.rect, false);
       }
     });
-    c.addEventListener('pointerup', (e) => {
+    const finish = (e, cancelled) => {
       const drag = this.drag;
       this.drag = null;
       if (!drag) return;
       const [px, py] = pos(e);
       const world = this.toWorld(px, py);
-      if (drag.kind === 'waypoint') {
-        if (drag.moved) this.fire('move', drag.index, round(world));
+      this.updateCursor(px, py);
+      if (drag.kind === 'point') {
+        if (drag.moved && !cancelled) {
+          this.fire('moved', drag.list, drag.index, drag.at);
+        } else if (drag.moved) {
+          const points = this[drag.list];
+          points[drag.index] = { ...points[drag.index], ...drag.from };
+          this.fire('drag-cancel', drag.list, drag.index);
+        } else if (this.tool === 'goto') {
+          this.fire('goto', round(world));
+        }
       } else if (drag.kind === 'rect') {
         this.rect.b = world;
         this.fire('rect', this.rect, true);
-      } else if (!drag.moved) {
+      } else if (!drag.moved && !cancelled) {
         if (this.tool === 'add') this.fire('add', round(world));
         else if (this.tool === 'goto') this.fire('goto', round(world));
       }
+    };
+    c.addEventListener('pointerup', (e) => finish(e, false));
+    c.addEventListener('pointercancel', (e) => finish(e, true));
+    // Esc durante o arrasto devolve o ponto para onde estava.
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'Escape' || !this.drag || this.drag.kind !== 'point') return;
+      const d = this.drag;
+      this.drag = null;
+      const points = this[d.list];
+      points[d.index] = { ...points[d.index], ...d.from };
+      this.fire('drag-cancel', d.list, d.index);
     });
     c.addEventListener('pointerleave', () => { this.hover = null; this.fire('hover', null); });
+  }
+
+  updateCursor(px, py) {
+    let cursor = this.tool === 'pan' ? 'grab' : 'crosshair';
+    if (this.drag && this.drag.kind === 'point') cursor = 'grabbing';
+    else if (this.drag && this.drag.kind === 'pan' && this.drag.moved) cursor = 'grabbing';
+    else if (!this.drag && this.draggableAt(px, py)) cursor = 'grab';
+    this.canvas.style.cursor = cursor;
   }
 
   draw() {
@@ -194,6 +255,7 @@ export class MapView {
     this.drawRoute(this.waypoints, false);
     this.drawRect();
     this.drawRobot();
+    this.drawProbe();
     this.drawScaleBar(styles);
   }
 
@@ -283,7 +345,7 @@ export class MapView {
     ctx.setLineDash([]);
     points.forEach((p, i) => {
       const [sx, sy] = this.toScreen(p.x, p.y);
-      if (!preview && p.check && p.check.suggestion) {
+      if (p.check && p.check.suggestion) {
         const [gx, gy] = this.toScreen(p.check.suggestion[0], p.check.suggestion[1]);
         ctx.strokeStyle = STATUS_COLORS.invalido;
         ctx.setLineDash([3, 3]);
@@ -291,15 +353,23 @@ export class MapView {
         ctx.setLineDash([]);
         ctx.beginPath(); ctx.arc(gx, gy, 6, 0, 2 * Math.PI); ctx.stroke();
       }
-      const bad = !preview && p.check && !['ok', 'desconhecido'].includes(p.check.status);
-      const color = preview ? '#cfd3da' : (bad && p.status === 'pendente'
-        ? STATUS_COLORS.invalido : STATUS_COLORS[p.status] || STATUS_COLORS.pendente);
+      const bad = p.check && !['ok', 'desconhecido'].includes(p.check.status);
+      let color;
+      if (preview) color = bad ? STATUS_COLORS.invalido : '#cfd3da';
+      else if (bad && (p.status === 'pendente' || !p.status)) color = STATUS_COLORS.invalido;
+      else color = STATUS_COLORS[p.status] || STATUS_COLORS.pendente;
       ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(sx, sy, preview ? 4 : 8, 0, 2 * Math.PI); ctx.fill();
+      ctx.beginPath(); ctx.arc(sx, sy, preview ? 5 : 8, 0, 2 * Math.PI); ctx.fill();
+      if (preview) {
+        // Contorno escuro: a prévia também aparece sobre o mapa claro.
+        ctx.strokeStyle = '#3a3f47';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
       if (bad) {
         ctx.strokeStyle = STATUS_COLORS.invalido;
         ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(sx, sy, 12, 0, 2 * Math.PI); ctx.stroke();
+        ctx.beginPath(); ctx.arc(sx, sy, preview ? 9 : 12, 0, 2 * Math.PI); ctx.stroke();
       }
       if (!preview) {
         ctx.fillStyle = '#0d0f12';
@@ -310,6 +380,83 @@ export class MapView {
       }
     });
     ctx.restore();
+  }
+
+  // Ponto sendo arrastado: a pegada do robô no lugar (verde: cabe e chega;
+  // roxo: não; cinza: área não mapeada ou ainda conferindo) e o motivo.
+  drawProbe() {
+    const d = this.drag;
+    if (!d || d.kind !== 'point' || !d.moved) return;
+    const p = this[d.list][d.index];
+    if (!p) return;
+    const probe = this.probe;
+    const fresh = probe && Math.hypot(probe.x - p.x, probe.y - p.y) < 0.02;
+    let color = '#8a8f98';
+    let text = 'conferindo…';
+    if (probe && fresh) {
+      if (probe.status === 'ok') { color = STATUS_COLORS.atingido; text = probe.text || 'o robô cabe e chega aqui'; }
+      else if (probe.status === 'desconhecido') { text = probe.text || 'área não mapeada'; }
+      else { color = STATUS_COLORS.invalido; text = probe.text || probe.status; }
+    }
+    const ctx = this.ctx;
+    const [sx, sy] = this.toScreen(p.x, p.y);
+    ctx.save();
+    // Pegada do robô (1,2 x 1,12 m) olhando na direção de saída.
+    const heading = this.dragHeading(d);
+    ctx.translate(sx, sy);
+    ctx.rotate(-heading);
+    const l = ROBOT_LENGTH * this.scale;
+    const w = ROBOT_WIDTH * this.scale;
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = color;
+    ctx.fillRect(-l / 2, -w / 2, l, w);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-l / 2, -w / 2, l, w);
+    ctx.restore();
+    if (probe && fresh && probe.suggestion) {
+      const [gx, gy] = this.toScreen(probe.suggestion[0], probe.suggestion[1]);
+      ctx.save();
+      ctx.strokeStyle = STATUS_COLORS.atingido;
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(gx, gy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(gx, gy, 6, 0, 2 * Math.PI); ctx.stroke();
+      ctx.restore();
+    }
+    // Etiqueta com o motivo, ao lado do ponto.
+    ctx.save();
+    ctx.font = '12px system-ui, sans-serif';
+    const label = `${p.x.toFixed(2)}, ${p.y.toFixed(2)} · ${text}`;
+    const tw = ctx.measureText(label).width;
+    let lx = sx + 16;
+    let ly = sy - 26;
+    if (lx + tw + 12 > this.width) lx = sx - 16 - tw - 12;
+    if (ly < 4) ly = sy + 14;
+    ctx.fillStyle = 'rgba(13,15,18,0.85)';
+    ctx.fillRect(lx, ly, tw + 12, 20);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(lx + 0.5, ly + 0.5, tw + 11, 19);
+    ctx.fillStyle = '#e6e8eb';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, lx + 6, ly + 10.5);
+    ctx.restore();
+  }
+
+  // Direção de saída do ponto arrastado, como o waypoint_mission completa.
+  dragHeading(d) {
+    const points = this[d.list];
+    const p = points[d.index];
+    if (p.yaw !== null && p.yaw !== undefined) return p.yaw;
+    const next = points[d.index + 1];
+    if (next) return Math.atan2(next.y - p.y, next.x - p.x);
+    const prev = points[d.index - 1] || (this.state && this.state.pose
+      ? { x: this.state.pose[0], y: this.state.pose[1] } : { x: 0, y: 0 });
+    return Math.atan2(p.y - prev.y, p.x - prev.x);
   }
 
   drawRect() {

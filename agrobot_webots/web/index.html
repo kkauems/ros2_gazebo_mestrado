@@ -24,8 +24,8 @@
       <div class="maparea"><canvas id="map"></canvas></div>
       <div class="maptools">
         <div class="seg" id="tools">
-          <button data-tool="pan" class="on" title="Arrastar para mover o mapa">Mover</button>
-          <button data-tool="add" title="Clique: novo waypoint. Arraste um waypoint para movê-lo; botão direito apaga">+ Waypoint</button>
+          <button data-tool="pan" class="on" title="Arrastar para mover o mapa; arraste um ponto para reposicioná-lo">Mover</button>
+          <button data-tool="add" title="Clique: novo waypoint. Arraste um ponto para movê-lo; botão direito apaga">+ Waypoint</button>
           <button data-tool="goto" title="Clique: o robô vai até o ponto">Ir até</button>
           <button data-tool="sweep" title="Arraste do começo da primeira passada até o canto oposto">Varredura</button>
         </div>
@@ -64,8 +64,10 @@
         </div>
         <h3>Waypoints <small id="wp-count"></small></h3>
         <div id="list-file" class="hint"></div>
-        <p class="hint">No mapa, <b>+ Waypoint</b> acrescenta (clique), arrasta e apaga (botão
-          direito). Na lista, <b>✎</b> edita nome, x, y e orientação, <b>↑ ↓</b> mudam a ordem e
+        <p class="hint">No mapa, <b>arraste qualquer ponto</b> (em qualquer ferramenta) para
+          reposicioná-lo: enquanto arrasta, a pegada do robô fica <b>verde</b> onde ele cabe e chega,
+          <b>roxa</b> onde não (com o motivo e o ponto livre mais perto) e cinza fora da área mapeada;
+          Esc desfaz o arrasto. <b>+ Waypoint</b> acrescenta (clique) e o botão direito apaga. Na lista, <b>✎</b> edita nome, x, y e orientação, <b>↑ ↓</b> mudam a ordem e
           <b>+</b> insere um ponto depois. Cada ponto é conferido pelas medidas do robô
           (1,2 × 1,12 m): em roxo, o robô não cabe, não gira ou não chega ali.</p>
         <ol id="wp-list" class="wplist"></ol>
@@ -90,7 +92,12 @@
       <div class="panel hidden" id="tab-sweep">
         <p class="hint">Escolha <b>Varredura</b> no mapa e arraste do <b>começo da primeira
           passada</b> até o canto oposto. As passadas vão na direção escolhida, em serpentina, e
-          ganham pontos a cada 10 m no máximo (o Nav2 só aceita objetivos a até ~12 m).</p>
+          ganham pontos a cada 10 m no máximo (o Nav2 só aceita objetivos a até ~12 m). Cada ponto
+          olha ao longo da passada; a curva para a próxima é feita pelo Nav2, então comece e termine
+          as passadas nas cabeceiras (na plantação, x ≤ 0,8 e x ≥ 11,2), onde o robô cabe girando.
+          Antes de usar,
+          arraste os pontos da prévia para um lugar livre (a pegada mostra se o robô cabe) e apague
+          com o botão direito.</p>
         <label>Espaçamento entre passadas (m)
           <input id="sw-spacing" type="number" min="0.5" step="0.1" value="1.8">
         </label>

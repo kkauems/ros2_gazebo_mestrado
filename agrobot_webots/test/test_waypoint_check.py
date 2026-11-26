@@ -110,3 +110,56 @@ def test_closed_pocket_is_unreachable():
             grid.data[j, i] = 100
     status, _, _ = wc.check_leg(grid, FOOTPRINT, (6.0, 0.0), 8.0, -1.8, 0.0)
     assert status == wc.UNREACHABLE
+
+
+
+def lane_grid(specks, **kwargs):
+    """
+    Entrelinha y = 0 entre fileiras em y = ±0,9, como na grade do RTAB-Map.
+
+    Cada planta ocupa 2 células (colmo e folha) a cada 0,3 m, com ±5 cm de
+    sorteio, de x = 0 a 9; specks são células soltas na entrelinha.
+    """
+    ox, oy, width, height = -1.0, -2.0, 220, 80
+    data = [0] * (width * height)
+
+    def mark(i, j):
+        if 0 <= i < width and 0 <= j < height:
+            data[j * width + i] = 100
+
+    jitter = [0, 1, -1, 1, 0, -1, -1, 1]
+    for row in (-0.9, 0.9):
+        j = int(round((row - oy) / RES))
+        for k in range(31):
+            i = int(round((k * 0.3 - ox) / RES)) + jitter[k % len(jitter)]
+            mark(i, j)
+            mark(i + 1, j)
+    for x, y in specks:
+        mark(int((x - ox) / RES), int((y - oy) / RES))
+    return wc.Grid(data, width, height, RES, ox, oy, **kwargs)
+
+
+def test_specks_in_the_lane_are_ignored():
+    # Torrões e galhos na entrelinha viram células soltas na grade: sem
+    # tirar os ciscos, o ponto no meio da entrelinha era recusado.
+    specks = [(4.0, 0.3), (4.3, -0.3), (3.8, 0.0)]
+    status, _ = wc.check_waypoint(lane_grid(specks), FOOTPRINT, 4.0, 0.0,
+                                  0.0, 0.0)
+    assert status == wc.BLOCKED
+    raw = lane_grid(specks)
+    clean = lane_grid(specks, speck_radius=0.3)
+    for x, y in specks:
+        i, j = clean.to_index(x, y)
+        assert clean.data[j, i] == 0
+    # Algumas pontas de planta (sorteio de 8 cm até a vizinha) também saem,
+    # mas a fileira fica quase inteira.
+    assert (clean.data >= 65).sum() > 0.8 * ((raw.data >= 65).sum() - 3)
+    status, _ = wc.check_waypoint(clean, FOOTPRINT, 4.0, 0.0, 0.0, 0.0)
+    assert status == wc.OK
+    # As fileiras continuam: em cima delas o robô não cabe, e entre elas
+    # ele não gira.
+    status, _ = wc.check_waypoint(clean, FOOTPRINT, 4.0, 0.9, 0.0, 0.0)
+    assert status == wc.BLOCKED
+    status, _ = wc.check_waypoint(clean, FOOTPRINT, 4.0, 0.0, 0.0,
+                                  math.pi / 2)
+    assert status == wc.NO_TURN

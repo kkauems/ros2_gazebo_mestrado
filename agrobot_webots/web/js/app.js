@@ -2,7 +2,7 @@
 //
 // Fala com o ROS pelo rosbridge:
 //   /operator/state, /operator/map, /operator/*/compressed   (operator_bridge)
-//   /waypoint_mission/status  e  /waypoint_mission/command   (waypoint_mission)
+//   /waypoint_mission/status, /command e /probe               (waypoint_mission)
 //   /cmd_vel_teleop                                          (cmd_vel_mux)
 //   /data_camera/enable                                      (driver)
 
@@ -48,6 +48,8 @@ async function start() {
     { queue_length: 1 });
   ros.subscribe('/waypoint_mission/status', 'std_msgs/msg/String',
     (m) => onMission(JSON.parse(m.data)), { queue_length: 1 });
+  ros.subscribe('/waypoint_mission/probe', 'std_msgs/msg/String',
+    (m) => onProbe(JSON.parse(m.data)), { queue_length: 1 });
   updateCameraSubscriptions();
   setInterval(teleopTick, 100);
 }
@@ -114,7 +116,10 @@ function onMission(m) {
   const first = mission === null;
   mission = m;
   $('chip-world').textContent = `${m.world || 'mundo ?'}${m.map ? ` · mapa ${m.map}` : ''} · ${m.frame}`;
-  if (!map.drag || map.drag.kind !== 'waypoint') map.waypoints = m.waypoints;
+  map.locked = m.running;
+  if (!map.drag || map.drag.kind !== 'point' || map.drag.list !== 'waypoints') {
+    map.waypoints = m.waypoints;
+  }
   const msg = $('mission-msg');
   msg.textContent = m.message || (m.running ? `Missão ${m.case} em andamento.` : 'Pronto.');
   msg.className = `msg ${m.level || ''}`;
@@ -329,7 +334,70 @@ function editList(fn) {
 }
 
 map.on('add', (p) => editList((pts) => pts.push({ name: `wp${pts.length + 1}`, x: p.x, y: p.y, yaw: null })));
-map.on('move', (i, p) => editList((pts) => { pts[i] = { ...pts[i], x: p.x, y: p.y }; }));
+// Arrastar um ponto pelo mapa (waypoint da lista ou da prévia da varredura):
+// enquanto arrasta, a página pergunta ao waypoint_mission (op "probe") se o
+// robô cabe e chega ali; uma pergunta por vez, sempre com a posição mais nova.
+const probe = { id: 0, waiting: false, sentAt: 0, pending: null };
+
+function probeRequest(list, i, p) {
+  const points = list === 'preview' ? map.preview : map.waypoints;
+  const prev = points[i - 1];
+  const next = points[i + 1];
+  const yaw = points[i].yaw === undefined ? null : points[i].yaw;
+  return {
+    x: p.x, y: p.y, yaw,
+    prev: prev ? [prev.x, prev.y] : null,
+    next: next ? [next.x, next.y] : null,
+  };
+}
+
+function sendProbe(request) {
+  if (!ros || !ros.connected) return;
+  probe.id += 1;
+  probe.waiting = true;
+  probe.sentAt = Date.now();
+  probe.pending = null;
+  ros.publish('/waypoint_mission/command', 'std_msgs/msg/String',
+    { data: JSON.stringify({ op: 'probe', id: probe.id, ...request }) });
+}
+
+function onProbe(reply) {
+  if (reply.id !== probe.id) return;
+  probe.waiting = false;
+  map.probe = reply;
+  if (probe.pending) sendProbe(probe.pending);
+}
+
+map.on('dragging', (list, i, p) => {
+  const request = probeRequest(list, i, p);
+  // Sem resposta em 2 s (nó ocupado ou fora do ar): pergunta de novo.
+  if (probe.waiting && Date.now() - probe.sentAt < 2000) probe.pending = request;
+  else sendProbe(request);
+});
+map.on('moved', (list, i, p) => {
+  const last = map.probe && Math.hypot(map.probe.x - p.x, map.probe.y - p.y) < 0.02 ? map.probe : null;
+  map.probe = null;
+  probe.pending = null;
+  if (list === 'waypoints') {
+    editList((pts) => { pts[i] = { ...pts[i], x: p.x, y: p.y }; });
+    if (last && !['ok', 'desconhecido'].includes(last.status)) toast(`Waypoint ${i + 1}: ${last.text}.`, 'warn');
+    return;
+  }
+  // Prévia: o ponto fica onde foi solto, com a última checagem.
+  map.preview[i] = { ...map.preview[i], x: p.x, y: p.y, check: last || undefined };
+  sweepEdited = true;
+  describeSweep();
+});
+map.on('drag-cancel', () => {
+  map.probe = null;
+  probe.pending = null;
+  if (mission && map.drag === null) map.waypoints = mission.waypoints;
+});
+map.on('remove-preview', (i) => {
+  map.preview.splice(i, 1);
+  sweepEdited = true;
+  describeSweep();
+});
 map.on('remove', (i) => editList((pts) => pts.splice(i, 1)));
 map.on('goto', (p) => {
   if (mission && mission.running) {
@@ -381,9 +449,11 @@ $('btn-fit').onclick = () => map.fitWaypoints();
 // Varredura -------------------------------------------------------------
 
 let sweepRect = null;
+let sweepEdited = false;   // algum ponto da prévia foi arrastado ou apagado
 
 function updateSweep() {
   map.preview = [];
+  sweepEdited = false;
   const info = $('sw-info');
   info.className = 'msg';
   if (!sweepRect) {
@@ -395,14 +465,24 @@ function updateSweep() {
         axis: $('sw-axis').value,
         maxLeg: parseFloat($('sw-leg').value) || 10,
       });
-      const lanes = new Set(map.preview.map((p) => p.name.split('_')[0])).size;
-      info.textContent = `${lanes} passadas, ${map.preview.length} pontos, `
-        + `${routeLength(map.preview).toFixed(0)} m de rota (fora a ida até o começo).`;
+      describeSweep();
     } catch (error) {
       info.textContent = error.message;
       info.className = 'msg warn';
     }
   }
+  $('btn-sw-use').disabled = !map.preview.length || (mission && mission.running);
+}
+
+function describeSweep() {
+  const info = $('sw-info');
+  const lanes = new Set(map.preview.map((p) => p.name.split('_')[0])).size;
+  const bad = map.preview.filter((p) => p.check && !['ok', 'desconhecido'].includes(p.check.status)).length;
+  info.textContent = `${lanes} passadas, ${map.preview.length} pontos, `
+    + `${routeLength(map.preview).toFixed(0)} m de rota (fora a ida até o começo).`
+    + (sweepEdited ? ' Pontos ajustados à mão (mudar as opções acima refaz a varredura).' : '')
+    + (bad ? ` ${bad} ponto(s) em roxo: o robô não cabe ou não chega.` : '');
+  info.className = bad ? 'msg warn' : 'msg';
   $('btn-sw-use').disabled = !map.preview.length || (mission && mission.running);
 }
 
@@ -414,7 +494,10 @@ map.on('rect', (rect, done) => {
 for (const id of ['sw-spacing', 'sw-axis', 'sw-leg']) $(id).addEventListener('input', updateSweep);
 $('btn-sw-use').onclick = () => {
   if (!map.preview.length) return;
-  command('set', { name: 'varredura', waypoints: map.preview });
+  command('set', {
+    name: 'varredura',
+    waypoints: map.preview.map((p) => ({ name: p.name, x: p.x, y: p.y, yaw: p.yaw })),
+  });
   sweepRect = null;
   map.rect = null;
   updateSweep();

@@ -802,6 +802,15 @@ para a rota toda; mapeando do zero, os pontos longe da partida ainda são descon
 passam sem checagem (o log avisa quais). A folga de 5 cm é pequena de propósito: com o mapa
 da plantação ela separa o ponto antigo da cabeceira leste (recusado) dos pontos que o robô
 cumpre nas rodadas; o erro de localização (0,1 a 0,3 m) não entra na conta.
+
+Antes da checagem, a grade perde os **ciscos** (`check_speck_radius`, 0,3 m; 0 desliga): uma
+célula ocupada com menos de 2 outras ocupadas a até 0,3 m vira livre. No `/rtabmap/map` da
+plantação os torrões, as pedrinhas e os galhos das entrelinhas (o robô passa por cima) e os
+toques do LiDAR no chão ondulado viram células soltas no meio da entrelinha, e uma só bastava
+para recusar o ponto: num mapa real, só 37 de 95 pontos no meio das entrelinhas passavam
+olhando ao longo delas; sem os ciscos, 94. As fileiras (plantas a cada 0,3 m), as pedras
+grandes, os troncos e os mourões têm vizinhas e ficam: em cima de uma fileira e girando 90°
+entre elas o ponto continua recusado.
 | `caso4_olival_ida_volta` | olival | ~160 m: entrelinha y = 0 até a cabeceira leste e volta pela y = 7 | Lugar aberto, poucos retornos do LiDAR, declive lateral nas manobras de cabeceira |
 | `caso5_olival_encosta` | olival | ~115 m: sobe a encosta atravessando as fileiras em x = 8 e desce em x = 29 | Subida e descida, grade de troncos vista de frente |
 
@@ -951,9 +960,17 @@ navegador ─WebSocket 9090─► rosbridge ─► /cmd_vel_teleop ─► cmd_ve
 - **Waypoints e missões (aba Missão):** a lista é do `waypoint_mission`, que sobe sozinho
   com `operator:=true` (sem arquivo, como no `waypoints:=rviz`). A página manda a lista
   inteira pelo tópico `/waypoint_mission/command` (JSON: `set`, `load`, `start`, `cancel`,
-  `clear`, `undo`, `save`) e mostra o `/waypoint_mission/status`. Ferramentas do mapa:
-  **+ Waypoint** (clique acrescenta, arrastar move, botão direito apaga), **Ir até** (um
-  ponto só, já inicia) e **Varredura**. **Cancelar** para a missão; os CSVs são gravados com
+  `clear`, `undo`, `save`, `probe`) e mostra o `/waypoint_mission/status`. Ferramentas do
+  mapa: **+ Waypoint** (clique acrescenta, botão direito apaga), **Ir até** (um ponto só, já
+  inicia) e **Varredura**.
+- **Arrastar pontos no mapa:** em qualquer ferramenta (também em Mover e Ir até), clicar num
+  waypoint ou num ponto da prévia da varredura e arrastar o reposiciona; só a missão em
+  andamento trava os pontos. Enquanto arrasta, a página pergunta ao `waypoint_mission` se o
+  robô cabe e chega ali (`{"op": "probe", "x", "y", "prev", "next", "yaw"}`, resposta em
+  `/waypoint_mission/probe`, a mesma checagem da lista, sem mudar nada) e desenha a pegada do
+  robô no ponto: verde (cabe e chega), roxa (com o motivo e o ponto livre mais perto) ou
+  cinza (área não mapeada). Uma pergunta por vez, sempre com a posição mais nova. Esc desfaz
+  o arrasto. **Cancelar** para a missão; os CSVs são gravados com
   os waypoints restantes como `cancelado`.
 - **Editar missões gravadas:** **Carregar para editar** traz uma missão de
   `config/waypoints/` ou de `dados/missions/` (só as deste mundo e deste mapa). Na lista, ✎
@@ -974,8 +991,13 @@ navegador ─WebSocket 9090─► rosbridge ─► /cmd_vel_teleop ─► cmd_ve
   serpentina, com o espaçamento escolhido (1,8 m na plantação, 7 m no olival) e um ponto a
   cada 10 m no máximo, porque o costmap global só aceita objetivos a até ~12 m. A câmera
   de aquisição olha para a esquerda, então cada passada fotografa o lado oposto da
-  anterior. "Usar como missão" manda a lista ao `waypoint_mission` com o nome `varredura`
-  (os CSVs e a pasta das fotos saem com esse prefixo).
+  anterior. Cada ponto leva o yaw da própria passada (olhando ao longo da fileira): sem ele,
+  o fim de cada passada teria de girar 90° entre as fileiras, onde o robô não cabe girando,
+  e a checagem recusava esses pontos; com ele, a curva para a passada seguinte é do
+  planejador do Nav2, pela cabeceira. Os pontos da prévia podem ser arrastados (com a
+  pegada verde/roxa) e apagados (botão direito) antes de **Usar como missão**, que manda a
+  lista ao `waypoint_mission` com o nome `varredura` (os CSVs e a pasta das fotos saem com
+  esse prefixo). Mudar espaçamento, direção ou distância refaz a prévia e perde os ajustes.
 - **Câmeras:** a cor da RGB-D também aparece na aba Controle. A de aquisição só existe com
   `data_camera:=true` e, com o `waypoint_mission` rodando, fica desligada fora das missões
   (os botões Ligar/Desligar chamam `/data_camera/enable`).
