@@ -330,8 +330,10 @@ Nav2 (costmaps com o /scan): planeja em map, controla em odom ─► /cmd_vel_ra
     inverte o sinal, o offset não); ganho do escorregamento por mínimos quadrados. Copie os
     valores de `dados/calibracao/` para `config/wheel_calibration.yaml`. A referência é a pose
     verdadeira do Webots; no campo seria uma trena, um GNSS RTK ou marcos na entrelinha.
-  - Medido: x1,0174 (101) e x1,0036 (303), contra 1,0180 e 1,0039 sorteados; o offset do roll
-    a 0,04° do verdadeiro.
+  - Calibradas no olival as sementes 101, 202, 303, 404 e 505 (as da bateria). Medido: raio
+    x1,0174, x0,9967, x1,0036, x1,0058 e x0,9841 (101 e 303 contra 1,0180 e 1,0039 sorteados);
+    o offset do roll a 0,04° do verdadeiro. Outra semente sobe sem calibração: raio nominal e, com
+    `lateral_correction:=auto`, sem correção lateral (cai para `none`); rode a calibração antes.
 - **Escorregamento encosta abaixo pela inclinação (`slope_slip.py`, `lateral_correction:=imu`,
   padrão no olival):** de través na encosta o skid-steer escorrega para baixo, e as rodas
   dizem vy = 0. O nó fica entre as rodas e o EKF e soma
@@ -876,27 +878,27 @@ O que sobra no caso 4 não é yaw: na semente 101 o EKF anda 1,1 m a menos que o
 (o raio das rodas sorteado pelo ruído erra ~1,7%) e o robô escorrega 0,3 a 0,5 m encosta abaixo
 na ida; nenhum dos dois é visto pelas rodas ou pelo IMU, e na ida não há com que fechar laço.
 
-**Olival com o raio calibrado e a correção lateral** (seção 5; nuvem, 2026-11-25, mesmas
-sementes, uma rodada por célula; CSVs em `resultados/distancia_escorregamento_olival/` nos
-arquivos do projeto). ATE / erro máximo (m) / no alvo ≤ 0,5 m:
+**Olival com o raio calibrado e a correção lateral** (seção 5; nuvem, 2026-11-25/26, 5
+sementes, uma rodada por semente e configuração; detalhes, por semente e teste pareado em
+`resultados/bateria_olival_5sementes/resumo.md` nos arquivos do projeto). Média ± desvio:
 
-| Caso, semente | Só yaw (antes) | + raio calibrado | + raio + `imu` (padrão) | + raio + `rows` |
+| Caso | Configuração | ATE (m) | Erro máx. (m) | No alvo ≤ 0,5 m |
 |---|---|---|---|---|
-| caso4, 101 | 0,96 / 1,66 / 5 de 15 | 0,93 / 1,73 / 4 | 0,57 / 1,05 / 5 | 0,33 / 0,79 / 12 |
-| caso4, 303 | 0,72 / 1,37 / 5 de 15 | 1,81 / 3,32 / 2 | 0,40 / 1,00 / 11 | 1,68 / 3,01 / 5 |
-| caso5, 101 | 0,54 / 1,09 / 7 de 12 | 0,67 / 1,22 / 6 | 0,62 / 1,06 / 6 | 0,82 / 1,58 / 5 |
-| caso5, 303 | 0,59 / 1,13 / 7 de 12 | 0,75 / 1,27 / 5 | 0,76 / 1,33 / 6 | 1,03 / 1,93 / 5 |
-| média | 0,70 / 1,31 / 24 de 54 | 1,04 / 1,89 / 17 | **0,59 / 1,11 / 28** | 0,97 / 1,83 / 27 |
+| caso4 | só yaw (antes) | 0,91 ± 0,16 | 1,69 ± 0,29 | 29 ± 6% |
+| caso4 | raio + `imu` (padrão) | **0,41 ± 0,11** | **0,90 ± 0,22** | **67 ± 19%** |
+| caso4 | raio + `rows` | 0,67 ± 0,57 | 1,42 ± 0,94 | 55 ± 17% |
+| caso5 | só yaw (antes) | 0,63 ± 0,15 | 1,21 ± 0,27 | 48 ± 18% |
+| caso5 | raio + `imu` (padrão) | **0,63 ± 0,08** | **1,08 ± 0,15** | **50 ± 0%** |
+| caso5 | raio + `rows` | 0,86 ± 0,11 | 1,65 ± 0,17 | 42 ± 0% |
 
-- O raio calibrado tira o erro ao longo da fileira (na ida do caso 4, semente 101, de 1,1 m
-  para 0,1 m), mas sozinho não melhorou a média: o erro lateral sobra, e numa rodada (caso 4,
-  303) o RTAB-Map desviou o `map` 2 m na volta.
-- `imu` foi a melhor no conjunto e virou o padrão no olival. No caso 5 (que sobe e desce a
-  encosta quase sem andar de través) ficou igual ao de antes.
-- `rows` deu o melhor resultado de todos numa rodada (caso 4, 101: 12 de 15 no alvo) e o pior
-  em outra (caso 4, 303: o `odom` ficou a 0,4 m, mas o RTAB-Map desviou o `map` 2,5 m na volta,
-  como na rodada só com o raio). Uma rodada por célula não separa bem o método da sorte do
-  RTAB-Map; a bateria de 5 sementes resolveria.
+- `imu` é o padrão no olival porque ganha com folga no caso 4 (ATE menor nas 5 sementes,
+  teste t pareado p = 0,004) e empata no caso 5 (a rota sobe e desce a encosta quase sem andar
+  de través), com metade da dispersão e o pior caso melhor.
+- `rows` é instável no caso 4 (0,33 a 1,68 m: quando o RTAB-Map desvia o `map` na volta, ela
+  não segura) e pior que "antes" no caso 5 em todas as sementes (p = 0,03): a medida pelas
+  fileiras erra de 0,2 a 0,4 m porque as oliveiras saem da grade. Fica só como opção.
+- O raio calibrado sozinho (sem correção lateral, 2 sementes) tirou o erro ao longo da fileira
+  mas não melhorou a média: o que pesa no caso 4 é o escorregamento lateral.
 
 ## 8. Interface web do operador (`operator:=true`)
 
