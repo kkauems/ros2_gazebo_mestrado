@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agrobot: algoritmos</title>
+  <link rel="stylesheet" href="vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="css/estudo.css">
+</head>
+<body>
+  <header class="topo">
+    <button id="btn-indice" aria-label="Índice">☰ Índice</button>
+    <strong>Agrobot</strong>
+    <span class="sub">Estudo dos algoritmos, nó por nó</span>
+    <div class="dir">
+      <a class="btn" href="index.html">← Site 3D</a>
+      <button id="btn-tema" title="Tema claro ou escuro">Tema</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav id="indice" aria-label="Índice">
+      <input id="filtro" type="search" placeholder="Filtrar o índice (ex.: ICP)" aria-label="Filtrar o índice">
+      <ol id="indice-lista"></ol>
+    </nav>
+
+    <main id="texto">
+<h1>Os algoritmos do Agrobot, nó por nó</h1>
+<p class="lead">Material de estudo para a defesa. Para cada nó ROS 2 do sistema oficial (Webots + EKF + VSLAM com RTAB-Map + Nav2), o que o algoritmo faz por dentro, as equações, os parâmetros que usamos, por que ele foi escolhido no lugar das alternativas e o que os resultados do projeto mostram.</p>
+
+<div class="caixa cuidado"><span class="rot">Como ler</span>
+<p>Cada seção de nó tem: <b>o problema</b> que ele resolve, <b>o algoritmo</b> (com equações), <b>os parâmetros</b> que importam, uma caixa verde <b>por que este</b> (alternativas e motivo), uma caixa azul <b>no projeto</b> (medidas nossas) e perguntas prováveis da <b>banca</b> (clique para abrir). As fontes são o código e as configurações do repositório (<code>agrobot_webots/</code>) e o <code>claude/manual.md</code>; os números de resultados vêm das baterias nos arquivos do projeto. Gazebo e slam_toolbox aparecem só como comparação e legado.</p>
+</div>
+
+<!-- ================================================================ -->
+<section id="visao">
+<h2>1. Visão geral do sistema</h2>
+
+<p>O robô é um skid-steer de 4 rodas (raio 0,22 m, bitola 0,96 m, pegada 1,2 × 1,12 m) simulado no Webots, controlado pelo ROS 2 Jazzy no WSL2. A cadeia inteira, do sensor à roda:</p>
+
+<pre>
+SENSORES (Webots) ─► agrobot_driver (+ ruído realista) ─► tópicos com o tempo da simulação
+
+LOCALIZAÇÃO LOCAL (odom → base_link, 30 Hz, contínua, deriva)
+  /wheel/odom ─► wheel_slip_monitor ─► slope_slip ─► EKF ◄─ /imu/data (giro e yaw)
+                  ▲ /vo/odom (rgbd_odometry)          ▲ /row_heading/pose (só no olival)
+
+LOCALIZAÇÃO GLOBAL (map → odom, 1 Hz, corrige a deriva, pode saltar)
+  câmera RGB-D ─► rgbd_sync ─┐
+  LiDAR 3D + /scan ─► lidar_merge ─┴─► rtabmap ─► TF map → odom, grafo, grade
+                                               └─► stable_map ─► /rtabmap/map
+
+NAVEGAÇÃO (Nav2): planeja em map, controla em odom
+  waypoint_mission ─► waypoint_follower ─► bt_navigator ─► planner (NavFn) + controller (RPP)
+  ─► velocity_smoother ─► [cmd_vel_mux] ─► /cmd_vel_raw
+
+SEGURANÇA: /cmd_vel_raw ─► collision_monitor_limit ─► collision_monitor ─► /cmd_vel ─► driver
+DADOS: câmera de aquisição ─► data_recorder (foto + pose map → câmera)
+</pre>
+
+<h3 id="tf">1.1 Os frames (REP-105) e por que dois níveis de localização</h3>
+
+<figure>
+<svg viewBox="0 0 800 205" role="img" aria-label="Árvore de frames map, odom, base_link e sensores">
+  <rect class="cx" x="30" y="70" width="120" height="50" rx="8"/><text class="tx" x="90" y="100" text-anchor="middle">map</text>
+  <rect class="cx" x="270" y="70" width="120" height="50" rx="8"/><text class="tx" x="330" y="100" text-anchor="middle">odom</text>
+  <rect class="cx" x="510" y="70" width="120" height="50" rx="8"/><text class="tx" x="570" y="100" text-anchor="middle">base_link</text>
+  <path class="az" d="M150 95 H266"/><path class="azf" d="M266 89 l10 6 -10 6z"/>
+  <path class="vd" d="M390 95 H506"/><path class="vdf" d="M506 89 l10 6 -10 6z"/>
+  <text class="tx" x="210" y="60" text-anchor="middle">rtabmap</text>
+  <text class="ts" x="210" y="140" text-anchor="middle">1 Hz, sem deriva,</text>
+  <text class="ts" x="210" y="156" text-anchor="middle">pode saltar</text>
+  <text class="tx" x="450" y="60" text-anchor="middle">EKF</text>
+  <text class="ts" x="450" y="140" text-anchor="middle">30 Hz, contínuo,</text>
+  <text class="ts" x="450" y="156" text-anchor="middle">deriva</text>
+  <path class="ln" d="M630 95 H690 M690 40 V160 M690 40 H715 M690 80 H715 M690 120 H715 M690 160 H715"/>
+  <text class="ts" x="720" y="44">lidar3d</text><text class="ts" x="720" y="84">câmeras</text>
+  <text class="ts" x="720" y="124">imu</text><text class="ts" x="720" y="164">rodas</text>
+  <text class="ts" x="790" y="198" text-anchor="end">robot_state_publisher (URDF)</text>
+</svg>
+<figcaption>Cada transformação tem um dono só. O controlador do Nav2 trabalha em <code>odom</code> (sem saltos); o planejador, o objetivo e as fotos ficam em <code>map</code> (sem deriva).</figcaption>
+</figure>
+
+<p>A pose do robô no mapa é a composição \(T^{map}_{base} = T^{map}_{odom}\,T^{odom}_{base}\). O EKF dá \(T^{odom}_{base}\) a 30 Hz, suave mas com deriva, porque nenhuma entrada dele mede posição. O RTAB-Map dá a correção \(T^{map}_{odom}\), que só muda quando um fechamento de laço reotimiza o grafo. É a divisão da REP-105: um controlador que seguisse a pose de <code>map</code> veria saltos de dezenas de centímetros a cada correção e daria trancos; um planejador em <code>odom</code> planejaria sobre uma pose que deriva.</p>
+
+<details class="banca"><summary>Por que dois níveis (EKF e VSLAM) e não só um?</summary>
+<p>Eles resolvem problemas diferentes. O EKF é rápido e contínuo, mas integra velocidades e deriva sem limite. O VSLAM corrige a deriva quando reconhece um lugar, mas é lento (1 Hz) e corrige aos saltos. Juntos, o controlador usa a pose suave e o planejador usa a pose corrigida. Além disso, o RTAB-Map usa o EKF como chute para a própria busca de fechamentos (seção 5.3): os dois níveis não são redundantes, um alimenta o outro.</p>
+</details>
+
+<h3 id="fundamentos">1.2 Três ideias que aparecem em quase todo nó</h3>
+
+<h4>Gaussiana, covariância e peso pela incerteza</h4>
+<p>Quase todo estimador aqui representa a crença como uma gaussiana \(\mathcal N(\mu, \Sigma)\). Juntar duas estimativas independentes \(a\) (variância \(\sigma_a^2\)) e \(b\) (variância \(\sigma_b^2\)) da mesma grandeza dá a média ponderada pelo inverso da variância:</p>
+\[ \hat x = \frac{\sigma_b^2\, a + \sigma_a^2\, b}{\sigma_a^2+\sigma_b^2} = a + \underbrace{\frac{\sigma_a^2}{\sigma_a^2+\sigma_b^2}}_{K}(b-a), \qquad \hat\sigma^2 = (1-K)\,\sigma_a^2 . \]
+<p>Esse \(K\) é o ganho de Kalman na forma escalar. É por isso que, no projeto, mexer numa variância (das rodas, do ruído de processo do yaw) muda o comportamento do robô: muda quem pesa mais.</p>
+
+<h4>Distância de Mahalanobis</h4>
+<p>Para decidir se uma medida \(z\) é plausível dada a previsão \(\hat z\) com covariância de inovação \(S\), usa-se \(d^2 = (z-\hat z)^\top S^{-1}(z-\hat z)\), que segue uma \(\chi^2\) com tantos graus de liberdade quanto a dimensão de \(z\). O EKF do <code>robot_localization</code> recusa medidas com \(d\) acima do <code>*_rejection_threshold</code>. Usamos isso só na posição lateral pelas fileiras (limiar 8) e explicamos na seção 3.1 por que <b>não</b> usamos para a odometria visual.</p>
+
+<h4>Log-odds para grades de ocupação</h4>
+<p>Cada célula guarda \(\ell = \log\frac{p}{1-p}\) da probabilidade de estar ocupada. Uma observação soma \(\ell_{hit} = \log\frac{p_{hit}}{1-p_{hit}}\) (o raio bateu ali) ou \(\ell_{miss}\) (o raio passou por ali), com limites \([\ell_{min}, \ell_{max}]\). A soma é a regra de Bayes para observações independentes (Moravec e Elfes, 1985). A razão \(|\ell_{hit}/\ell_{miss}|\) diz quantos raios livres desfazem um acerto, e foi um parâmetro decisivo no mapa (seção 5.4).</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="sim">
+<h2>2. Simulação, driver e sensores</h2>
+
+<h3 id="no-webots">2.1 Webots (simulador)</h3>
+<div class="meta-no"><span><b>O que é:</b> simulador de corpos rígidos</span><span><b>Arquivos:</b> <code>worlds/*.wbt</code>, <code>protos/agrobot.proto</code></span></div>
+<p><b>Algoritmo.</b> O Webots integra a dinâmica dos corpos rígidos com o motor ODE (Open Dynamics Engine) a passo fixo (<code>basicTimeStep</code> de 32 ms no nosso mundo): resolve as forças de contato roda-solo com atrito de Coulomb (coeficiente 0,7 na plantação, 0,8 no olival) como um problema de complementaridade linear (LCP) a cada passo. É esse modelo de contato que faz o skid-steer derrapar nas curvas e escorregar de través na encosta, sem nada programado por nós. Os sensores são calculados pelo renderizador (câmeras, range finder) e por lançamento de raios (LiDARs).</p>
+<p><b>Pose verdadeira.</b> O robô é um <i>Supervisor</i>: lê a própria pose exata e publica em <code>/ground_truth/odom</code>. Nenhum estimador assina esse tópico; ele só serve de gabarito para as métricas (seção 7.6) e para a calibração (seção 4.5).</p>
+<p><b>Mundos.</b> Gerados por script (semente fixa), nunca editados à mão: <code>generate_plantation_field.py</code> (6 fileiras de milho de 9 m, entrelinhas de 1,8 m, camalhões, torrões, pedras, galhos) e <code>generate_olive_grove.py</code> (65 oliveiras em grade 7 × 7 m, encosta de 4 a 5% para +y, montes de poda, moroiços). A arena é legado e não entra nos resultados.</p>
+<div class="caixa porque"><span class="rot">Por que Webots</span>
+<p>Roda nativo no Windows, onde o trabalho é feito, com o ROS 2 no WSL2 falando com ele pelo <code>webots_ros2_driver</code>. O Gazebo (pacotes <code>agrobot_gazebo</code>, <code>agrobot_control</code>) foi a primeira versão e ficou como legado.</p>
+</div>
+
+<h3 id="no-driver">2.2 agrobot_driver: cinemática do skid-steer e publicação dos sensores</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots (plugin do webots_ros2_driver)</span><span><b>Arquivo:</b> <code>agrobot_driver.py</code></span><span><b>Ritmo:</b> a cada passo de 32 ms</span></div>
+
+<h4>Cinemática inversa: do /cmd_vel às rodas</h4>
+<p>O comando é uma velocidade linear \(v\) e angular \(\omega\) no <code>base_link</code>. Para um robô diferencial com bitola \(b\) e raio \(r\), cada lado gira a</p>
+\[ \dot\phi_E = \frac{v - \omega\, b_{ef}/2}{r}, \qquad \dot\phi_D = \frac{v + \omega\, b_{ef}/2}{r}, \qquad b_{ef} = 1{,}33 \times 0{,}96\ \text{m} \approx 1{,}28\ \text{m}. \]
+<p>No skid-steer o centro instantâneo de rotação não fica no eixo das rodas: as rodas derrapam lateralmente para o robô girar, e ele gira <b>menos</b> do que a geometria prevê. O modelo cinemático experimental do skid-steer (Mandow et al., 2007) trata isso como uma bitola efetiva maior que a geométrica; o fator 1,33 (<code>wheelSeparationScale</code>) faz o giro comandado bater com o real. As duas rodas de cada lado recebem a mesma velocidade.</p>
+
+<h4>Odometria das rodas (cinemática direta)</h4>
+<p>A cada passo, com os ângulos médios dos encoders de cada lado (com ruído e quantização, seção 2.3) e o raio efetivo calibrado \(r\,s_r\):</p>
+\[ \Delta s = \tfrac{1}{2}(\Delta s_D + \Delta s_E), \quad \Delta\psi = \frac{\Delta s_D - \Delta s_E}{b_{ef}}, \quad
+\begin{aligned} x &\mathrel{+}= \Delta s\cos(\psi + \tfrac{\Delta\psi}{2}) \\ y &\mathrel{+}= \Delta s\sin(\psi + \tfrac{\Delta\psi}{2}) \end{aligned} \]
+<p>(integração pelo ponto médio, que é exata para um arco de curvatura constante até segunda ordem). Publica em <code>/wheel/odom</code> as velocidades \(v_x = \Delta s/\Delta t\), \(v_y = 0\) e uma <b>variância proporcional ao movimento</b>:</p>
+\[ \sigma_{v_x} = 0{,}002 + 0{,}10\,|v|, \qquad \sigma_{v_y} = 0{,}002 + 0{,}05\,|v| + 0{,}05\,|\omega| \quad [\text{m/s}]. \]
+<p>O \(v_y = 0\) com variância é a <b>restrição não holonômica</b> (o robô não anda de lado), mas "mole": o termo em \(|\omega|\) admite a derrapagem lateral das curvas. O yaw das rodas sai com variância alta e o EKF nem o usa.</p>
+
+<h4>Outras escolhas do driver</h4>
+<ul>
+<li><b>Tudo carimbado com <code>robot.getTime()</code></b> no passo em que o dado foi feito, e o próprio driver publica <code>/clock</code>. Os publicadores padrão do <code>webots_ros2_driver</code> carimbavam com o relógio do nó (parado ou atrasado): o Nav2 descartava os scans e o RTAB-Map não casava cor, profundidade e odometria.</li>
+<li><b>Watchdog:</b> sem <code>/cmd_vel</code> por 1 s de simulação, o robô para. Se qualquer nó da cadeia cair, nada segue o último comando.</li>
+<li><b>Nuvem do LiDAR 3D:</b> a range image do Webots (16 × 1800 distâncias) vira pontos pelos ângulos de cada raio, \(p = \rho\,(\cos\alpha\cos\beta,\ \sin\alpha\cos\beta,\ \sin\beta)\), com o azimute \(\alpha\) no meio de cada fatia (convenção do Webots) e a elevação \(\beta\) de cada canal. Só os pontos válidos vão no <code>PointCloud2</code>.</li>
+<li><b>Auto-ocultação do LiDAR de segurança:</b> raios que batem nas rodas e motores (dentro de uma caixa no <code>base_link</code>) saem como NaN, senão a camada de segurança veria o próprio robô.</li>
+</ul>
+
+<h3 id="ruido">2.3 Ruído dos sensores (sensor_noise.py)</h3>
+<p>Os sensores do Webots são perfeitos, o que favorecia o EKF (ele confia no yaw da IMU). O driver aplica o erro de sensores reais de baixo custo antes de publicar. Os modelos são os clássicos da navegação inercial:</p>
+<div class="tabela"><table>
+<tr><th>Sensor</th><th>Modelo (1σ)</th><th>Referência</th></tr>
+<tr><td>Giroscópio</td><td>\(\omega_m = (1+s)\,\omega + b_0 + b_{GM}(t) + n\), com densidade de ruído 0,01 °/s/√Hz, \(b_0\) 0,01 °/s, \(b_{GM}\) 0,005 °/s (τ = 2 min), \(s\) 1%</td><td>BMI160, MPU-6050, ICM-20948</td></tr>
+<tr><td>Orientação (yaw)</td><td>integral do erro do giroscópio: deriva e não volta (sem magnetômetro)</td><td>IMU de 6 eixos</td></tr>
+<tr><td>Roll/pitch</td><td>inclinação fixa vinda do offset do acelerômetro (20 mg ≈ 1,1°) + 0,1°</td><td>idem</td></tr>
+<tr><td>Encoders</td><td>4096 contagens/volta; raio efetivo 1% errado + 0,3% de diferença entre lados</td><td>pneu sob carga</td></tr>
+<tr><td>LiDAR de segurança</td><td>1% da distância (mín. 1 cm), 1% de raios NaN</td><td>3irobotix Delta-2A</td></tr>
+<tr><td>LiDAR 3D</td><td>2 cm por ponto, 0,5% perdidos</td><td>RoboSense Helios-16P</td></tr>
+<tr><td>Profundidade RGB-D</td><td>\(\sigma_z = z^2\,\sigma_d/(f B)\) com \(\sigma_d\) = 0,1 px, \(f\) = 447 px, \(B\) = 95 mm: 2,4 mm a 1 m, 3,8 cm a 4 m</td><td>Intel RealSense D455</td></tr>
+</table></div>
+<p><b>Ruído branco amostrado.</b> Uma densidade \(N\) [unid./√Hz] amostrada a cada \(\Delta t\) vira um desvio por amostra de \(N/\sqrt{\Delta t}\). Integrado, o ruído branco do giroscópio dá o <i>angle random walk</i>: \(\sigma_\psi(t) = N\sqrt{t}\) (0,01 °/s/√Hz equivale a 0,6 °/√h).</p>
+<p><b>Bias de Gauss-Markov de 1ª ordem</b> (o bias que "vaga" e volta), discretizado de forma exata:</p>
+\[ b_{k+1} = e^{-\Delta t/\tau}\, b_k + \sigma\sqrt{1-e^{-2\Delta t/\tau}}\; w_k, \qquad w_k \sim \mathcal N(0,1), \]
+<p>que mantém a variância estacionária em \(\sigma^2\) e correlação \(e^{-|t|/\tau}\). O bias fixo \(b_0\) gera um erro de yaw que cresce <b>linearmente</b> (\(b_0 t\)); o erro de escala \(s\) soma ~1,8° a cada giro de 180°.</p>
+<p><b>Profundidade estéreo.</b> A profundidade é \(z = fB/d\) (disparidade \(d\)); derivando, \(\partial z/\partial d = -z^2/(fB)\), então um erro de subpixel \(\sigma_d\) vira \(\sigma_z = z^2\sigma_d/(fB)\). Por isso o RTAB-Map descarta features a mais de 5 m (<code>Vis/MaxDepth</code>).</p>
+<div class="caixa projeto"><span class="rot">No projeto</span>
+<p>Parado, o yaw deriva ~2° em 5 min (mediana), até ~9° no pior décimo. No caso 2 da plantação (EKF + VSLAM, 3 rodadas de cada): sem ruído, ATE 0,11 ± 0,03 m; com ruído, 0,16 ± 0,01 m. Uma semente com giroscópio 2,4% fora de escala fez o yaw do EKF derivar 15° no caso 3, e o VSLAM segurou em 2 a 4°.</p>
+</div>
+<details class="banca"><summary>Por que não usar magnetômetro para segurar o yaw?</summary>
+<p>No campo ele sofre com motores, cercas e implementos de ferro, e a perturbação muda com o lugar. A escolha foi assumir uma IMU de 6 eixos (o pior caso realista) e corrigir o yaw por percepção: fechamentos de laço do VSLAM e, no olival, o rumo pelas fileiras.</p>
+</details>
+
+<h3 id="no-rsp">2.4 robot_state_publisher</h3>
+<div class="meta-no"><span><b>Pacote:</b> robot_state_publisher</span><span><b>Arquivo:</b> <code>agrobot_description/urdf/agrobot.urdf</code></span></div>
+<p><b>Algoritmo:</b> cinemática direta da árvore do URDF. Cada junta tem uma transformação fixa (sensores) ou dependente do ângulo (rodas, de <code>/joint_states</code>); o nó publica \(T^{pai}_{filho}\) de cada elo no TF. Quem projeta um dado de sensor para o robô compõe essas transformações (\(T^{base}_{sensor}\)). Por isso o PROTO do Webots e o URDF precisam bater nas poses dos sensores: o EKF (IMU), o RTAB-Map (câmera e LiDAR 3D), os costmaps e a camada de segurança (LiDAR de segurança) e o <code>data_recorder</code> (câmera de aquisição) dependem disso.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="local">
+<h2>3. Localização local: o EKF</h2>
+
+<h3 id="no-ekf">3.1 ekf_filter_node: filtro de Kalman estendido</h3>
+<div class="meta-no"><span><b>Pacote:</b> robot_localization (<code>ekf_node</code>)</span><span><b>Config:</b> <code>config/ekf.yaml</code> (+ <code>ekf_row_heading.yaml</code> no olival)</span><span><b>Ritmo:</b> 30 Hz</span><span><b>Publica:</b> <code>/odom</code>, TF <code>odom → base_link</code></span></div>
+
+<h4>O problema</h4>
+<p>Juntar sensores que medem coisas diferentes (rodas: velocidade; IMU: yaw e velocidade de giro; fileiras: yaw absoluto), cada um com sua incerteza e seu ritmo, numa estimativa só, contínua, com a incerteza dela.</p>
+
+<h4>O estado e o modelo de movimento</h4>
+<p>O <code>robot_localization</code> (Moore e Stouch, 2014) usa um estado de 15 variáveis (pose 3D, velocidades lineares e angulares no corpo, acelerações). Com <code>two_d_mode: true</code>, z, roll, pitch e as derivadas deles são zerados, e o que importa é</p>
+\[ \mathbf x = [\,x,\ y,\ \psi,\ v_x,\ v_y,\ \omega,\ a_x,\ a_y\,]^\top . \]
+<p>O modelo de previsão é cinemático "omnidirecional" de velocidade (e aceleração) constante: as velocidades estão no frame do robô e são giradas pelo yaw.</p>
+\[ \begin{aligned}
+x_{k+1} &= x_k + (v_x\cos\psi - v_y\sin\psi)\,\Delta t + \tfrac12(a_x\cos\psi - a_y\sin\psi)\,\Delta t^2\\
+y_{k+1} &= y_k + (v_x\sin\psi + v_y\cos\psi)\,\Delta t + \tfrac12(a_x\sin\psi + a_y\cos\psi)\,\Delta t^2\\
+\psi_{k+1} &= \psi_k + \omega\,\Delta t, \qquad v_{k+1} = v_k + a\,\Delta t, \qquad \omega_{k+1}=\omega_k .
+\end{aligned} \]
+<p>O "estendido" vem dos senos e cossenos: o modelo \(f\) não é linear, e a covariância é propagada pela jacobiana \(F = \partial f/\partial \mathbf x\) avaliada na estimativa atual.</p>
+
+<h4>Previsão e correção</h4>
+<p><b>Previsão:</b></p>
+\[ \hat{\mathbf x}^- = f(\hat{\mathbf x}),\qquad P^- = F P F^\top + Q\,\Delta t \]
+<p><b>Correção:</b></p>
+\[ \mathbf y = \mathbf z - H\hat{\mathbf x}^-,\quad S = H P^- H^\top + R,\quad K = P^- H^\top S^{-1} \]
+\[ \hat{\mathbf x} = \hat{\mathbf x}^- + K\mathbf y,\qquad P = (I-KH)\,P^-(I-KH)^\top + K R K^\top \]
+<p>\(H\) só seleciona os componentes que cada sensor mede (é linear: as medidas são do próprio estado), definidos pelos vetores <code>*_config</code>. A última linha é a forma de Joseph, numericamente estável. \(R\) vem da covariância que vem <b>dentro de cada mensagem</b>: por isso a variância proporcional ao movimento do driver muda o filtro.</p>
+
+<h4>O que entra, e o que fica de fora de propósito</h4>
+<div class="tabela"><table>
+<tr><th>Entrada</th><th>Componentes</th><th>Por quê</th></tr>
+<tr><td><code>odom0</code> rodas (<code>/wheel/odom_checked</code> ou <code>/wheel/odom_slope</code>)</td><td>\(v_x, v_y\)</td><td>O yaw e o giro das rodas ficam de fora: no skid-steer eles erram a cada curva.</td></tr>
+<tr><td><code>imu0</code> <code>/imu/data</code></td><td>\(\psi\) (relativo à 1ª leitura), \(\omega\)</td><td>A aceleração fica de fora: integrá-la duas vezes piora a posição. No olival, o yaw sai e fica só \(\omega\).</td></tr>
+<tr><td><code>pose0</code> <code>/row_heading/pose</code> (olival)</td><td>\(\psi\)</td><td>Yaw absoluto pelas fileiras (seção 4.4).</td></tr>
+<tr><td><code>pose1</code> <code>/row_heading/position</code> (opção <code>rows</code>)</td><td>\(x, y\) (só na normal das fileiras)</td><td>Opção, não é o padrão.</td></tr>
+</table></div>
+<p>Consequência importante: <b>nenhuma entrada padrão mede posição</b>. O erro de posição do EKF só cresce; quem o corrige é o VSLAM. Isso não é defeito do filtro, é a natureza da odometria.</p>
+
+<h4>O ruído de processo \(Q\): onde estão as decisões do projeto</h4>
+<p>\(Q\) diz quanto o modelo "de velocidade constante" pode errar por segundo. Três escolhas:</p>
+<ol>
+<li><b>\(Q_{xx} = Q_{yy} = 0\) e <code>dynamic_process_noise_covariance: true</code>.</b> O padrão (0,05 m²/s) fazia a elipse crescer igual em x e y até com o robô parado. Com 0, a incerteza da posição vem só da incerteza das velocidades e do yaw propagada por \(F\): ela cresce <i>na direção em que o robô anda</i>, e parado não cresce (o termo dinâmico escala \(Q\) pela velocidade). No RViz, de 0,71 m para 0,008 m de σ em 10 s parado.</li>
+<li><b>\(Q_{v_x v_x} = 1{,}0\) (padrão 0,025).</b> Na entrelinha o robô passa de 0,4 m/s a 0 num passo de 32 ms várias vezes por segundo. Parado, a variância das rodas é quase zero (\(\sigma_{v_x} \approx 0{,}002\)), então o EKF zerava a velocidade na hora; ao arrancar, a variância das rodas sobe para ~0,04² e, com \(Q\) pequeno, \(P_{v_x}\) ainda era pequeno: \(K = P/(P+R)\) ficava baixo e o filtro levava ~5 passos para chegar a 0,4 m/s. Cada arrancada perdia ~3 cm. Com 1,0, \(P^-\) fica grande e \(K \approx 1\): o EKF segue as rodas no mesmo passo.</li>
+<li><b>\(Q_{\psi\psi} = 10^{-5}\) com o rumo pelas fileiras (padrão 0,06).</b> Veja a conta abaixo.</li>
+</ol>
+
+<h4>Conta para a defesa: por que \(Q_\psi\) decide se a medida "substitui" ou "corrige aos poucos"</h4>
+<p>Entre duas medidas das fileiras (a cada 0,4 s) a variância do yaw cresce \(q = Q_\psi\,\Delta t\); a medida tem \(R = (1^\circ)^2 \approx 3{,}05\times10^{-4}\ \text{rad}^2\). No regime permanente do filtro escalar, \(P^-\) resolve \(P^{-2} - qP^- - qR = 0\):</p>
+\[ P^- = \frac{q + \sqrt{q^2 + 4qR}}{2}, \qquad K = \frac{P^-}{P^-+R}. \]
+<div class="tabela"><table>
+<tr><th>\(Q_\psi\) (rad²/s)</th><th class="num">\(q\) em 0,4 s</th><th class="num">\(K\)</th><th>Efeito</th></tr>
+<tr><td>0,06 (padrão)</td><td class="num">0,024</td><td class="num">≈ 0,99</td><td>Cada medida (com 0,5 a 1° de erro) substitui o yaw: ele pula a cada 0,4 s, o controlador corrige os pulos, o robô ziguezagueia (desvio do yaw de 0,5° para 6°) e escorrega encosta abaixo (2,3 m de erro lateral no caso 4).</td></tr>
+<tr><td>1e-5 (usado)</td><td class="num">4×10⁻⁶</td><td class="num">≈ 0,11</td><td>Cada medida corrige ~10% da diferença; a média de muitas medidas segura a deriva do giroscópio, e o giroscópio dá a suavidade.</td></tr>
+</table></div>
+<p>É um filtro complementar implícito: alta frequência do giroscópio, baixa frequência das fileiras.</p>
+
+<div class="caixa porque"><span class="rot">Por que EKF (e por que o robot_localization)</span>
+<ul>
+<li><b>Contra a odometria pura das rodas:</b> o yaw das rodas do skid-steer erra a cada curva; o EKF permite pegar o yaw de outro sensor e pesar cada um pela incerteza.</li>
+<li><b>Contra um filtro complementar escrito à mão:</b> o EKF dá a covariância (usada pelo RViz, pelo RTAB-Map como peso dos elos e para entender a deriva) e aceita entradas novas (fileiras, VO, GNSS no futuro) só com configuração.</li>
+<li><b>Contra UKF:</b> o modelo é quase linear em intervalos de 33 ms (o yaw muda pouco num passo); a linearização do EKF não é o gargalo, e o UKF custa mais. O pacote tem os dois; o EKF é o padrão da comunidade.</li>
+<li><b>Contra filtro de partículas:</b> partículas servem quando a crença é multimodal (localização global num mapa). Aqui a crença local é unimodal e gaussiana; a multimodalidade (qual entrelinha?) é tratada pelo VSLAM com o EKF como chute.</li>
+<li>Foi também sugestão do orientador e é o padrão em ROS para fusão (REP-105).</li>
+</ul>
+</div>
+<div class="caixa projeto"><span class="rot">No projeto</span>
+<p>Com \(Q_{v_x}\) de 0,025 para 1,0, na mesma semente: caso 3 de 7/11 waypoints com 15 paradas para 11/11 sem paradas (ATE 0,30 → 0,09 m); caso 4 do olival de ATE 1,01 para 0,73 m. A perda de distância do EKF contra as rodas caiu de 8,8% para ~0,5%.</p>
+</div>
+<details class="banca"><summary>O que é exatamente a deriva? Por que o EKF não a corrige?</summary>
+<p>É o erro acumulado quando a posição é obtida somando pequenos deslocamentos: cada passo tem um erro pequeno (raio do pneu, derrapagem, bias do giroscópio) e eles se somam. O EKF só funde velocidades e ângulo; para corrigir posição precisaria de uma medida de posição (GNSS, marco conhecido ou reconhecimento de lugar, que é o VSLAM).</p>
+</details>
+<details class="banca"><summary>Por que não fundir a odometria visual diretamente no EKF?</summary>
+<p>Na patinagem (o caso em que ela mais ajudaria) as rodas, a 30 Hz e com variância pequena, puxam o estado, e o teste de Mahalanobis rejeitaria justamente a câmera, que é quem está certa. E as variâncias do <code>rgbd_odometry</code> às vezes saem quase nulas, o que faria o EKF ignorar o resto. Por isso a câmera entra como um <b>árbitro</b> das rodas (seção 4.2), não como mais uma medida.</p>
+</details>
+</section>
+
+<!-- ================================================================ -->
+<section id="correcoes">
+<h2>4. Correções da odometria antes do EKF</h2>
+<p>Quatro nós nossos ficam entre os sensores e o EKF. Cada um ataca um erro que as rodas e a IMU não veem: patinagem (robô preso), escorregamento encosta abaixo, deriva do yaw e erro do raio do pneu.</p>
+
+<h3 id="no-vo">4.1 rgbd_odometry: odometria visual RGB-D</h3>
+<div class="meta-no"><span><b>Pacote:</b> rtabmap_odom</span><span><b>Config:</b> <code>config/rtabmap.yaml</code> (<code>/rtabmap/rgbd_odometry</code>)</span><span><b>Publica:</b> <code>/vo/odom</code> (sem TF)</span><span><b>Sobe com:</b> <code>slip_check:=true</code> (padrão)</span></div>
+<p><b>O problema:</b> medir a velocidade do robô sem olhar as rodas.</p>
+<h4>O algoritmo, passo a passo (estratégia F2M, quadro contra mapa local)</h4>
+<ol>
+<li><b>Detecção de cantos GFTT</b> (Shi e Tomasi, 1994). Em cada janela da imagem, o tensor de estrutura \(M = \sum_w \begin{bmatrix} I_x^2 & I_xI_y \\ I_xI_y & I_y^2\end{bmatrix}\) tem autovalores \(\lambda_1, \lambda_2\); um bom canto tem os dois grandes. O GFTT pontua \(\min(\lambda_1,\lambda_2)\) (mais estável que o critério de Harris).</li>
+<li><b>Descritor ORB</b> (Rublee et al., 2011): BRIEF orientado e rotacionado, 256 comparações binárias de intensidade numa vizinhança suavizada, giradas pela orientação do canto (centróide de intensidade). Comparação por distância de Hamming (XOR + contagem de bits), muito rápida.</li>
+<li><b>Ponto 3D pela profundidade</b> (modelo pinhole): \(X = (u-c_x)\,z/f_x,\ Y = (v-c_y)\,z/f_y,\ Z = z\).</li>
+<li><b>Casamento</b> dos descritores do quadro novo com os do mapa local de features (dos quadros-chave recentes).</li>
+<li><b>Pose por PnP com RANSAC</b> (3D do mapa → 2D do quadro): minimiza o erro de reprojeção \(\sum_i \| u_i - \pi(R X_i + t)\|^2\) com hipóteses de amostras mínimas sorteadas, ficando com a que tem mais <i>inliers</i> (Fischler e Bolles, 1981). Aceita com pelo menos 15 inliers (<code>Vis/MinInliers</code>).</li>
+<li><b>Velocidade</b> = deslocamento entre quadros / Δt, publicada com a covariância estimada.</li>
+</ol>
+<h4>Parâmetros que escolhemos</h4>
+<div class="tabela"><table>
+<tr><th>Parâmetro</th><th>Valor</th><th>Por quê</th></tr>
+<tr><td><code>Reg/Force3DoF</code></td><td>false (6 DoF)</td><td>Preso na pedra o robô sobe e balança; em 3 DoF a câmera se perdia a cada sacudida. Só \(v_x, v_y\) são usadas.</td></tr>
+<tr><td>chute de movimento</td><td>nenhum</td><td>Com o EKF como chute, a patinagem entraria na própria referência.</td></tr>
+<tr><td><code>Odom/ResetCountdown</code></td><td>1</td><td>Perdida, recomeça no quadro seguinte: só a velocidade interessa.</td></tr>
+<tr><td><code>publish_null_when_lost</code></td><td>true</td><td>Perdida, publica variância 9999, que o monitor descarta.</td></tr>
+<tr><td><code>Vis/FeatureType</code>, <code>Vis/MaxDepth</code></td><td>8 (GFTT/ORB), 5 m</td><td>Mesmo detector no Linux e no WSL; o erro da D455 cresce com \(z^2\).</td></tr>
+</table></div>
+
+<h3 id="no-slip">4.2 wheel_slip_monitor: detecção de patinagem por votação em janela</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots</span><span><b>Arquivos:</b> <code>wheel_slip_monitor.py</code>, <code>slip_detector.py</code></span><span><b>Entra:</b> <code>/wheel/odom</code>, <code>/vo/odom</code></span><span><b>Sai:</b> <code>/wheel/odom_checked</code>, <code>/wheel/slip</code></span></div>
+<p><b>O problema:</b> preso numa pedra com as rodas girando, as rodas dizem que o robô anda e o EKF vai junto. A IMU não percebe: parado e a velocidade constante dão a mesma aceleração, zero.</p>
+<h4>O algoritmo</h4>
+<p><b>1. Filtragem de cada leitura da câmera.</b> Descarta se a variância é inválida (perdida), se \(\|v\| > 0{,}8\) m/s (o robô anda até 0,5) e as 3 primeiras depois de uma perda (logo depois de recomeçar a VO dava picos de ~2 m/s para trás: eram a origem dos alarmes falsos).</p>
+<p><b>2. Comparação justa.</b> A VO mede o deslocamento entre dois quadros; compara com a <b>média das rodas no mesmo intervalo</b> \((t_{k-1}, t_k]\), não com a última mensagem (a câmera chega atrasada). A leitura discorda se</p>
+\[ \|\bar v_{rodas} - v_{cam}\| > 0{,}10 + 0{,}30\,\max(\|\bar v_{rodas}\|, \|v_{cam}\|)\ \ \text{m/s}. \]
+<p><b>3. Decisão por janela (histerese).</b></p>
+\[ \text{entra se } N_{1,5\,s} \ge 8 \ \text{e}\ \frac{N_{disc}}{N} \ge 0{,}8; \qquad \text{sai se } N_{1,0\,s} \ge 4 \ \text{e}\ \frac{N_{conc}}{N} \ge 0{,}8 . \]
+<p>Os alarmes falsos duravam ~1 s; preso, o robô fica vários segundos. É um detector de mudança por votação (um "k de n"), simples de justificar e de testar (<code>test/test_slip_detector.py</code>).</p>
+<p><b>4. Saída.</b> Normal: as rodas passam sem mudança. Patinando: \(v_x, v_y\) viram a <b>mediana</b> das leituras válidas da câmera no último 0,5 s (uma leitura ruim sozinha não muda nada), com variância \(\max(\text{mediana}, 0{,}05^2)\). Se a câmera some, segura o último valor com a incerteza crescendo \((0{,}1\,\Delta t)^2\) por até 3 s; depois devolve as rodas.</p>
+<div class="caixa porque"><span class="rot">Por que assim</span>
+<p>Votação em janela e mediana são estimadores robustos a <i>outliers</i>, que é o defeito típico da VO. Fundir a VO no EKF (alternativa óbvia) falha exatamente na patinagem, pelo teste de Mahalanobis (seção 3.1). Um limiar numa leitura só daria alarme a cada pico da VO.</p>
+</div>
+<div class="caixa projeto"><span class="rot">No projeto</span>
+<p>Na plantação, contra um mourão da cerca (0,4 m/s por 22 s, ~8 s preso): detectou em ~1,3 s e o erro final ficou em 0,47 m, contra 2,8 m sem a checagem. O que o EKF anda antes da detecção (~0,45 m) fica no erro. Nas missões normais (caso 2 duas vezes, caso 4 uma vez) nenhum alarme falso, com 2 a 7 perdas da câmera por corrida.</p>
+</div>
+
+<h3 id="slope">4.3 slope_slip: escorregamento encosta abaixo pela inclinação</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots</span><span><b>Arquivo:</b> <code>slope_slip.py</code></span><span><b>Sobe com:</b> <code>lateral_correction:=imu</code> (padrão no olival com calibração)</span><span><b>Sai:</b> <code>/wheel/odom_slope</code></span></div>
+<p><b>O problema:</b> de través na encosta, o skid-steer escorrega para baixo. Os pneus já derrapam para a frente (é assim que ele gira), perdem aderência lateral, e a componente lateral do peso \(mg\sin\phi\) empurra o robô. As rodas dizem \(v_y = 0\); no caso 4 do olival isso dava 0,3 a 0,5 m de erro lateral na ida de 66 m.</p>
+<h4>O modelo</h4>
+\[ v_y = g_{esc}\,\sin(\phi - \phi_0)\,|v_x|, \qquad \sigma_{v_y}' = \sigma_{v_y} + 0{,}5\,|v_y| \]
+<p>com \(\phi\) o roll da IMU, \(\phi_0\) o offset fixo do roll (o offset do acelerômetro vira inclinação aparente) e \(g_{esc}\) o ganho do solo (negativo: roll positivo, lado esquerdo mais alto, escorrega para a direita). Proporcional a \(|v_x|\) porque o escorregamento lateral acompanha a derrapagem longitudinal dos pneus; parado, o atrito estático segura o robô. A variância cresce com a correção: o modelo é simples e o solo muda.</p>
+<div class="caixa projeto"><span class="rot">No projeto</span>
+<p>Ganhos calibrados −0,17 e −0,15 nas sementes 101 e 303 (é do solo, quase não muda com o robô). O modelo explica 33 a 43% da velocidade lateral verdadeira (o resto é o vaivém do controlador). Com o raio calibrado + <code>imu</code>, a média dos 4 casos do olival foi ATE 0,59 m, erro máximo 1,11 m e 28 de 54 waypoints no alvo, a melhor combinação, e virou o padrão.</p>
+</div>
+
+<h3 id="rumo">4.4 row_heading: rumo pelas fileiras no LiDAR 3D</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots</span><span><b>Arquivo:</b> <code>row_heading.py</code></span><span><b>Sobe com:</b> <code>row_heading:=auto</code> (só no olival)</span><span><b>Sai:</b> <code>/row_heading/pose</code> (yaw)</span></div>
+<p><b>O problema:</b> o yaw do giroscópio deriva (~0,6° por minuto com o nosso ruído, ~1° a cada giro de 90° pelo erro de escala). Numa ida de 65 m pela entrelinha do olival não há nada já visto para o RTAB-Map fechar laço; 1,8° de yaw viram 1,7 m de erro lateral no fim. Mas num pomar as fileiras são retas e paralelas, e o LiDAR 3D as vê a dezenas de metros: o ângulo delas no frame do robô <b>é</b> o yaw do robô em relação às fileiras, sem deriva.</p>
+
+<h4>1. Pontos de obstáculo com o chão local</h4>
+<p>Pontos da nuvem (no <code>base_link</code>) entre 1 e 40 m. O chão do olival é inclinado e ondulado, então a altura é medida a partir do <b>chão local</b>: o menor z de cada célula de 1 × 1 m. Ficam os pontos de 0,3 a 4 m acima dele (troncos e copas).</p>
+
+<h4>2. Perfil de projeção: o ângulo que "junta" os pontos</h4>
+<p>Para cada ângulo candidato \(\theta\), projeta cada ponto na normal da direção \(\theta\) e faz um histograma com faixas de \(w = 0{,}2\) m:</p>
+\[ d_i(\theta) = -x_i\sin\theta + y_i\cos\theta, \qquad c_b(\theta) = \#\{\,i : \lfloor (d_i+R)/w \rfloor = b\,\}, \qquad S(\theta) = \sum_b c_b(\theta)^2 . \]
+<p>Quando \(\theta\) é a direção das fileiras, os pontos de cada fileira caem nas mesmas faixas e a soma dos quadrados é máxima (com o mesmo total de pontos, \(\sum c_b^2\) é maior quanto mais concentrado o histograma). É o método do perfil de projeção, parente da transformada de Hough/Radon restrita a retas paralelas. A busca é de \(\pm 8^\circ\) em volta do yaw previsto pelo EKF, a passos de 0,1°.</p>
+<figure>
+<svg viewBox="0 0 820 210" role="img" aria-label="Pontos de duas fileiras projetados em duas direções">
+  <g transform="translate(40,20)">
+    <text class="tx" x="0" y="0">ângulo certo: picos nítidos</text>
+    <g class="vdf">
+      <circle cx="20" cy="40" r="3"/><circle cx="60" cy="41" r="3"/><circle cx="100" cy="40" r="3"/><circle cx="140" cy="39" r="3"/><circle cx="180" cy="40" r="3"/><circle cx="220" cy="41" r="3"/><circle cx="260" cy="40" r="3"/>
+      <circle cx="20" cy="110" r="3"/><circle cx="60" cy="109" r="3"/><circle cx="100" cy="110" r="3"/><circle cx="140" cy="111" r="3"/><circle cx="180" cy="110" r="3"/><circle cx="220" cy="109" r="3"/><circle cx="260" cy="110" r="3"/>
+    </g>
+    <path class="ln" d="M300 20 V140"/>
+    <rect class="acf" x="302" y="34" width="70" height="12"/><rect class="acf" x="302" y="104" width="70" height="12"/>
+    <text class="ts" x="300" y="170">histograma em d: S grande</text>
+  </g>
+  <g transform="translate(420,20)">
+    <text class="tx" x="0" y="0">ângulo errado: espalha</text>
+    <g class="vdf">
+      <circle cx="20" cy="30" r="3"/><circle cx="60" cy="35" r="3"/><circle cx="100" cy="40" r="3"/><circle cx="140" cy="45" r="3"/><circle cx="180" cy="50" r="3"/><circle cx="220" cy="55" r="3"/><circle cx="260" cy="60" r="3"/>
+      <circle cx="20" cy="100" r="3"/><circle cx="60" cy="105" r="3"/><circle cx="100" cy="110" r="3"/><circle cx="140" cy="115" r="3"/><circle cx="180" cy="120" r="3"/><circle cx="220" cy="125" r="3"/><circle cx="260" cy="130" r="3"/>
+    </g>
+    <path class="ln" d="M300 20 V140"/>
+    <rect class="acf" x="302" y="28" width="12" height="36"/><rect class="acf" x="302" y="98" width="12" height="36"/>
+    <text class="ts" x="230" y="170">histograma em d: S pequeno</text>
+  </g>
+</svg>
+<figcaption>Projetados na normal da direção certa, os troncos de uma fileira caem na mesma faixa (contagens altas, \(\sum c_b^2\) alto). Num ângulo errado, as contagens se espalham.</figcaption>
+</figure>
+
+<h4>3. Direção das fileiras no odom (azimute), na partida</h4>
+<p>Nas 5 primeiras nuvens, busca em ±45° e anota \(a_j = \psi_{EKF} + \theta_j\). A grade de 7 × 7 m tem linhas nas duas direções, então os ângulos valem módulo 90°, e a média tem de ser circular em \(4a\):</p>
+\[ \alpha = \tfrac14\,\operatorname{atan2}\!\Big(\textstyle\sum_j \sin 4a_j,\ \sum_j \cos 4a_j\Big). \]
+<p>Assim o robô não precisa partir alinhado. Depois, o yaw medido é \(\psi = \alpha + k\frac{\pi}{2} - \theta\), com \(k\) o múltiplo de 90° mais perto do yaw previsto.</p>
+
+<h4>4. Portões de qualidade (gating)</h4>
+<ul>
+<li>Robô quase sem girar (\(|\omega| \lt 0{,}05\) rad/s): a nuvem de 0,1 s gira junto.</li>
+<li>Pico nítido: \(S_{max}/\text{mediana}(S) \ge 1{,}2\), e não na borda da busca; pelo menos 200 pontos.</li>
+<li>Concorda com o EKF a até 3° (a deriva entre duas medidas é bem menor).</li>
+<li>Compensação do atraso: \(\psi_{pub} = \psi_{med} + (\psi^{EKF}_{agora} - \psi^{EKF}_{nuvem})\), porque o EKF já andou enquanto a nuvem era processada.</li>
+<li>Publica a cada 0,4 s com \(\sigma = 1^\circ\); o EKF funde como yaw absoluto, e a IMU fica só com \(\omega\).</li>
+</ul>
+
+<h4>5. Opção: posição lateral pelas fileiras (<code>lateral_correction:=rows</code>)</h4>
+<p>Com a direção conhecida, os pontos projetados na normal se repetem a cada espaçamento \(s\) = 7 m. A fase \(d \bmod s\) do padrão (pico do histograma circular, refinado por média local em ±0,75 m, três iterações) dá a posição das fileiras em relação ao robô. A referência no odom é a média circular da fase nos primeiros 20 m. O erro \(e = \text{wrap}_s(\text{ref} - \text{fase})\) vira uma posição corrigida só na normal \(\mathbf n\), com covariância</p>
+\[ \Sigma = \sigma_\perp^2\,\mathbf n\mathbf n^\top + 10^6\,\mathbf t\mathbf t^\top, \qquad \sigma_\perp = 0{,}2\ \text{m}, \]
+<p>(nada ao longo das fileiras, \(\mathbf t\)). Funcionou no <code>odom</code>, mas a medida erra 0,2 a 0,4 m onde as oliveiras saem da grade, e nos casos 4 e 5 ficou pior que <code>imu</code>. Ficou como opção; para melhorar, precisaria de um mapa de cada árvore.</p>
+
+<div class="caixa porque"><span class="rot">Por que este algoritmo</span>
+<ul>
+<li><b>Contra RANSAC de retas:</b> RANSAC acha uma reta por vez e é sensível às copas irregulares; o perfil de projeção usa todos os pontos de todas as fileiras ao mesmo tempo, o que dá 0,5° rms.</li>
+<li><b>Contra Hough completa:</b> não precisa da posição das retas, só do ângulo; a busca em ±8° perto do EKF é 161 avaliações de um histograma, barata em Python + numpy.</li>
+<li><b>Contra magnetômetro ou GNSS de duas antenas:</b> custo, interferência, e sob a copa o GNSS degrada; a hipótese "fileiras retas e paralelas" é verdadeira em pomares e lavouras.</li>
+</ul>
+</div>
+<div class="caixa projeto"><span class="rot">No projeto</span>
+<p>No banco de um caso 4 (pose verdadeira, trechos retos): 0,5° rms por nuvem, sem viés, contra 1,2° do EKF só com a IMU. Com o rumo e os ajustes do RTAB-Map no olival: caso 4 semente 303, ATE 3,51 → 0,72 m e erro máximo 8,04 → 1,37 m; caso 5 semente 303, 1,57 → 0,59 m. Na plantação fica desligado: o VSLAM já segura o yaw, e no caso 2 o yaw rms foi de 0,6 para 1,0° com ele ligado (uma rodada).</p>
+</div>
+<details class="banca"><summary>E se as fileiras não forem retas?</summary>
+<p>É a hipótese do método, dita explicitamente. Fileiras curvas dariam um pico menos nítido (recusado pelo portão de qualidade) ou um viés local. O portão de 3° contra o EKF impede saltos. Para fileiras em curva de nível, a extensão natural é medir a direção local (janela menor) ou usar um mapa das árvores.</p>
+</details>
+
+<h3 id="calib">4.5 wheel_calibration: raio efetivo, offset do roll e ganho do escorregamento</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots</span><span><b>Arquivo:</b> <code>wheel_calibration.py</code>, resultado em <code>config/wheel_calibration.yaml</code></span><span><b>Sobe com:</b> <code>wheel_calibration:=true</code> (rodada de calibração)</span></div>
+<p>Uma rodada de ida e volta de 33 m na entrelinha da partida, usando só os trechos retos (\(|v| \gt 0{,}15\) m/s, \(|\omega| \lt 0{,}05\) rad/s) e a pose verdadeira como referência (no campo: trena, GNSS RTK ou marcos).</p>
+<ul>
+<li><b>Raio efetivo:</b> \(s_r = \sum d_{verdadeira} / \sum d_{rodas}\). O pneu real roda com raio diferente do nominal (carga, pressão, solo); o driver multiplica o raio da <i>odometria</i> por \(s_r\) (o comando dos motores fica com o nominal).</li>
+<li><b>Offset do roll:</b> na ida e na volta pela mesma entrelinha a encosta inverte o sinal do roll e o offset não, então \(\phi_0 = \tfrac12(\bar\phi_{ida} + \bar\phi_{volta})\). Não precisa da pose verdadeira.</li>
+<li><b>Ganho do escorregamento:</b> mínimos quadrados de \(v_y^{verd} = g\,x_i\) com \(x_i = \sin(\phi_i - \phi_0)|v_i|\):
+\[ g = \frac{\sum_i x_i\, v_{y,i}}{\sum_i x_i^2}, \qquad R^2 = 1 - \frac{\operatorname{var}(v_y - g x)}{\operatorname{var}(v_y)}. \]</li>
+</ul>
+<div class="caixa projeto"><span class="rot">No projeto</span>
+<p>Raio medido ×1,0174 (semente 101) e ×1,0036 (303), contra 1,0180 e 1,0039 sorteados pelo ruído; offset do roll a 0,04° do verdadeiro. Na ida do caso 4, semente 101, o erro ao longo da fileira caiu de 1,1 m para 0,1 m. Sozinho, o raio não melhorou a média (sobra o erro lateral); com <code>imu</code>, sim. Trabalho futuro: uma calibração feita pelo operador na interface web, sem pose verdadeira.</p>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<section id="vslam">
+<h2>5. Localização global: VSLAM com o RTAB-Map</h2>
+<p>SLAM (<i>Simultaneous Localization and Mapping</i>): construir o mapa e se localizar nele ao mesmo tempo. O RTAB-Map (<i>Real-Time Appearance-Based Mapping</i>, Labbé e Michaud, 2013 e 2019) é um SLAM por <b>grafo de poses</b>: cada nó guarda uma pose e os dados vistos dali; elos ligam nós (odometria e fechamentos de laço); uma otimização ajusta todas as poses para respeitar os elos ao mesmo tempo.</p>
+
+<h3 id="no-sync">5.1 rgbd_sync: sincronização de cor, profundidade e calibração</h3>
+<div class="meta-no"><span><b>Pacote:</b> rtabmap_sync</span><span><b>Sai:</b> <code>/rtabmap/rgbd_image</code></span></div>
+<p><b>Algoritmo:</b> política de sincronização <b>exata</b> do <code>message_filters</code> (<code>approx_sync: false</code>): guarda filas das três mensagens e só emite quando há uma de cada com o <b>mesmo carimbo</b>. Funciona porque o driver carimba cor, profundidade e <code>camera_info</code> com o tempo do mesmo passo (e lê as câmeras por contador inteiro de ms, para não publicar uma imagem de um passo diferente do carimbo). A sincronização aproximada (janela de tempo) aceitaria pares de instantes diferentes, e com o robô girando a profundidade não bateria com a cor.</p>
+
+<h3 id="no-merge">5.2 lidar_merge: uma nuvem para dois usos</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots</span><span><b>Arquivo:</b> <code>lidar_merge.py</code></span><span><b>Entra:</b> <code>/lidar3d/points</code>, <code>/scan</code></span><span><b>Sai:</b> <code>/lidar3d/merged</code></span></div>
+<p><b>O problema:</b> o RTAB-Map assina uma nuvem só e a usa para duas coisas: o ICP dos fechamentos de laço (onde o LiDAR 3D é ótimo: chão, troncos, copas) e a grade de ocupação 2D (onde o LiDAR 3D é ruim: a ~1 m do chão ele só vê um obstáculo baixo numa faixa a 2,6 a 4 m, e os raios dele até o chão passam por cima das plantas e apagavam as fileiras na grade em ~1 minuto; e o relevo a 5 a 6 m virava obstáculo falso).</p>
+<h4>O algoritmo</h4>
+<ol>
+<li><b>Separação por faixa de altura.</b> Tira da nuvem 3D os pontos com \(z \in [-0{,}20,\ 0{,}10]\) m no <code>base_link</code>, exatamente a faixa que a grade do RTAB-Map usa (<code>Grid/MinGroundHeight</code> a <code>Grid/MaxObstacleHeight</code>). Na grade só entra o scan de segurança; no ICP entra todo o resto da nuvem 3D.</li>
+<li><b>Scan junto, com compensação de movimento.</b> O último scan (até 0,5 s) vai para o frame do LiDAR 3D compondo o TF em cada instante, com o <code>odom</code> como frame fixo: \(T^{3D}_{scan} = (T^{odom}_{3D}(t_{nuvem}))^{-1}\,T^{odom}_{scan}(t_{scan})\). O scan é de até ~0,16 s antes; girando a 1 rad/s isso daria ~9° de erro.</li>
+<li><b>Espaço livre explícito.</b> Cada raio do scan sem retorno vira um ponto de "chão" a 5 m, abaixo da faixa de obstáculo. Com <code>Grid/RayTracing</code>, o raio até ele marca células livres (como o <code>Grid/Scan2dUnknownSpaceFilled</code> faz para scans 2D).</li>
+<li><b>Toques do scan no chão.</b> O scan é um plano a 15 cm; com o relevo, ele bate no chão a alguns metros e parece obstáculo. Para cada ponto \(p\) do scan: se há pontos 3D a até 0,15 m (em x, y) e nenhum passa de \(z_p + 0{,}05\) m, é chão e sai; se não há nenhum ponto 3D por perto e \(\|p\| \gt 3\) m, também sai (um obstáculo de verdade apareceria na nuvem); abaixo de 3 m (onde o LiDAR 3D não vê o chão) o scan vale sozinho. No caso 3, ~20% dos pontos do scan eram chão. Esse filtro vale só para a grade: a segurança e os costmaps usam o <code>/scan</code> cru.</li>
+</ol>
+
+<h3 id="no-rtabmap">5.3 rtabmap: o SLAM por grafo, por dentro</h3>
+<div class="meta-no"><span><b>Pacote:</b> rtabmap_slam 0.23</span><span><b>Config:</b> <code>config/rtabmap.yaml</code> + <code>rtabmap_olive_grove.yaml</code></span><span><b>Ritmo:</b> 1 Hz (<code>Rtabmap/DetectionRate</code>)</span><span><b>Publica:</b> TF <code>map → odom</code> (20 Hz), <code>mapData</code>, grade</span></div>
+
+<h4>a) Criação de nós e memória</h4>
+<p>A 1 Hz, se o robô andou 0,1 m ou girou 0,1 rad desde o último nó (<code>RGBD/LinearUpdate</code>, <code>AngularUpdate</code>), cria um nó com: a pose do EKF (pelo TF <code>odom → base_link</code>), a imagem RGB-D, as features visuais e a nuvem do LiDAR reduzida a voxels de 10 cm com normais. A 0,4 m/s os nós ficam a ~0,4 m. O nó novo é ligado ao anterior por um <b>elo de odometria</b> com o deslocamento do EKF e informação \(\Omega = \operatorname{diag}(1/0{,}0005,\ 1/0{,}0005,\ 1/0{,}0001)\) (<code>odom_tf_linear/angular_variance</code>, medidas contra a pose verdadeira: 2 cm rms por elo, com folga para as curvas).</p>
+<p>A memória tem três níveis: STM (<i>short-term memory</i>, os 30 nós mais recentes, <code>Mem/STMSize</code>), WM (<i>working memory</i>, onde se procuram fechamentos) e LTM (<i>long-term</i>, no banco SQLite). A STM fica <b>fora</b> da busca de fechamentos: ~30 s andando, então uma passada pela fileira não fecha consigo mesma. A transferência WM → LTM por limite de tempo, que dá nome ao "real-time" do método em mapas enormes, não age aqui (sem <code>Rtabmap/TimeThr</code>).</p>
+
+<h4>b) Odometria: externa, pelo EKF</h4>
+<p>O <code>rtabmap</code> não calcula a própria odometria visual: lê o TF do EKF. Economiza CPU (Webots, Nav2 e RTAB-Map dividem a mesma máquina) e deixa um dono só para cada TF. O papel dele é só o longo prazo, publicando \(T^{map}_{odom}\).</p>
+
+<h4>c) Palavras visuais (bag of words)</h4>
+<p>Os descritores ORB de cada nó são quantizados num <b>vocabulário incremental</b>: cada descritor vira a "palavra" do vizinho mais próximo no vocabulário (aceito pelo teste de razão de distâncias), ou uma palavra nova. Cada nó vira um saco de palavras. Na detecção global, a semelhança entre o nó atual e cada nó da WM (um escore tipo tf-idf) alimenta um <b>filtro bayesiano discreto</b> sobre as hipóteses "o lugar atual é o nó \(i\)" ou "é um lugar novo":</p>
+\[ p(S_t = i \mid L^t) = \eta\; p(L_t \mid S_t = i)\, \sum_j p(S_t = i \mid S_{t-1}=j)\; p(S_{t-1}=j \mid L^{t-1}), \]
+<p>e um laço é aceito quando a hipótese mais forte passa de <code>Rtabmap/LoopThr</code> (padrão 0,11).</p>
+<div class="caixa cuidado"><span class="rot">Decisão do projeto: detecção global desligada</span>
+<p><code>Rtabmap/LoopThr</code> e <code>RGBD/AggressiveLoopThr</code> em 1,01 (uma probabilidade nunca alcançada). A detecção global compara a imagem com todos os nós, sem olhar onde o EKF diz que o robô está, e numa plantação as entrelinhas são iguais para a câmera e para o LiDAR. No banco da serpentina reprocessado, a configuração antiga aceitou um fechamento de 1,8 m (exatamente a distância entre entrelinhas, passando até pelo ICP); com os parâmetros do plano original, 37. O vocabulário continua sendo montado (o banco serve para a localização).</p>
+</div>
+
+<h4>d) Detecção por proximidade: o que fica ligado</h4>
+<p>Procura fechamentos <b>perto da pose estimada</b> (o EKF como chute), entre nós da WM fora da STM, a até 10 m (<code>RGBD/LocalRadius</code>):</p>
+<ul>
+<li><b>Visual:</b> só nós a até 1 m e 45° (<code>RGBD/ProximityPathFilteringRadius</code>, <code>RGBD/ProximityAngle</code>), com <code>RGBD/ProximityOdomGuess</code>: as features do nó antigo são projetadas na imagem nova pela pose prevista, e o casamento procura perto dessa projeção. Uma entrelinha vizinha (1,8 m) fica de fora.</li>
+<li><b>Pelo LiDAR:</b> junta as nuvens de até 10 nós vizinhos de um trecho antigo do caminho (<code>RGBD/ProximityPathMaxNeighbors</code>) num mapa local e registra a nuvem atual contra ele por ICP.</li>
+</ul>
+<p>O preço: se a odometria errar mais que a janela de uma vez (robô preso com as rodas girando, antes da checagem de patinagem), o RTAB-Map não procura o lugar certo. É uma troca consciente: na plantação o risco de fechamento falso é maior que o de deriva grande.</p>
+
+<h4>e) Registro de um fechamento: visual e depois ICP (<code>Reg/Strategy</code> 2)</h4>
+<p><b>Visual:</b> PnP com RANSAC entre as features 3D de um nó e as 2D do outro, como na odometria visual, exigindo 25 inliers (<code>Vis/MinInliers</code>, padrão 20). Dá a transformação inicial.</p>
+<p><b>ICP ponto-a-plano</b> (Besl e McKay, 1992; Chen e Medioni, 1992) refina com as nuvens do LiDAR 3D. A cada iteração, para cada ponto \(p_i\) da nuvem nova acha o vizinho mais próximo \(q_i\) na nuvem de referência (a até 0,5 m, <code>Icp/MaxCorrespondenceDistance</code>) e resolve</p>
+\[ (R, t)^\ast = \arg\min_{R,t} \sum_i \big( (R p_i + t - q_i)\cdot \mathbf n_i \big)^2 , \]
+<p>em que \(\mathbf n_i\) é a normal da superfície em \(q_i\) (autovetor do menor autovalor da covariância dos 10 vizinhos, <code>Icp/PointToPlaneK</code>). Ponto-a-plano deixa o ponto "escorregar" ao longo da superfície e converge muito mais rápido que ponto-a-ponto em chão e troncos (planos e cilindros). Com a linearização \(R \approx I + [\delta]_\times\), cada iteração é um sistema linear 6×6 (3×3 com <code>Reg/Force3DoF</code>). Até 30 iterações ou variação menor que 0,001.</p>
+<p><b>Aceitação do fechamento:</b></p>
+<div class="tabela"><table>
+<tr><th>Critério</th><th>Valor</th><th>Por quê</th></tr>
+<tr><td><code>Icp/MaxTranslation</code></td><td>0,3 m (plantação), 1,0 m (olival)</td><td>O ICP não pode corrigir mais que isso sobre o chute. Na plantação, com 0,5 m o ICP escorregava ao longo da fileira (que é igual em todo o comprimento) ou para a vizinha. No olival as entrelinhas ficam a 7 m, e 1 m é menos de um terço de meia entrelinha.</td></tr>
+<tr><td><code>Icp/CorrespondenceRatio</code></td><td>2,5% (o dobro na proximidade)</td><td>Com 16 canais a nuvem é esparsa: dois nós da mesma entrelinha casam só 6 a 9% dos pontos. Quem segura o falso é a correção máxima.</td></tr>
+<tr><td><code>Reg/Force3DoF</code></td><td>true</td><td>x, y, yaw, como o EKF em <code>two_d_mode</code>.</td></tr>
+<tr><td><code>RGBD/ProximityMaxGraphDepth</code></td><td>50 (plantação), 0 = sem limite (olival)</td><td>No olival a passada de ida fica a mais de 150 elos da de volta até o primeiro fechamento.</td></tr>
+</table></div>
+
+<h4>f) Otimização do grafo de poses</h4>
+<figure>
+<svg viewBox="0 0 760 220" role="img" aria-label="Grafo de poses com elos de odometria e um fechamento de laço">
+  <path class="ln" d="M60 160 L160 160 L260 160 L360 160 L460 150 L560 120 L640 70 L560 40 L460 40 L360 45"/>
+  <g class="azf"><circle cx="60" cy="160" r="9"/><circle cx="160" cy="160" r="9"/><circle cx="260" cy="160" r="9"/><circle cx="360" cy="160" r="9"/><circle cx="460" cy="150" r="9"/><circle cx="560" cy="120" r="9"/><circle cx="640" cy="70" r="9"/><circle cx="560" cy="40" r="9"/><circle cx="460" cy="40" r="9"/><circle cx="360" cy="45" r="9"/></g>
+  <path class="ac" d="M360 54 L360 150" stroke-dasharray="7 5"/>
+  <text class="tx" x="372" y="105">fechamento Zᵢⱼ</text>
+  <path class="rx" d="M160 151 C 200 70, 330 40, 352 42"/>
+  <text class="ts" x="150" y="80">falso? a chave sᵢⱼ o desliga</text>
+  <text class="ts" x="60" y="195">x₀ fixo (map nasce no 1º nó)</text>
+  <text class="ts" x="470" y="190">elos de odometria (EKF), Ω pelas variâncias</text>
+</svg>
+<figcaption>O grafo depois de uma ida e volta. Os elos de odometria vêm do EKF; o fechamento puxa a volta para a ida; a otimização espalha o erro pelos elos.</figcaption>
+</figure>
+<p>Cada nó \(i\) tem uma pose \(X_i \in SE(2)\). Um elo \((i,j)\) com medida \(Z_{ij}\) e informação \(\Omega_{ij}\) gera o resíduo \(e_{ij} = \log\!\big(Z_{ij}^{-1}\,X_i^{-1}X_j\big)\). A otimização resolve o problema de mínimos quadrados não linear</p>
+\[ X^\ast = \arg\min_X \sum_{(i,j)} e_{ij}^\top\,\Omega_{ij}\,e_{ij}, \]
+<p>por Gauss-Newton ou Levenberg-Marquardt: lineariza \(e_{ij}(X \boxplus \Delta) \approx e_{ij} + J_{ij}\Delta\) e resolve o sistema esparso \(H\Delta = -b\), com \(H = \sum J^\top\Omega J\), \(b = \sum J^\top\Omega e\) (Grisetti et al., 2010). As bibliotecas são o g2o ou o GTSAM, conforme o build. <code>RGBD/OptimizeFromGraphEnd: false</code> mantém o primeiro nó fixo: o <code>map</code> nasce na pose de partida, como o <code>odom</code>, e por isso as listas de waypoints valem com e sem VSLAM.</p>
+
+<h4>g) Otimização robusta: chaves que desligam fechamentos (Vertigo)</h4>
+<p>Com <code>Optimizer/Robust</code>, cada fechamento ganha uma variável de chave \(s_{ij} \in [0,1]\) (Sünderhauf e Protzel, 2012):</p>
+\[ X^\ast, s^\ast = \arg\min \sum_{odom} \|e_{ij}\|^2_{\Omega} + \sum_{laço} \|\,s_{ij}\, e_{ij}\|^2_{\Omega} + \sum_{laço} \|1 - s_{ij}\|^2_{\Xi} . \]
+<p>O último termo puxa cada chave para 1 (o fechamento vale); se o fechamento contradiz o resto do grafo, sai mais barato "pagar" a chave em 0 do que esticar dezenas de elos de odometria, e o otimizador o desliga sozinho. O <code>RGBD/OptimizeMaxError</code> (outra proteção, que recusa um fechamento se algum elo estica demais) ficou desligado: com 1,5 ou 2 ele não pegou os falsos de 2 m, porque o erro se espalha por dezenas de elos e cada um estica pouco.</p>
+
+<h4>h) Do grafo ao TF</h4>
+<p>Depois da otimização, com a pose otimizada do último nó \(\hat T^{map}_{base}\) e a pose do EKF no mesmo instante \(T^{odom}_{base}\):</p>
+\[ T^{map}_{odom} = \hat T^{map}_{base}\,\big(T^{odom}_{base}\big)^{-1}, \]
+<p>republicado a 20 Hz (<code>tf_delay</code> 0,05). Entre fechamentos ele fica constante; num fechamento ele salta, e o robô "pula" no <code>map</code>, mas não no <code>odom</code>.</p>
+
+<h4>i) Mapeamento e localização</h4>
+<p><b>Mapeamento</b> (<code>vslam:=true</code>): cria o banco do zero (<code>dados/vslam/&lt;mundo&gt;.db</code>), salvo ao fechar. <b>Localização</b> (<code>vslam_localization:=true</code>): roda numa cópia do banco com <code>Mem/IncrementalMemory</code> false (não acrescenta nós ao mapa) e <code>RGBD/StartAtOrigin</code> (o robô começa no primeiro nó). Sem detecção global, o robô precisa partir onde partiu o mapeamento.</p>
+
+<div class="caixa porque"><span class="rot">Por que o RTAB-Map</span>
+<div class="tabela"><table>
+<tr><th>Alternativa</th><th>Por que não</th></tr>
+<tr><td>ORB-SLAM3</td><td>Bom em precisão, mas sem pacote no Jazzy (compilar à mão), sem odometria externa e só pontos esparsos: não entrega grade para navegar nem modo de localização pronto.</td></tr>
+<tr><td>Isaac ROS Visual SLAM (cuVSLAM)</td><td>Exige GPU NVIDIA com CUDA e Docker; complicado no WSL2.</td></tr>
+<tr><td>slam_toolbox</td><td>Só LiDAR 2D; ficou como comparação e perde o yaw nas cabeceiras (seção 10).</td></tr>
+<tr><td><b>RTAB-Map</b></td><td><b>Escolhido:</b> pacote pronto no Jazzy, roda em CPU, aceita a odometria do EKF, junta câmera e LiDAR no mesmo grafo, gera grade 2D, tem modo de localização num mapa salvo e otimização robusta.</td></tr>
+</table></div>
+</div>
+<div class="caixa projeto"><span class="rot">No projeto: as decisões, na ordem em que aconteceram</span>
+<ol>
+<li><b>Fechamentos falsos de 2,00 m pela textura do solo</b> (que se repete a cada 2 m): 8 aceitos, ATE 1,38 m contra 0,29 m do EKF sozinho. Solução: ICP com o LiDAR em todo fechamento + otimização robusta; erro 0,11 m.</li>
+<li><b>Falso de 1,8 m entre entrelinhas</b> (iguais até para o LiDAR): detecção global desligada, só proximidade.</li>
+<li><b>LiDAR 3D no ICP no lugar do scan 2D:</b> o scan a 13 cm via um corte fino de colmos e troncos, e entrelinhas davam o mesmo scan. A nuvem 3D trava x, y e yaw.</li>
+<li><b>Olival:</b> <code>Icp/MaxTranslation</code> 1,0 m e sem limite de profundidade no grafo. No banco de 2 voltas reprocessado, o erro online da pose caiu de 1,76 m (0,3 m) para 0,61 (0,6), 0,40 (0,8), 0,34 (1,0) e 0,36 m (1,5).</li>
+</ol>
+<p>Bateria final (5 sementes, 2026-11-20): plantação caso 2, ATE 0,10 ± 0,04 m e 100% no alvo; caso 3, 0,22 ± 0,18 m e 91 ± 11% no alvo.</p>
+</div>
+<details class="banca"><summary>O que é um fechamento de laço e por que ele é perigoso numa plantação?</summary>
+<p>É reconhecer que voltou a um lugar já visitado e acrescentar ao grafo um elo entre o nó atual e o antigo; a otimização então corrige toda a trajetória. Numa plantação lugares diferentes parecem iguais (aliasing perceptual): um fechamento falso puxa a trajetória para a entrelinha errada, e o erro fica pior que sem SLAM (1,38 m contra 0,29 m no primeiro teste).</p>
+</details>
+<details class="banca"><summary>Por que o erro do VSLAM fica perto do EKF na plantação?</summary>
+<p>As passadas repetidas são em sentidos opostos, e a câmera não reconhece um lugar visto de costas; os fechamentos vêm sobretudo do LiDAR, por proximidade. O VSLAM corrige a deriva quando ela cresce (giroscópio fora de escala: EKF com 15° de yaw, VSLAM com 2 a 4°), e é o que mantém o mapa e a referência das fotos.</p>
+</details>
+
+<h3 id="grade">5.4 A grade de ocupação do RTAB-Map</h3>
+<p>Cada nó guarda uma <b>grade local</b> (só o scan de segurança, pelo <code>lidar_merge</code>): células ocupadas onde o raio bate e livres ao longo do raio (traçado de raios na grade, como o algoritmo de Bresenham), em células de 5 cm até 8 m. A grade global soma as grades locais de todos os nós, cada uma na pose otimizada do nó, em log-odds:</p>
+\[ \ell_{hit} = \log\tfrac{0{,}7}{0{,}3} = 0{,}847, \qquad \ell_{miss} = \log\tfrac{0{,}47}{0{,}53} = -0{,}120, \qquad \ell \in [\log\tfrac{0{,}1192}{0{,}8808},\ \log\tfrac{0{,}971}{0{,}029}]. \]
+<p>Com o padrão \(p_{miss}\) = 0,4, \(\ell_{miss} = -0{,}405\): dois ou três raios que passam ao lado de um colmo de 2 a 4 cm (na mesma célula de 5 cm) o apagavam. Com 0,47, são \(0{,}847/0{,}120 \approx 7\) raios livres para desfazer um acerto; um obstáculo falso ainda some com o tempo, e uma célula desconhecida vira livre com um raio só.</p>
+
+<h3 id="stable">5.5 stable_map: a grade conferida</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots</span><span><b>Arquivo:</b> <code>stable_map.py</code></span><span><b>Entra:</b> <code>/rtabmap/mapData</code></span><span><b>Sai:</b> <code>/rtabmap/map</code></span><span><b>Sobe com:</b> <code>stable_map:=true</code> (padrão)</span></div>
+<p><b>O problema:</b> quando uma passada volta com a pose deslocada da anterior (a deriva entre fechamentos passa de 0,3 m na serpentina), a soma do RTAB-Map desenha as fileiras de novo ao lado, e os raios livres da passada torta apagam as fileiras certas. Quanto mais o robô anda, pior o mapa.</p>
+<h4>O algoritmo</h4>
+<p>Mesmos dados (grafo otimizado + grade local de cada nó), mesma resolução e mesmo log-odds, mas cada nó novo é comparado com o mapa já feito:</p>
+<ol>
+<li><b>Assentamento.</b> Uma célula vista de perto (até 4 m) por menos de 3 nós ainda está no mapeamento inicial e é atualizada como no RTAB-Map. O que o nó vê longe só preenche células não assentadas (um colmo a 8 m é atingido por poucos raios, e 1° de yaw vira 14 cm).</li>
+<li><b>Conferência do nó (casamento por busca exaustiva).</b> Os pontos ocupados do nó que caem em células já assentadas são comparados com os obstáculos do mapa (engordados de 0,10 m). Para cada deslocamento \(\delta\) numa grade de 5 cm até 0,8 m e yaw \(\in \{0, \pm 0{,}02, \pm 0{,}04\}\) rad, mede a fração \(f(\delta)\) de pontos que batem. O nó é <b>recusado</b> se
+\[ \max_{\|\delta\| \ge 0{,}25\,\text{m}} f(\delta) - f(0) \ \ge\ 0{,}25 , \]
+ou seja, se uma pose deslocada explica o que ele vê 25 pontos percentuais melhor que a pose dele. Comparar com a melhor pose (e não com um mínimo fixo) funciona com um mapa ralo.</li>
+<li><b>Nó conferido, em células assentadas:</b> um ponto ocupado a até 0,3 m de um obstáculo do mapa é o mesmo obstáculo (reforça, não engorda a fileira); longe, é obstáculo novo e entra com ~3 nós. Um raio livre só apaga um obstáculo do mapa se o nó não tem ponto ocupado a até 0,3 m dali.</li>
+<li>Quando um fechamento muda o grafo, a grade é refeita do zero na ordem dos nós.</li>
+</ol>
+<p>A busca de 0,8 m é menor que meia entrelinha da plantação (0,9 m), para não casar com a fileira vizinha.</p>
+<div class="caixa projeto"><span class="rot">No projeto</span>
+<p>Plantação, 3 voltas no mesmo trajeto, voltas 2 e 3 deslocadas 0,4 m/1,7° e 0,6 m/−1,7°: a grade do rtabmap perdeu 62% das fileiras e as células fora do lugar foram de 202 para 393; a conferida ficou igual à da primeira volta (213 fora do lugar). Sem deslocamento, as duas ficam iguais (4 de 285 nós recusados).</p>
+</div>
+<details class="banca"><summary>O stable_map corrige a localização?</summary>
+<p>Não. Ele só decide o que entra no desenho do mapa; a pose continua sendo a do RTAB-Map. Ele protege a grade usada pela checagem dos waypoints, pelo RViz e pela página do operador. Os costmaps do Nav2 e a camada de segurança nem usam essa grade (leem o <code>/scan</code> cru), então um obstáculo novo é visto por eles na hora.</p>
+</details>
+</section>
+
+<!-- ================================================================ -->
+<section id="nav2">
+<h2>6. Navegação: Nav2</h2>
+<p>O Nav2 (Macenski et al., 2020) é um conjunto de servidores com ciclo de vida gerenciado (<code>lifecycle_manager</code>: cada nó passa de não configurado a inativo a ativo, na ordem, e para tudo se um falhar). Usamos um launch próprio (<code>navigation.launch.py</code>), porque o <code>nav2_bringup</code> do Jazzy sobe o <code>docking_server</code>, que falha sem plugins e derruba o ciclo de vida. Configuração em <code>config/nav2_params.yaml</code>.</p>
+<p>Com <code>vslam:=true</code>, o <code>bt_navigator</code>, o planejador e o costmap global ficam em <code>map</code>; o controlador e o costmap local ficam sempre em <code>odom</code> (REP-105).</p>
+
+<h3 id="costmaps">6.1 Costmaps: camada de obstáculos e inflação</h3>
+<div class="meta-no"><span><b>Pacote:</b> nav2_costmap_2d</span><span><b>Local:</b> 4 × 4 m, <code>odom</code>, 5 Hz</span><span><b>Global:</b> 24 × 24 m, <code>map</code>, 1 Hz</span><span><b>Resolução:</b> 5 cm</span></div>
+<p>Uma grade de custos de 0 a 254 (254 letal, 253 inscrito, 255 desconhecido), em janela móvel centrada no robô (<code>rolling_window</code>), montada por camadas:</p>
+<p><b>Camada de obstáculos.</b> Para cada raio do <code>/scan</code>: <i>marcação</i> da célula do retorno como letal (até 5 m) e <i>limpeza</i> das células ao longo do raio até ele (traçado de raios, até 6 m). Com <code>inf_is_valid: true</code>, um raio sem retorno (+inf) também limpa até 6 m. Sem isso, em lugar aberto (olival) quase tudo ficava desconhecido, o caminho serpenteava entre as fatias livres e o escorregamento nas curvas levava o EKF a ~1 m de erro em 50 m. <code>min_obstacle_height: -1.0</code> porque o LiDAR fica abaixo do <code>base_link</code>.</p>
+<p><b>Camada de inflação.</b> A pegada do robô (1,2 × 1,12 m) tem raio inscrito \(r_{in} = 0{,}56\) m e circunscrito \(r_{circ} = \sqrt{0{,}6^2 + 0{,}56^2} = 0{,}82\) m. Para cada célula a distância \(d\) do obstáculo mais perto:</p>
+\[ c(d) = \begin{cases} 254 & d = 0 \\ 253 & 0 \lt d \le r_{in} \\ 252\, e^{-k\,(d - r_{in})} & r_{in} \lt d \le r_{infl} \\ 0 & d \gt r_{infl} \end{cases} \qquad k = 3{,}0,\ \ r_{infl} = 0{,}7\ \text{m}. \]
+<figure>
+<svg viewBox="0 0 720 240" role="img" aria-label="Curva do custo de inflação em função da distância ao obstáculo">
+  <path class="ln" d="M60 190 H680 M60 190 V20"/>
+  <text class="ts" x="680" y="230" text-anchor="end">distância ao obstáculo (m)</text>
+  <text class="ts" x="64" y="16">custo</text>
+  <text class="ts" x="60" y="207" text-anchor="middle">0</text>
+  <text class="ts" x="396" y="207" text-anchor="middle">0,56</text>
+  <text class="ts" x="480" y="207" text-anchor="middle">0,70</text>
+  <text class="ts" x="660" y="207" text-anchor="middle">1,0</text>
+  <path class="ln" d="M396 190 v-6 M480 190 v-6" />
+  <path class="ac" d="M60 38 H396 C 420 50, 450 66, 480 81 V190 H680"/>
+  <text class="tx" x="150" y="32">253: o centro do robô bate</text>
+  <text class="tx" x="488" y="80">165</text>
+  <text class="ts" x="492" y="125">252·e^(−3(d−0,56))</text>
+</svg>
+<figcaption>Custo de inflação com os nossos parâmetros. A faixa de custo decrescente é estreita (0,56 a 0,70 m): o robô pode passar perto das fileiras, como precisa numa entrelinha de 1,8 m.</figcaption>
+</figure>
+<p>Conta da entrelinha: com as fileiras a ±0,9 m do meio da entrelinha, o centro do robô só fica fora do custo inscrito se \(|y| \le 0{,}9 - 0{,}56 = 0{,}34\) m: um corredor de ~0,68 m, menos a largura das folhas. É estreito, e explica o "para e arranca" do controlador nas entrelinhas (seção 6.3).</p>
+<p><b>Sem camada estática.</b> O Nav2 não usa o mapa do RTAB-Map como camada: os costmaps são só o LiDAR em tempo real, e o VSLAM entra pelo frame <code>map</code>. Assim o robô navega já durante o mapeamento. A janela global de 24 × 24 m limita objetivos a ~12 m do robô, por isso as missões têm pontos a no máximo ~10 a 12 m um do outro.</p>
+
+<h3 id="no-planner">6.2 planner_server: NavFn (função de navegação por Dijkstra)</h3>
+<div class="meta-no"><span><b>Plugin:</b> <code>nav2_navfn_planner::NavfnPlanner</code></span><span><b>Parâmetros:</b> <code>use_astar: false</code>, <code>allow_unknown: true</code>, <code>tolerance: 0.3</code></span><span><b>Ritmo:</b> replaneja a 1 Hz (pela BT)</span></div>
+<p><b>Algoritmo</b> (Konolige, 2000, "gradient method"): calcula um <b>potencial</b> \(\Phi\) em toda a grade, que é o custo acumulado mínimo até o objetivo, propagado como uma frente de onda (Dijkstra) a partir do objetivo. O custo de atravessar uma célula é um custo neutro mais uma fração do custo do costmap; células letais e inscritas (≥ 253) são intransponíveis, ou seja, o centro do robô não chega a menos de 0,56 m de um obstáculo. A atualização usa uma interpolação dos vizinhos (aproximação da equação eikonal \(|\nabla\Phi| = c\)), o que dá caminhos menos "presos" às 8 direções da grade. O caminho sai por <b>descida do gradiente</b> de \(\Phi\) a partir do robô.</p>
+<ul>
+<li><code>use_astar: false</code>: Dijkstra puro expande em todas as direções (mais células), mas o potencial fica correto em toda a região, e a descida do gradiente é mais suave. Numa janela de 24 × 24 m o custo é pequeno.</li>
+<li><code>allow_unknown: true</code>: atravessa o desconhecido; mapeando do zero, o que está além do alcance do LiDAR ainda não foi visto.</li>
+<li><code>tolerance: 0.3</code>: se o objetivo cair num obstáculo, aceita o ponto livre mais perto a até 0,3 m.</li>
+</ul>
+<div class="caixa porque"><span class="rot">Por que NavFn</span>
+<p>O robô gira no lugar, então não precisa de um planejador com restrições cinemáticas (Hybrid-A*/Smac): um caminho em grade basta, e quem trata a geometria é o controlador. NavFn é o mais simples e robusto do Nav2. O Smac 2D seria equivalente; o Smac Hybrid serviria a um robô tipo carro (com raio mínimo de curva), que não é o caso.</p>
+</div>
+
+<h3 id="no-controller">6.3 controller_server: Regulated Pure Pursuit</h3>
+<div class="meta-no"><span><b>Plugin:</b> <code>nav2_regulated_pure_pursuit_controller</code></span><span><b>Ritmo:</b> 20 Hz</span><span><b>Frame:</b> <code>odom</code></span></div>
+<h4>Pure pursuit (Coulter, 1992)</h4>
+<figure>
+<svg viewBox="0 0 720 250" role="img" aria-label="Geometria do pure pursuit: robô, ponto à frente e arco">
+  <path class="ln" d="M40 210 C 200 200, 380 150, 680 40" stroke-dasharray="5 5"/>
+  <text class="ts" x="560" y="40">caminho planejado</text>
+  <rect class="cx" x="110" y="190" width="70" height="40" rx="6"/>
+  <path class="lnf" d="M145 210 H230"/><path class="ln" d="M230 205 l10 5 -10 5"/>
+  <text class="ts" x="236" y="228">x do robô</text>
+  <circle class="acf" cx="420" cy="128" r="7"/>
+  <text class="tx" x="430" y="122">cenoura (x_L, y_L)</text>
+  <path class="ac" d="M145 210 L420 128"/>
+  <text class="tx" x="270" y="155">L (lookahead)</text>
+  <path class="az" d="M145 210 C 250 210, 360 175, 420 128"/>
+  <text class="ts" x="300" y="205">arco de curvatura κ = 2·y_L / L²</text>
+</svg>
+<figcaption>O controlador escolhe o ponto do caminho a uma distância L e calcula o arco de círculo que passa pelo robô (tangente à frente dele) e por esse ponto.</figcaption>
+</figure>
+<p>Com a "cenoura" \((x_L, y_L)\) no frame do robô, a uma distância \(L\), o arco que sai do robô tangente à frente dele e passa por ela tem curvatura e comandos</p>
+\[ \kappa = \frac{2\,y_L}{L^2}, \qquad \omega = v\,\kappa . \]
+<p>(do triângulo isósceles com o centro do círculo: \(R^2 = (R - y_L)^2 + x_L^2\) e \(x_L^2 + y_L^2 = L^2\)). \(L\) curto segue o caminho de perto e oscila; \(L\) longo corta as curvas. Usamos \(L\) = 0,6 m fixo (entre 0,4 e 1,0), sem escalar pela velocidade.</p>
+<h4>As regulações (Macenski et al., 2023)</h4>
+<ul>
+<li><b>Por curvatura:</b> se o raio \(1/|\kappa|\) é menor que \(r_{min}\) = 0,9 m, \(v \leftarrow v\cdot\frac{1/|\kappa|}{r_{min}}\), com mínimo de 0,15 m/s. Curva fechada, mais devagar.</li>
+<li><b>Aproximação:</b> a menos de 0,6 m do fim, \(v\) cai proporcional à distância restante (mínimo 0,05 m/s), para não passar do ponto.</li>
+<li><b>Girar para o rumo:</b> se o ângulo até o caminho passa de 0,6 rad (~34°), gira no lugar a 0,8 rad/s antes de andar. Combina com o skid-steer, que gira bem no lugar e faz mal curvas largas entre fileiras.</li>
+<li><b>Detecção de colisão:</b> projeta o arco comandado à frente (até 1,0 s ou até a cenoura) e confere a pegada no costmap local; se bate, para e o controlador falha. Na entrelinha as plantas ao lado às vezes entram na pegada projetada: é o "para e arranca" que obrigou a mudar o \(Q_{v_x}\) do EKF (seção 3.1) e que aparece como paradas nas baterias.</li>
+</ul>
+<p>Velocidade desejada 0,4 m/s; sem ré (<code>allow_reversing: false</code>). <b>Progresso:</b> precisa andar 0,3 m em 15 s, senão falha (<code>SimpleProgressChecker</code>). <b>Chegada:</b> 0,15 m e 0,3 rad (<code>SimpleGoalChecker</code>, com estado: depois de chegar em xy, só confere o yaw).</p>
+<div class="caixa porque"><span class="rot">Por que RPP</span>
+<ul>
+<li><b>Contra DWB (janela dinâmica):</b> o DWB amostra pares \((v, \omega)\) e pontua trajetórias com críticos; tem muitos pesos para ajustar e, perto das fileiras, oscila entre críticos. O RPP é geométrico, previsível e tem poucos parâmetros.</li>
+<li><b>Contra MPPI (controle preditivo por amostragem):</b> melhor em manobras apertadas, mas custa muita CPU, que aqui já está tomada pelo Webots, pelo RTAB-Map e pelo LiDAR 3D (a simulação anda a ~0,15× o tempo real com tudo ligado).</li>
+<li>O RPP foi desenhado para robôs de serviço e agrícolas que seguem caminhos de perto, e o giro no lugar casa com o skid-steer.</li>
+</ul>
+</div>
+
+<h3 id="no-velsm">6.4 velocity_smoother</h3>
+<p><b>Algoritmo:</b> limitador de taxa em malha aberta, a 20 Hz. A cada ciclo, para cada eixo,</p>
+\[ v_k = \operatorname{clamp}\!\big(v^{cmd},\ v_{k-1} + a_{dec}\Delta t,\ v_{k-1} + a_{acc}\Delta t\big), \quad v \in [-0{,}3;\ 0{,}5]\ \text{m/s},\ \ \omega \in [-1;\ 1]\ \text{rad/s}, \]
+<p>com aceleração de 1,0 m/s² e 2,0 rad/s². <code>OPEN_LOOP</code> usa o último comando como \(v_{k-1}\), não a odometria (que com o escorregamento poderia travar a rampa). Sem comando novo por 1 s, manda zero.</p>
+
+<h3 id="no-bt">6.5 bt_navigator: árvore de comportamento</h3>
+<p><b>Algoritmo:</b> uma árvore de comportamento (Colledanchise e Ögren, 2018) é "ticada" a cada 10 ms. Cada nó responde SUCCESS, FAILURE ou RUNNING; nós de controle combinam os filhos (<i>Sequence</i>: todos, em ordem; <i>Fallback</i>: o primeiro que der certo; <i>RecoveryNode</i>: tenta o filho e, se falhar, roda a recuperação e tenta de novo). Usamos a árvore padrão do <code>NavigateToPose</code> (com replanejamento e recuperação):</p>
+<pre>
+RecoveryNode (até 6 tentativas)
+├── PipelineSequence
+│   ├── RateController 1 Hz ─► ComputePathToPose (NavFn)   [falhou: limpa o costmap global]
+│   └── FollowPath (RPP)                                    [falhou: limpa o costmap local]
+└── RoundRobin de recuperações: limpar costmaps ─► Spin ─► Wait ─► BackUp
+</pre>
+<p>Replanejar a 1 Hz faz o caminho acompanhar o <code>map</code> corrigido pelo VSLAM e obstáculos novos. <code>default_server_timeout</code> 1000 ms (padrão 20): com câmera e RTAB-Map a CPU fica cheia e o planejador às vezes demorava mais que isso para aceitar o pedido, e o objetivo inteiro abortava.</p>
+<div class="caixa porque"><span class="rot">Por que árvore de comportamento</span>
+<p>É o padrão do Nav2, e a vantagem sobre uma máquina de estados é a modularidade: recuperações, replanejamento e condições se compõem sem uma explosão de transições. Mantivemos a árvore padrão porque o que precisou de ajuste foi a percepção e a localização, não a lógica de decisão.</p>
+</div>
+
+<h3 id="no-behavior">6.6 behavior_server: recuperações</h3>
+<p><code>Spin</code> (gira no lugar um ângulo), <code>BackUp</code> (ré uma distância curta), <code>DriveOnHeading</code> e <code>Wait</code>. Antes de cada movimento simula 2 s à frente (<code>simulate_ahead_time</code>) e confere a pegada no costmap; giro entre 0,3 e 0,8 rad/s. Os comandos delas também passam pela camada de segurança.</p>
+
+<h3 id="no-wpf">6.7 waypoint_follower</h3>
+<p>Ação <code>FollowWaypoints</code>: manda um <code>NavigateToPose</code> por waypoint, em ordem. Em cada um roda o plugin <code>WaitAtWaypoint</code> (3 s parado: é onde entra a coleta de dados). <code>stop_on_failure: false</code>: um waypoint que falha é pulado e volta em <code>missed_waypoints</code>, em vez de abortar a missão.</p>
+
+<h3 id="smoother">6.8 smoother_server</h3>
+<p>Carregado com o <code>SimpleSmoother</code> (descida de gradiente que troca fidelidade ao caminho original por suavidade, \(w_d\|y_i - x_i\|^2 + w_s\|y_{i+1} - 2y_i + y_{i-1}\|^2\)), mas a árvore padrão do <code>NavigateToPose</code> não chama a ação de suavização: o caminho do NavFn vai direto ao RPP. Fica disponível para uma árvore própria.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="seguranca">
+<h2>7. Segurança e comando</h2>
+
+<h3 id="no-cmlim">7.1 collision_monitor_limit e collision_monitor: zonas que andam com o robô</h3>
+<span id="no-cm"></span>
+<div class="meta-no"><span><b>Pacote:</b> nav2_collision_monitor (dois nós em série)</span><span><b>Config:</b> <code>config/collision_monitor.yaml</code></span><span><b>Cadeia:</b> <code>/cmd_vel_raw → /cmd_vel_limited → /cmd_vel</code></span><span><b>Sensor:</b> <code>/scan</code> cru</span></div>
+<p><b>O problema:</b> pode haver uma pessoa no campo, e o planejamento não é garantia de parada (uma pessoa que entra na frente, o operador conduzindo mal). Esses nós não planejam: só reduzem ou cortam a velocidade pedida quando há pontos do LiDAR de segurança dentro de polígonos no <code>base_link</code>. Uma zona só age com pelo menos 6 pontos dentro (<code>min_points</code>).</p>
+<h4>As três ações</h4>
+<ul>
+<li><b>Limite (<code>slowdown_zone</code>, 1º nó):</b> retângulo de 0 a 1,4 m à frente, 10 cm de folga de cada lado. Com pontos dentro, \(v \le 0{,}2\) m/s.</li>
+<li><b>Aproximação (<code>approach_zone</code>, 1º nó):</b> simula o movimento do robô com o comando atual, a passos de 0,1 s, levando a pegada (+5 cm) junto, e acha o tempo \(t_c\) até o primeiro ponto entrar nela. Se \(t_c \lt T\) = 1,5 s, escala o comando por \(t_c/T\): o robô desacelera para manter 1,5 s de folga até a colisão. Pega curvas e giros, que um retângulo fixo à frente não pega.</li>
+<li><b>Parada (<code>stop_zone</code>, 2º nó):</b> polígono que <b>depende da velocidade</b> (<code>velocity_polygon</code>): até 0,21 m/s, 0,5 m à frente do para-choque; mais rápido, 0,7 m; de ré, o mesmo atrás; girando no lugar, a pegada com 5 cm. Com pontos dentro, velocidade zero.</li>
+</ul>
+<p><b>Distância de parada:</b> \(d = v\,t_r + \frac{v^2}{2a}\). Com ~0,25 s do scan à roda: a 0,2 m/s, ~6 cm; a 0,5 m/s, ~15 cm. Por isso a zona de parada pode ser curta quando o robô já vem limitado.</p>
+<div class="caixa porque"><span class="rot">Por que assim</span>
+<ul>
+<li><b>Dois nós em série:</b> o <code>collision_monitor</code> escolhe o polígono de parada pela velocidade que <i>recebe</i>. Num nó só, o Nav2 pedindo 0,4 m/s perto das plantas usaria a zona longa mesmo com a lentidão agindo, e o robô parava de frente para as plantas nas cabeceiras.</li>
+<li><b>Zona dependente da velocidade</b>, como os campos de proteção de veículos autônomos industriais (ISO 3691-4). Parado na frente de um obstáculo, o robô ainda gira ou recua (a zona olha para onde ele quer ir), mas não avança.</li>
+<li><b>6 pontos:</b> uma perna a 0,7 m dá ~10 pontos e um mourão de 10 cm a 0,5 m dá ~11; um colmo ou uma folha caída dá 1 a 4. Com 3 (o padrão), as plantas da cabeceira paravam o robô em toda manobra.</li>
+<li><b>Falha segura:</b> sem scan novo por 1 s, para (<code>source_timeout</code>); se o nó cair, nada chega às rodas e o watchdog do driver para em 1 s.</li>
+</ul>
+</div>
+<div class="caixa projeto"><span class="rot">No projeto (pessoa no caminho, pose verdadeira)</span>
+<p>Operador indo para cima da pessoa: sem a camada, contato; com ela, folga mínima de 0,13 m (limita a 0,2 m/s a ~1,4 m e para; o operador continua mandando e o robô não anda). Pessoa cruzando a entrelinha: 0,70 m (plantação) e 0,49 m (olival), e o Nav2 chega ao objetivo.</p>
+</div>
+<div class="caixa cuidado"><span class="rot">Limite que você deve dizer antes da banca</span>
+<p>Não é um sistema de segurança certificado: o Delta-2A não é sensor de segurança e nada segue a ISO 13849 ou a IEC 61496. Na dissertação, "camada de segurança da navegação". Ele só vê o que corta o plano a 15 cm: uma pessoa deitada passa.</p>
+</div>
+
+<h3 id="no-mux">7.2 cmd_vel_mux: prioridade do operador</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots</span><span><b>Arquivo:</b> <code>cmd_vel_mux.py</code></span><span><b>Sobe com:</b> <code>teleop:=joy|keyboard</code> ou <code>operator:=true</code></span></div>
+<p><b>Algoritmo:</b> multiplexador por prioridade com tempo de validade. Cada fonte guarda o último comando e o instante dele; uma fonte está "fresca" se \(t - t_{ult} \le\) timeout (0,5 s para o operador). A ativa é o operador se fresco, senão o Nav2 se fresco, senão nenhuma (manda um zero e para de publicar). Assim o operador toma o controle no meio de uma missão e o devolve sem cancelá-la. O operador também passa pela camada de segurança.</p>
+
+<h3 id="no-teleop">7.3 Teleoperação (joystick e teclado)</h3>
+<p><b>Joystick:</b> <code>game_controller_node</code> + <code>teleop_twist_joy</code> com <b>botão de homem-morto</b> (LB/L1: soltou, parou), até 0,3 m/s (modo rápido 0,5). <b>Teclado:</b> funciona como piloto automático (cada tecla muda a velocidade e o robô a mantém), porque a repetição de tecla do terminal dá trancos.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="missao">
+<h2>8. Missão, checagem dos waypoints e aquisição de dados</h2>
+
+<h3 id="no-mission">8.1 waypoint_mission</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots</span><span><b>Arquivos:</b> <code>waypoint_mission.py</code>, <code>waypoint_check.py</code>, <code>config/waypoints/*.yaml</code></span></div>
+<p>Lê a lista (coordenadas no frame da partida, que vale para <code>odom</code> e <code>map</code>), completa o yaw que falta (olhando para o próximo ponto; o último, na direção em que chegou), confere cada ponto (8.2), manda a lista inteira ao <code>FollowWaypoints</code> e grava os CSVs (um por waypoint e a trajetória a 5 Hz, com a pose estimada e a verdadeira, que é trazida para o frame da partida por \(p' = R(-\psi_0)(p - p_0)\)). Recusa a missão se o <code>world:</code> ou o <code>map:</code> do arquivo não forem os da sessão: as coordenadas só valem no mapa em que foram marcadas.</p>
+
+<h3 id="wpcheck">8.2 waypoint_check: o robô cabe, gira e chega?</h3>
+<p>Antes da missão (e a cada clique ou arrasto na página), cada ponto é conferido na grade <code>/rtabmap/map</code> (ou no costmap global sem VSLAM), com a pegada de 1,2 × 1,12 m mais 5 cm.</p>
+<ol>
+<li><b>Limpeza de ciscos (filtro morfológico):</b> uma célula ocupada com menos de 2 outras ocupadas a até 0,3 m vira livre. Torrões, pedrinhas, galhos (o robô passa por cima) e toques do LiDAR no chão viram células soltas; fileiras (plantas a cada 0,3 m), pedras grandes e troncos têm vizinhas e ficam. Num mapa real, de 95 pontos no meio das entrelinhas passavam 37 olhando ao longo delas; sem os ciscos, 94.</li>
+<li><b>Chega?</b> A* na grade (Hart, Nilsson e Raphael, 1968), 8 vizinhos, com os obstáculos inflados de meia largura do robô (como o NavFn), desconhecido passável, e heurística octil (admissível para 8 vizinhos):
+\[ f(n) = g(n) + h(n), \qquad h = \max(\Delta i, \Delta j) + (\sqrt2 - 1)\min(\Delta i, \Delta j). \]
+Sem caminho: <code>sem_caminho</code>. A direção de chegada é a do caminho nos últimos 0,5 m (a reta do ponto anterior não serve: perto de obstáculos o Nav2 chega por outro lado).</li>
+<li><b>Cabe?</b> A pegada é amostrada a cada 5 cm e posta na pose de chegada; qualquer amostra em célula ocupada: <code>colide</code>.</li>
+<li><b>Gira?</b> O Nav2 para em cada waypoint e gira no lugar até o yaw de saída pelo lado mais curto; a pegada é conferida a cada 5° desse giro: <code>sem_giro</code>.</li>
+<li><b>Sugestão:</b> procura em anéis de 0,1 m até 1 m o ponto válido mais perto, com os mesmos yaws.</li>
+</ol>
+<div class="caixa projeto"><span class="rot">No projeto</span>
+<p>A folga de 5 cm separa, no mapa da plantação, o ponto antigo da cabeceira leste do caso 3 (o robô olhava para a pedra sem conseguir girar; recusado) dos pontos que o robô cumpre nas rodadas.</p>
+</div>
+
+<h3 id="varredura">8.3 Varredura em serpentina (boustrofédon)</h3>
+<p>Na página do operador (<code>web/js/sweep.js</code>): dado um retângulo, gera passadas paralelas às fileiras, separadas pelo espaçamento (1,8 m na plantação, 7 m no olival), alternando o sentido (a decomposição em boustrofédon de Choset, para cobertura de uma célula sem obstáculos). Cada passada ganha pontos a cada 10 m no máximo (o costmap global só aceita objetivos a ~12 m), e cada ponto leva o yaw da própria passada: sem ele, o fim de cada passada teria de girar 90° entre as fileiras, onde o robô não cabe girando. A curva para a passada seguinte fica com o planejador, pela cabeceira. Como a câmera de aquisição olha para a esquerda, cada passada fotografa o lado oposto da anterior.</p>
+
+<h3 id="no-recorder">8.4 data_recorder: fotos georreferenciadas</h3>
+<div class="meta-no"><span><b>Pacote:</b> agrobot_webots</span><span><b>Arquivo:</b> <code>data_recorder.py</code></span><span><b>Câmera:</b> 1280 × 960, 90°, olhando para a esquerda, ~1 foto/s</span></div>
+<p>Para cada imagem, consulta o TF \(T^{map}_{\text{câmera óptica}}\) <b>no carimbo da imagem</b> (espera até 1 s pelo TF daquele instante, porque o <code>map → odom</code> chega atrasado) e grava a foto (PNG sem perdas) com a pose estimada, a verdadeira e o erro. Só grava se a câmera andou 0,3 m desde a última foto. A 0,4 m/s, uma foto a cada ~0,41 m e ~77% de sobreposição; com o robô no meio da entrelinha, cada foto cobre ~1,8 m de fileira a ~1,4 mm por pixel.</p>
+<p><b>Avaliação</b> (<code>scripts/avaliar_aquisicao.py</code>): as plantas são lidas do próprio <code>.wbt</code> e projetadas em cada foto pelo modelo pinhole,</p>
+\[ \begin{bmatrix} u \\ v \\ 1 \end{bmatrix} \sim K\,\big(R^{cam}_{map}\,P^{map} + t^{cam}_{map}\big), \qquad K = \begin{bmatrix} f_x & 0 & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1\end{bmatrix}, \]
+<p>com a pose verdadeira (onde a foto foi feita) para a cobertura e com a estimada para o erro de georreferência em pixels e em metros. No caso 2 com EKF + VSLAM: 57 fotos em 96 s, erro xy da câmera de 0,13 m em média e 0,22 m no máximo.</p>
+
+<h3 id="metricas">8.5 Métricas de avaliação</h3>
+<ul>
+<li><b>ATE</b> (<i>absolute trajectory error</i>): \(\text{ATE} = \sqrt{\tfrac1N\sum_k \|\hat p_k - p_k\|^2}\) entre a posição estimada (no <code>map</code>) e a verdadeira, a 5 Hz, <b>sem alinhamento</b> (as duas começam no frame da partida). Sem o alinhamento de Horn/Umeyama dos benchmarks, o ATE inclui o erro de rumo inicial, o que é honesto para um robô que navega pela própria estimativa.</li>
+<li><b>Erro máximo</b> e <b>RMSE do yaw</b>.</li>
+<li><b>Atingidos:</b> o Nav2 deu o waypoint como atingido. <b>No alvo:</b> o robô estava <i>de verdade</i> a até 0,5 m do alvo. Com a localização errada o Nav2 diz "cheguei" com o robô em outro lugar; é a métrica que importa para a coleta.</li>
+<li><b>Paradas:</b> robô parado ≥ 1 s fora da parada programada.</li>
+</ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="operador">
+<h2>9. Interface do operador e visualização</h2>
+
+<h3 id="no-web">9.1 rosbridge, operator_bridge e operator_web</h3>
+<p>Página no navegador (porta 8080) que fala com o ROS por <b>rosbridge</b> (porta 9090): um protocolo JSON sobre WebSocket em que a página publica, assina e chama serviços. Mandar grade, scan e imagens cruas em JSON pesaria demais, então o <code>operator_bridge</code> resume: estado a 5 Hz (pose pelo TF no frame global, quem comanda, patinagem, caminho e scan já no frame global), a grade como PNG (compressão sem perdas, ótima para áreas uniformes) e as câmeras em JPEG, assinadas só enquanto a página mostra a prévia (a de aquisição tem 4,9 MB por imagem). Os timers são de relógio de parede, para a página não travar quando a simulação anda mais devagar que o tempo real. O <code>operator_web</code> serve a página e a pasta <code>dados/</code> só para leitura.</p>
+<div class="caixa porque"><span class="rot">Por que web</span>
+<p>O operador só precisa de um navegador, sem ROS no computador dele (o Kauê usa Windows). Foxglove resolveria a visualização, mas não a lógica de missão; um app rqt/PyQt exigiria ROS no PC do operador. Não tem senha: em rede aberta, restringir as portas.</p>
+</div>
+
+<h3 id="no-rviz">9.2 RViz e rtabmap_viz</h3>
+<p>Só visualização: o RViz desenha TF, grade, costmaps, caminhos, zonas de segurança e as elipses de covariância do EKF (a forma delas é o argumento visual da seção 3.1). Não muda nada no sistema.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="legado">
+<h2>10. Comparação e legado</h2>
+
+<h3 id="no-slam">10.1 slam_toolbox (SLAM por LiDAR 2D, só comparação)</h3>
+<p><b>Algoritmo</b> (Macenski e Jambrecic, 2021, sobre o Karto): <b>casamento de scans correlativo</b> (Olson, 2009): para o scan novo, busca exaustiva em \((x, y, \theta)\) numa janela em volta da odometria, pontuando cada pose pela soma das células de uma grade de probabilidade "borrada" dos scans anteriores onde os pontos caem, primeiro grosseira e depois fina. O resultado vira um nó de um grafo de poses; fechamentos de laço por casamento contra cadeias de scans antigos próximos; otimização por ajuste esparso de poses (SPA, Konolige et al., 2010) com o Ceres.</p>
+<p><b>Por que falha na plantação:</b> as fileiras são linhas paralelas e iguais. Ao longo de uma fileira todas as posições casam igual (a resposta da correlação é uma "crista", não um pico), e na cabeceira há pouco que prenda a rotação. O yaw errou até 51°, e com o yaw errado o robô vai para a entrelinha errada.</p>
+<div class="caixa projeto"><span class="rot">No projeto (passo 3, sensores ideais, plantação)</span>
+<div class="tabela"><table>
+<tr><th>Caso</th><th>Método</th><th class="num">Atingidos</th><th class="num">No alvo</th><th class="num">ATE (m)</th><th class="num">Yaw máx.</th></tr>
+<tr><td>Caso 2</td><td>EKF</td><td class="num">13/15</td><td class="num">12/15</td><td class="num">0,29</td><td class="num">2,4°</td></tr>
+<tr><td></td><td>EKF + SLAM LiDAR</td><td class="num">10/15</td><td class="num">7/15</td><td class="num">2,12</td><td class="num">51,5°</td></tr>
+<tr><td></td><td>EKF + VSLAM</td><td class="num">15/15</td><td class="num">15/15</td><td class="num">0,15</td><td class="num">4,3°</td></tr>
+<tr><td>Caso 3</td><td>EKF</td><td class="num">30/33</td><td class="num">26/33</td><td class="num">0,47</td><td class="num">3,4°</td></tr>
+<tr><td></td><td>EKF + SLAM LiDAR</td><td class="num">12/22</td><td class="num">8/22</td><td class="num">2,97</td><td class="num">38,9°</td></tr>
+<tr><td></td><td>EKF + VSLAM</td><td class="num">28/33</td><td class="num">20/33</td><td class="num">1,05</td><td class="num">8,3°</td></tr>
+</table></div>
+<p>Esses números são de antes do ruído dos sensores e das correções do EKF e do RTAB-Map; os atuais estão na seção 11.</p>
+</div>
+
+<h3 id="outros-legado">10.2 Outros</h3>
+<ul>
+<li><b><code>ekf_map_node</code></b> (<code>config/ekf_map.yaml</code>, só com <code>slam:=true</code>): um segundo EKF no frame <code>map</code> com a pose do slam_toolbox, para mostrar a elipse; não publica TF.</li>
+<li><b><code>goal_navigator</code></b>: vai a um objetivo sem Nav2 nem mapa, só desviando do que está à frente. Funciona na arena, não entra nas entrelinhas.</li>
+<li><b>Gazebo</b> (<code>agrobot_gazebo</code>, <code>agrobot_control</code>): versão antiga, não é mais usada.</li>
+</ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="resultados">
+<h2>11. Resultados atuais em uma página</h2>
+<p><b>Bateria final</b> (nuvem, 2026-11-20, EKF + VSLAM mapeando do zero, checagem de patinagem e segurança ligadas, ruído ligado, sementes 101 a 505):</p>
+<div class="tabela"><table>
+<tr><th>Caso</th><th class="num">ATE (m)</th><th class="num">Erro máx. (m)</th><th class="num">Atingidos</th><th class="num">No alvo ≤ 0,5 m</th><th class="num">Paradas</th></tr>
+<tr><td>Caso 2, plantação, ida e volta (~26 m)</td><td class="num">0,10 ± 0,04</td><td class="num">0,20 ± 0,08</td><td class="num">100%</td><td class="num">100%</td><td class="num">0,8 ± 1,1</td></tr>
+<tr><td>Caso 3, plantação, serpentina (~51 m)</td><td class="num">0,22 ± 0,18</td><td class="num">0,46 ± 0,29</td><td class="num">93 ± 8%</td><td class="num">91 ± 11%</td><td class="num">6,2 ± 4,9</td></tr>
+<tr><td>Caso 4, olival, ida e volta (~160 m)</td><td class="num">1,48 ± 1,24</td><td class="num">3,11 ± 2,94</td><td class="num">100%</td><td class="num">52 ± 24%</td><td class="num">0,6 ± 1,3</td></tr>
+<tr><td>Caso 5, olival, encosta (~115 m)</td><td class="num">1,07 ± 0,32</td><td class="num">1,94 ± 0,72</td><td class="num">100%</td><td class="num">32 ± 11%</td><td class="num">0</td></tr>
+</table></div>
+<p><b>Olival depois das correções</b> (rumo pelas fileiras, ajustes do RTAB-Map, raio calibrado e <code>lateral_correction:=imu</code>; sementes 101 e 303, uma rodada por célula): média dos casos 4 e 5 de ATE 0,70 → 0,59 m, erro máximo 1,31 → 1,11 m e 24 → 28 de 54 waypoints no alvo, partindo de uma bateria final com 1,48 e 1,07 m de ATE nesses casos.</p>
+<h4>Como contar a história</h4>
+<ol>
+<li><b>Plantação:</b> a localização segura; os waypoints perdidos do caso 3 são quase todos o contorno da pedra da cabeceira leste (vão de ~1,5 m com a camada de segurança).</li>
+<li><b>Olival:</b> o Nav2 cumpre tudo, mas o robô chega onde <i>acha</i> que é o alvo. O erro vinha do yaw (4 a 6° nas manobras de cabeceira viravam metros na volta) e, depois de corrigido o yaw, da distância (raio do pneu) e do escorregamento lateral. Cada um foi atacado por um nó (seções 4.3 a 4.5).</li>
+<li><b>O que sobra:</b> 0,4 a 0,8 m de ATE no olival, metade dos waypoints a mais de 0,5 m e rodadas em que o RTAB-Map desvia o <code>map</code> 1 a 2 m na volta com o <code>odom</code> bom. As correções foram validadas em 4 rodadas (sementes 101 e 303); a bateria de 5 sementes está em andamento.</li>
+</ol>
+</section>
+
+<!-- ================================================================ -->
+<section id="banca-geral">
+<h2>12. Perguntas gerais da banca</h2>
+<details class="banca"><summary>Por que o EKF não usa o ângulo calculado pelas rodas?</summary>
+<p>No skid-steer as rodas arrastam de lado nas curvas, e o ângulo das rodas erra a cada giro (por isso até a bitola efetiva precisou de um fator 1,33). O giroscópio mede a rotação diretamente.</p></details>
+<details class="banca"><summary>Por que o RTAB-Map não calcula a própria odometria visual?</summary>
+<p>CPU: Webots, Nav2 e RTAB-Map dividem a máquina, e a odometria do EKF já é boa entre um nó e outro. O papel do RTAB-Map é o longo prazo. A odometria visual existe no sistema, mas como árbitro das rodas na patinagem.</p></details>
+<details class="banca"><summary>O que se perde com o fechamento só por proximidade?</summary>
+<p>A capacidade de se recuperar de um erro grande de uma vez e de se localizar num mapa salvo sem saber onde começou. É uma troca consciente: em fileiras repetitivas, o risco de fechamento falso é maior que o de deriva grande. A patinagem (o caso de erro grande súbito) é tratada antes, pelo <code>wheel_slip_monitor</code>.</p></details>
+<details class="banca"><summary>Por que o Nav2 não usa o mapa do RTAB-Map no costmap?</summary>
+<p>Os costmaps são janelas móveis com o LiDAR em tempo real; o VSLAM entra pelo frame <code>map</code>. Assim o robô navega durante o mapeamento, e um obstáculo novo é visto na hora. O mapa do RTAB-Map é usado para conferir waypoints e para o operador.</p></details>
+<details class="banca"><summary>Por que dois LiDARs?</summary>
+<p>Papéis separados (pedido do orientador). O de segurança, a 15 cm, vê canelas, pedras e caixas e só serve para não bater e para os costmaps. O 3D, a ~1 m, vê troncos, copas e relevo a dezenas de metros e só serve para a localização (ICP dos fechamentos e rumo pelas fileiras).</p></details>
+<details class="banca"><summary>Por que a câmera do VSLAM tem só 424 × 240?</summary>
+<p>Cada quadro passa do Webots no Windows para o ROS no WSL, e o RTAB-Map processa 1 quadro por segundo. Nessa resolução já há centenas de features por quadro na plantação, e a simulação continua viável.</p></details>
+<details class="banca"><summary>Os resultados valem para o robô real?</summary>
+<p>Como prova de conceito e comparação relativa entre métodos no mesmo cenário. O ruído é realista (datasheets) mas gaussiano: faltam buracos de profundidade, reflexos, luz variável, vento e plantas que se movem. Isso piora o VSLAM, mas também o EKF. A calibração foi feita contra a pose verdadeira; no campo seria trena, GNSS RTK ou marcos.</p></details>
+<details class="banca"><summary>Qual é a contribuição, se as bibliotecas são prontas?</summary>
+<p>A integração e a adaptação a um ambiente agrícola não estruturado, com evidência medida: (1) a configuração do VSLAM contra o aliasing perceptual das fileiras (ICP com LiDAR 3D, otimização robusta, só proximidade); (2) nós próprios que atacam erros que as bibliotecas não veem: patinagem (VO como árbitro), escorregamento na encosta, rumo pelas fileiras, calibração do raio; (3) a grade conferida contra passadas desalinhadas; (4) a camada de segurança em série; (5) a checagem de waypoints pela geometria do robô; (6) o protocolo de avaliação com ruído realista, várias sementes e métricas "no alvo".</p></details>
+</section>
+
+<!-- ================================================================ -->
+<section id="referencias">
+<h2>13. Referências para citar</h2>
+<ul>
+<li>Thrun, Burgard e Fox. <i>Probabilistic Robotics</i>. MIT Press, 2005. (Filtros de Bayes, EKF, grades de ocupação, modelo de odometria.)</li>
+<li>Moore e Stouch. A generalized extended Kalman filter implementation for the Robot Operating System. IAS-13, 2014. (<code>robot_localization</code>.)</li>
+<li>Mandow et al. Experimental kinematics for wheeled skid-steer mobile robots. IROS, 2007.</li>
+<li>Labbé e Michaud. Appearance-based loop closure detection for online large-scale and long-term operation. IEEE T-RO, 2013.</li>
+<li>Labbé e Michaud. RTAB-Map as an open-source lidar and visual SLAM library for large-scale and long-term online operation. J. Field Robotics, 2019.</li>
+<li>Shi e Tomasi. Good features to track. CVPR, 1994. · Rublee et al. ORB: an efficient alternative to SIFT or SURF. ICCV, 2011.</li>
+<li>Fischler e Bolles. Random sample consensus. Comm. ACM, 1981.</li>
+<li>Besl e McKay. A method for registration of 3-D shapes. IEEE PAMI, 1992. · Chen e Medioni. Object modelling by registration of multiple range images. IVC, 1992.</li>
+<li>Grisetti et al. A tutorial on graph-based SLAM. IEEE ITS Magazine, 2010. · Kümmerle et al. g2o. ICRA, 2011.</li>
+<li>Sünderhauf e Protzel. Switchable constraints for robust pose graph SLAM. IROS, 2012. (Vertigo.)</li>
+<li>Moravec e Elfes. High resolution maps from wide angle sonar. ICRA, 1985.</li>
+<li>Macenski et al. The Marathon 2: a navigation system. IROS, 2020. (Nav2.)</li>
+<li>Konolige. A gradient method for realtime robot control. IROS, 2000. (NavFn.)</li>
+<li>Coulter. Implementation of the pure pursuit path tracking algorithm. CMU-RI-TR-92-01, 1992. · Macenski et al. Regulated pure pursuit for robot path tracking. Autonomous Robots, 2023.</li>
+<li>Colledanchise e Ögren. <i>Behavior Trees in Robotics and AI</i>. CRC Press, 2018.</li>
+<li>Hart, Nilsson e Raphael. A formal basis for the heuristic determination of minimum cost paths. IEEE SSC, 1968. (A*.)</li>
+<li>Choset. Coverage of known spaces: the boustrophedon cellular decomposition. Autonomous Robots, 2000.</li>
+<li>Olson. Real-time correlative scan matching. ICRA, 2009. · Konolige et al. Efficient sparse pose adjustment for 2D mapping. IROS, 2010. · Macenski e Jambrecic. SLAM Toolbox. JOSS, 2021.</li>
+<li>REP-105: Coordinate frames for mobile platforms. · ISO 3691-4:2020 (veículos industriais sem condutor).</li>
+</ul>
+<p class="rodape">Fontes: código e configurações em <code>agrobot_webots/</code>, <code>claude/manual.md</code>, e os resultados em <code>resultados/</code> nos arquivos do projeto. Valores de bibliotecas (RTAB-Map 0.23, Nav2 1.3) conferidos nas configurações; detalhes internos delas seguem os artigos citados. Para mudar um texto, edite <code>site/estudo.html</code>.</p>
+</section>
+
+    </main>
+  </div>
+
+  <script src="vendor/katex/katex.min.js"></script>
+  <script src="vendor/katex/auto-render.min.js"></script>
+  <script src="js/estudo.js"></script>
+</body>
+</html>

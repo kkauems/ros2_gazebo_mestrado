@@ -90,7 +90,8 @@
       <div class="es"><div><h4>Entra</h4>${lista(n.entradas)}</div><div><h4>Sai</h4>${lista(n.saidas)}</div></div>
       <h4>Por quê</h4><p>${n.porque}</p>
       ${partes ? `<h4>Onde age no robô</h4><p>${partes}</p>` : ''}
-      <p class="arquivo"><b>Arquivo:</b> <code>${esc(n.arquivo)}</code></p>`;
+      <p class="arquivo"><b>Arquivo:</b> <code>${esc(n.arquivo)}</code></p>
+      <p><a class="link-estudo" href="estudo.html#no-${n.id}">Estudar o algoritmo deste nó →</a></p>`;
     $('#nos-detalhe').hidden = false;
     $('#nos-lista').hidden = true;
     $('#nos-voltar').onclick = fecharNo;

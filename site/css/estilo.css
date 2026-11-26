@@ -108,6 +108,12 @@ body.sem-painel #painel { display: none; }
 .es { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .es ul { padding-left: 16px; font-size: 13px; }
 .arquivo { font-size: 13px; color: var(--suave); }
+a.link-estudo {
+  display: inline-block; text-decoration: none; color: var(--texto);
+  background: var(--painel2); border: 1px solid var(--acento);
+  border-radius: 8px; padding: 4px 11px; font-size: 14px;
+}
+a.link-estudo:hover { background: var(--acento); color: #1a1405; }
 .tag-parte { font-size: 12.5px; padding: 2px 8px; border-color: var(--acento); margin: 2px 0; }
 
 /* futuro */
