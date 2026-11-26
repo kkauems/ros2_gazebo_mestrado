@@ -5,6 +5,14 @@
 // por spacing. Cada passada ganha pontos intermediários a cada maxLeg metros
 // no máximo: o Nav2 só aceita objetivos a até ~12 m do robô (o costmap
 // global é uma janela de 24 x 24 m).
+//
+// Cada ponto leva o yaw da própria passada (olhando ao longo da fileira).
+// Sem isso o waypoint_mission completaria o yaw olhando para o próximo
+// ponto, e no fim de cada passada o robô teria de girar 90° no lugar, entre
+// as fileiras, onde ele não cabe girando (1,2 x 1,12 m numa entrelinha de
+// 1,8 m): a checagem recusava quase todos os pontos. Com o yaw da passada,
+// a curva para a passada seguinte fica por conta do planejador do Nav2,
+// que sai pela cabeceira.
 
 export function generateSweep(a, b, { spacing, axis = 'x', maxLeg = 10 } = {}) {
   if (!(spacing > 0)) throw new Error('espaçamento inválido');
@@ -18,6 +26,8 @@ export function generateSweep(a, b, { spacing, axis = 'x', maxLeg = 10 } = {}) {
   const length = Math.abs(end - start);
   if (length < 0.5) throw new Error('retângulo curto demais nessa direção');
   const pieces = Math.max(1, Math.ceil(length / maxLeg - 1e-9));
+  const ahead = along === 'x' ? (end >= start ? 0 : Math.PI) : (end >= start ? Math.PI / 2 : -Math.PI / 2);
+  const back = ahead === 0 ? Math.PI : ahead === Math.PI ? 0 : -ahead;
   const points = [];
   for (let lane = 0; lane < lanes; lane += 1) {
     const offset = a[across] + sign * lane * spacing;
@@ -28,7 +38,7 @@ export function generateSweep(a, b, { spacing, axis = 'x', maxLeg = 10 } = {}) {
       p[along] = start + (end - start) * t;
       p[across] = offset;
       p.name = `p${lane + 1}_${k === 0 ? 'ini' : k === pieces ? 'fim' : k}`;
-      points.push({ name: p.name, x: round(p.x), y: round(p.y) });
+      points.push({ name: p.name, x: round(p.x), y: round(p.y), yaw: forward ? ahead : back });
     }
   }
   return points;

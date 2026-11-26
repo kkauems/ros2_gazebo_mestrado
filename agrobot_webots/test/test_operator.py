@@ -56,3 +56,15 @@ def test_data_listing_stays_inside(tmp_path):
     assert listing['entries'][0]['name'] == '000001.png'
     assert listing['entries'][0]['size'] == 10
     assert list_dir(str(tmp_path), '../..') is None
+
+
+def test_probe_heading_follows_fill_yaw():
+    from agrobot_webots.waypoint_mission import probe_heading
+    # Com o próximo ponto: olhando para ele.
+    assert probe_heading((0, 0), (1, 0), (1, 1), None) == pytest.approx(
+        math.pi / 2)
+    # Sem o próximo: na direção em que chegou.
+    assert probe_heading((0, 0), (1, 1), None, None) == pytest.approx(
+        math.pi / 4)
+    # Yaw explícito (pontos da varredura) vale sobre os dois.
+    assert probe_heading((0, 0), (1, 0), (1, 1), 0.0) == 0.0

@@ -50,6 +50,11 @@ RViz, a lista pode ser montada e comandada por
         load    carrega um arquivo: {"op": "load", "case": "caso2_..."}
                 (config/waypoints/ ou output_dir/, ou um caminho)
         start, cancel, clear, undo, check, save ({"name": opcional})
+        probe   confere um ponto sem mudar a lista (arrastando no mapa):
+                {"op": "probe", "id": 1, "x": 3, "y": 1, "prev": [x, y] ou
+                null (vem do robô), "next": [x, y] ou null, "yaw": null}
+    ~/probe    (std_msgs/String, JSON)  saída: a resposta do probe, com o
+               mesmo id: {"id", "x", "y", "status", "text", "suggestion"}.
     ~/status   (std_msgs/String, JSON, latched)  saída: a lista com o
                estado e a checagem de cada waypoint, a missão em andamento,
                os arquivos de missão deste mundo e a última mensagem.
@@ -197,6 +202,11 @@ class WaypointMission(Node):
         self.declare_parameter('robot_length', 1.2)
         self.declare_parameter('robot_width', 1.12)
         self.declare_parameter('check_margin', 0.05)
+        # Tira da grade as células ocupadas soltas (torrões, galhos e toques
+        # do LiDAR no chão nas entrelinhas, por onde o robô passa): a que
+        # tem menos de 2 vizinhas ocupadas a até este raio (m) não conta.
+        # 0 desliga (waypoint_check.remove_specks).
+        self.declare_parameter('check_speck_radius', 0.3)
         # Quanto esperar a grade antes de começar uma missão de arquivo (s).
         self.declare_parameter('check_wait', 20.0)
 
@@ -240,6 +250,8 @@ class WaypointMission(Node):
             float(self.get_parameter('robot_width').value),
             float(self.get_parameter('check_margin').value))
         self.check_occupied = int(self.get_parameter('check_occupied').value)
+        self.check_speck_radius = float(
+            self.get_parameter('check_speck_radius').value)
         self.check_wait = float(self.get_parameter('check_wait').value)
         self.wait_since = None
         if self.check:
@@ -335,7 +347,7 @@ class WaypointMission(Node):
             message.data, info.width, info.height, info.resolution,
             info.origin.position.x, info.origin.position.y,
             yaw_from_quaternion(info.origin.orientation),
-            self.check_occupied)
+            self.check_occupied, speck_radius=self.check_speck_radius)
         self.grid_frame = message.header.frame_id or self.frame
 
     def check_point(self, start, x, y, yaw_out):
@@ -882,6 +894,7 @@ class WaypointMission(Node):
                 durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.create_subscription(
             String, '~/command', self.command_callback, 10)
+        self.probe_publisher = self.create_publisher(String, '~/probe', 10)
         self.create_service(Trigger, '~/cancel', self.cancel_service)
         # Refaz a checagem quando a grade muda (o mapa cresce no mapeamento).
         self.create_timer(3.0, self.recheck)
@@ -915,6 +928,9 @@ class WaypointMission(Node):
             return
         if op == 'save':
             self.save_command(command)
+            return
+        if op == 'probe':
+            self.probe_command(command)
             return
         if self.running():
             self.set_message(
@@ -1109,6 +1125,42 @@ class WaypointMission(Node):
         self.set_message('Cancelando a missão...')
         return True
 
+    def probe_command(self, command):
+        """
+        Confere um ponto avulso, sem mudar a lista.
+
+        A página pergunta enquanto o operador arrasta um ponto pelo mapa.
+        prev é de onde o robô vem (sem ele, da pose do robô) e next para
+        onde vai depois (dá a direção de saída, como no fill_yaw).
+        """
+        try:
+            x, y = float(command['x']), float(command['y'])
+            prev = command.get('prev')
+            nxt = command.get('next')
+            yaw = command.get('yaw')
+            prev = None if prev is None else (float(prev[0]), float(prev[1]))
+            nxt = None if nxt is None else (float(nxt[0]), float(nxt[1]))
+            yaw = None if yaw is None else float(yaw)
+            if not (math.isfinite(x) and math.isfinite(y)):
+                raise ValueError('ponto sem coordenadas')
+        except (ValueError, KeyError, TypeError, IndexError) as error:
+            self.set_message(f'Probe inválido: {error}', 'error')
+            return
+        reply = {'id': command.get('id'), 'x': x, 'y': y}
+        if not self.check:
+            reply.update(status=waypoint_check.OK, text='checagem desligada',
+                         suggestion=None)
+        else:
+            if prev is None:
+                est = self.estimated_pose()
+                prev = est[:2] if est else (0.0, 0.0)
+            yaw_out = probe_heading(prev, (x, y), nxt, yaw)
+            status, text, suggestion = self.check_point(prev, x, y, yaw_out)
+            reply.update(status=status, text=text, suggestion=(
+                None if suggestion is None
+                else [round(suggestion[0], 3), round(suggestion[1], 3)]))
+        self.probe_publisher.publish(String(data=json.dumps(reply)))
+
     def run_checks(self):
         """Confere cada waypoint (como no início da missão), para mostrar."""
         self.checks = []
@@ -1186,6 +1238,16 @@ class WaypointMission(Node):
             'waypoints': waypoints, 'cases': self.list_cases(),
         }
         self.status_publisher.publish(String(data=json.dumps(status)))
+
+
+def probe_heading(prev, point, nxt, yaw):
+    """Direção de saída do ponto, como o fill_yaw faria na lista."""
+    if yaw is not None:
+        return yaw
+    if nxt is not None and math.hypot(nxt[0] - point[0],
+                                      nxt[1] - point[1]) > 1e-6:
+        return math.atan2(nxt[1] - point[1], nxt[0] - point[0])
+    return math.atan2(point[1] - prev[1], point[0] - prev[0])
 
 
 def safe_name(name, default, extra=''):
