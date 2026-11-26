@@ -1027,6 +1027,13 @@ apresentação, os resultados do passo 3 e os próximos passos.
   do passo 3; a trilha verde é a pose verdadeira, a colorida é a estimada. No olival o robô
   só segue a rota do caso 4 (ainda não há rodadas medidas).
 - **Mudar textos** (nós, roteiro, próximos passos, resultados): `site/js/dados.js`.
+- **Estudo dos algoritmos (`site/estudo.html`):** página de texto, para a defesa, com o
+  algoritmo de cada nó (equações, parâmetros usados, por que foi escolhido, resultados e
+  perguntas prováveis da banca). Abre pelo botão "Estudo dos algoritmos" no topo do site ou
+  pelo link "Estudar o algoritmo deste nó" no detalhe de cada nó (âncoras `#no-<id>`, com o
+  `id` do `dados.js`). O texto fica no próprio HTML; as equações usam o KaTeX em
+  `site/vendor/katex/` (funciona sem internet). Se um parâmetro ou resultado mudar, atualize
+  a seção correspondente.
 - **Se o chassi ou as rodadas mudarem:** `python3 site/gerar_dados.py <pasta dos CSVs>`
   regenera `js/malha_chassi.js` e `js/trajetorias.js` (o navegador não deixa uma página
   aberta do disco ler outros arquivos, por isso os dados vão embutidos em `.js`).

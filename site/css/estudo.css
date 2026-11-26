@@ -1,0 +1,201 @@
+/* Página de estudo (estudo.html): texto longo, índice lateral, equações. */
+:root {
+  --fundo: #11141a;
+  --painel: #171b23;
+  --painel2: #1e2430;
+  --borda: #2b3240;
+  --texto: #e3e6ec;
+  --suave: #9aa3b2;
+  --acento: #ffb627;
+  --link: #6cb6ff;
+  --porque: #2fbf71;
+  --projeto: #4aa3ff;
+  --cuidado: #f29e38;
+  --banca: #b08cff;
+  --codigo: #232a37;
+  --linha-fig: #8b95a7;
+  color-scheme: dark;
+}
+:root[data-tema="claro"] {
+  --fundo: #fbfaf7;
+  --painel: #f2f0ea;
+  --painel2: #e9e6de;
+  --borda: #d6d2c7;
+  --texto: #1d2129;
+  --suave: #5c6472;
+  --acento: #a86a00;
+  --link: #0b5cad;
+  --porque: #1d7f4a;
+  --projeto: #1e66b5;
+  --cuidado: #a85a00;
+  --banca: #6a44c2;
+  --codigo: #ebe8e0;
+  --linha-fig: #5c6472;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { scroll-padding-top: 64px; }
+body {
+  margin: 0;
+  background: var(--fundo);
+  color: var(--texto);
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+a { color: var(--link); }
+code {
+  font: 0.86em ui-monospace, "Cascadia Mono", Consolas, monospace;
+  background: var(--codigo);
+  padding: 1px 5px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+pre {
+  background: var(--codigo);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font: 13px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+pre code { background: none; padding: 0; }
+
+/* topo */
+.topo {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 18px;
+  background: var(--painel);
+  border-bottom: 1px solid var(--borda);
+}
+.topo strong { color: var(--acento); font-size: 18px; }
+.topo .sub { color: var(--suave); font-size: 14px; }
+.topo .dir { margin-left: auto; display: flex; gap: 8px; }
+.topo a.btn, .topo button {
+  font: inherit; font-size: 14px; color: var(--texto);
+  background: var(--painel2); border: 1px solid var(--borda);
+  border-radius: 8px; padding: 4px 11px; cursor: pointer; text-decoration: none;
+}
+#btn-indice { display: none; }
+
+/* layout */
+.layout { display: flex; align-items: flex-start; max-width: 1320px; margin: 0 auto; }
+#indice {
+  position: sticky; top: 53px;
+  width: 290px; flex: none;
+  max-height: calc(100vh - 53px); overflow-y: auto;
+  padding: 18px 12px 40px 18px;
+  border-right: 1px solid var(--borda);
+  font-size: 14px; line-height: 1.4;
+}
+#indice input {
+  width: 100%; margin-bottom: 10px;
+  font: inherit; color: var(--texto);
+  background: var(--painel2); border: 1px solid var(--borda);
+  border-radius: 8px; padding: 6px 9px;
+}
+#indice ol { list-style: none; margin: 0; padding: 0; }
+#indice li { margin: 2px 0; }
+#indice li.n3 { padding-left: 14px; font-size: 13px; }
+#indice a { color: var(--suave); text-decoration: none; display: block; padding: 2px 6px; border-radius: 5px; }
+#indice a:hover { color: var(--texto); background: var(--painel2); }
+#indice a.atual { color: var(--texto); background: var(--painel2); border-left: 3px solid var(--acento); }
+#indice li.n2 > a { color: var(--texto); font-weight: 600; margin-top: 8px; }
+/* overflow-x: clip + position: relative: o MathML escondido do KaTeX não alarga a página. */
+#texto { flex: 1; min-width: 0; max-width: 880px; padding: 22px 34px 120px; overflow-x: clip; position: relative; }
+#texto h1 { font-size: 30px; line-height: 1.2; margin: 10px 0 6px; }
+#texto h2 {
+  font-size: 25px; line-height: 1.25;
+  margin: 56px 0 10px; padding-top: 14px;
+  border-top: 2px solid var(--borda);
+}
+#texto h3 { font-size: 19px; margin: 34px 0 6px; }
+#texto h4 { font-size: 15px; margin: 22px 0 4px; text-transform: uppercase; letter-spacing: .04em; color: var(--suave); }
+.lead { color: var(--suave); font-size: 17px; }
+.meta-no {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  font-size: 13.5px; color: var(--suave);
+  background: var(--painel); border: 1px solid var(--borda); border-radius: 8px;
+  padding: 7px 12px; margin: 6px 0 12px;
+}
+.meta-no b { color: var(--texto); font-weight: 600; }
+
+/* caixas */
+.caixa {
+  border-left: 4px solid var(--c);
+  background: var(--painel);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 14px;
+  margin: 14px 0;
+}
+.caixa > .rot {
+  display: block; font-size: 12px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--c);
+  margin-bottom: 2px;
+}
+.caixa p:first-of-type { margin-top: 2px; }
+.caixa p:last-child, .caixa ul:last-child { margin-bottom: 2px; }
+.porque { --c: var(--porque); }
+.projeto { --c: var(--projeto); }
+.cuidado { --c: var(--cuidado); }
+details.banca {
+  --c: var(--banca);
+  border-left: 4px solid var(--c);
+  background: var(--painel);
+  border-radius: 0 8px 8px 0;
+  padding: 8px 14px;
+  margin: 10px 0;
+}
+details.banca summary { cursor: pointer; font-weight: 600; }
+details.banca summary::before { content: "Banca: "; color: var(--c); font-weight: 700; }
+details.banca[open] summary { margin-bottom: 6px; }
+
+/* tabelas */
+.tabela { overflow-x: auto; margin: 12px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { border-bottom: 1px solid var(--borda); padding: 6px 8px; text-align: left; vertical-align: top; }
+th { background: var(--painel); font-weight: 600; }
+td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* figuras */
+figure { margin: 18px 0; }
+figure svg { width: 100%; height: auto; display: block; background: var(--painel); border: 1px solid var(--borda); border-radius: 8px; }
+figcaption { color: var(--suave); font-size: 13.5px; margin-top: 6px; }
+svg .ln { stroke: var(--linha-fig); fill: none; stroke-width: 1.6; }
+svg .lnf { stroke: var(--texto); fill: none; stroke-width: 2; }
+svg .cx { fill: var(--painel2); stroke: var(--borda); stroke-width: 1.5; }
+svg .tx { fill: var(--texto); font: 13px system-ui, sans-serif; }
+svg .ts { fill: var(--suave); font: 12px system-ui, sans-serif; }
+svg .ac { stroke: var(--acento); fill: none; stroke-width: 2.2; }
+svg .acf { fill: var(--acento); }
+svg .az { stroke: var(--projeto); fill: none; stroke-width: 2.2; }
+svg .azf { fill: var(--projeto); }
+svg .vd { stroke: var(--porque); fill: none; stroke-width: 2.2; }
+svg .vdf { fill: var(--porque); }
+svg .rx { stroke: var(--banca); fill: none; stroke-width: 2; stroke-dasharray: 6 4; }
+svg .rxf { fill: var(--banca); }
+
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+.katex { font-size: 1.06em; }
+
+.rodape { color: var(--suave); font-size: 13.5px; border-top: 1px solid var(--borda); margin-top: 60px; padding-top: 14px; }
+
+@media (max-width: 900px) {
+  #btn-indice { display: inline-block; }
+  .topo .sub { display: none; }
+  #indice {
+    display: none;
+    position: fixed; top: 53px; left: 0; right: 0; bottom: 0; z-index: 4;
+    width: auto; max-height: none;
+    background: var(--fundo);
+  }
+  body.indice-aberto #indice { display: block; }
+  #texto { padding: 16px 16px 100px; }
+  #texto h2 { font-size: 22px; }
+}
+
+@media print {
+  .topo, #indice { display: none; }
+  #texto { max-width: none; padding: 0; }
+  details.banca { break-inside: avoid; }
+  details.banca > *:not(summary) { display: block; }
+}
