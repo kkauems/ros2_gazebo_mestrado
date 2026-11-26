@@ -92,7 +92,10 @@
       <div class="panel hidden" id="tab-sweep">
         <p class="hint">Escolha <b>Varredura</b> no mapa e arraste do <b>começo da primeira
           passada</b> até o canto oposto. As passadas vão na direção escolhida, em serpentina, e
-          ganham pontos a cada 10 m no máximo (o Nav2 só aceita objetivos a até ~12 m). Antes de usar,
+          ganham pontos a cada 10 m no máximo (o Nav2 só aceita objetivos a até ~12 m). Cada ponto
+          olha ao longo da passada; a curva para a próxima é feita pelo Nav2, então comece e termine
+          as passadas nas cabeceiras (na plantação, x ≤ 0,8 e x ≥ 11,2), onde o robô cabe girando.
+          Antes de usar,
           arraste os pontos da prévia para um lugar livre (a pegada mostra se o robô cabe) e apague
           com o botão direito.</p>
         <label>Espaçamento entre passadas (m)
