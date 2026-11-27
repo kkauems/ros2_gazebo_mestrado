@@ -191,9 +191,10 @@ def wheel_scale(context):
 
 
 LATERAL_MODES = ('none', 'imu', 'rows')
-# lateral_correction:=auto: no olival, imu (o melhor nos casos 4 e 5,
-# sementes 101 e 303: ATE médio 0,59 m, contra 0,97 m com rows, cujas
-# medidas erram 0,2 a 0,4 m onde as oliveiras saem da grade); nos outros
+# lateral_correction:=auto: no olival, imu (o melhor nos casos 4 e 5, 5
+# sementes: caso 4 com ATE de 0,41 m, contra 0,91 sem correção e 0,67 com
+# rows, cujas medidas erram 0,2 a 0,4 m onde as oliveiras saem da grade;
+# caso 5 empatado com sem correção, 0,63 m, e rows pior, 0,86); nos outros
 # mundos, none. Sem calibração para a semente, cai para none.
 LATERAL_AUTO = {'olive_grove': 'imu'}
 

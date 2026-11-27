@@ -23,3 +23,9 @@ olive_grove:
   # lateral verdadeira (o resto é o vaivém do controlador).
   101: {wheel_radius_scale: 1.0174, roll_offset_deg: -0.952, slope_slip_gain: -0.1717}
   303: {wheel_radius_scale: 1.0036, roll_offset_deg: -1.319, slope_slip_gain: -0.1521}
+  # Rodadas de calibração de 2026-11-25 (bateria de 5 sementes; ~50 a 53 m em
+  # trechos retos cada). Offset do roll a 0,03 grau do verdadeiro (-1,51,
+  # -0,58 e -0,75 graus).
+  202: {wheel_radius_scale: 0.9967, roll_offset_deg: -1.481, slope_slip_gain: -0.1675}
+  404: {wheel_radius_scale: 1.0058, roll_offset_deg: -0.594, slope_slip_gain: -0.1748}
+  505: {wheel_radius_scale: 0.9841, roll_offset_deg: -0.746, slope_slip_gain: -0.1564}
